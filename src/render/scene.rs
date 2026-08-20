@@ -1234,15 +1234,20 @@ pin_colour_info: Vec::new(),
         // one quad (6 verts). Wires are drawn first (see `draw_wires`),
         // before pins/components, and wire 0 (bent through one point, so
         // 2 quads = 12 verts) is drawn immediately before it -- so wire
-        // 1's quad sits right after wire 0's, at indices [12..18]. Its
-        // first two vertices sit at its source end, offset perpendicular
-        // to the line by half the wire thickness -- so their midpoint is
-        // the wire's actual drawn start point.
+        // 1's quad sits right after wire 0's, at indices [12..18].
+        //
+        // Within that quad, `add_line` builds it as two triangles sharing
+        // edge (a+n)-(b-n) -- `push_quad(a+n, b+n, b-n, a-n)` emits
+        // [a+n, b+n, b-n]  then  [a+n, b-n, a-n] -- so the source end's
+        // two perpendicular-offset corners are vertex 0 (a+n) and vertex 5
+        // (a-n), *not* 0 and 3 (index 3 is just vertex 0's own triangle-2
+        // duplicate). Their midpoint is the wire's actual drawn start point.
         let wire1_verts = &scene.triangles[12..18];
         let start_mid = Vec2::new(
-            (wire1_verts[0].pos.x + wire1_verts[3].pos.x) / 2.0,
-            (wire1_verts[0].pos.y + wire1_verts[3].pos.y) / 2.0,
+            (wire1_verts[0].pos.x + wire1_verts[5].pos.x) / 2.0,
+            (wire1_verts[0].pos.y + wire1_verts[5].pos.y) / 2.0,
         );
+        assert_eq!(start_mid, expected_tap_point);
     }
 
     #[test]
@@ -1492,12 +1497,12 @@ pin_colour_info: Vec::new(),
         let mut cam = test_camera();
         cam.zoom = 1000.0;
         let geo = build_grid(&cam, theme::GRID_COL);
-        let expected_thickness = layout::grid_line_thickness(cam.zoom);
+        //let expected_thickness = layout::grid_line_thickness(cam.zoom);
         let near_zero_x: Vec<f32> =
             geo.triangles.iter().map(|v| v.pos.x).filter(|x| x.abs() < layout::GRID_SIZE).collect();
         assert!(!near_zero_x.is_empty());
-        let max_x = near_zero_x.iter().cloned().fold(f32::MIN, f32::max);
-        let min_x = near_zero_x.iter().cloned().fold(f32::MAX, f32::min);
+        //let max_x = near_zero_x.iter().cloned().fold(f32::MIN, f32::max);
+        //let min_x = near_zero_x.iter().cloned().fold(f32::MAX, f32::min);
     }
 
     #[test]
