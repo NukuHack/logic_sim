@@ -6,7 +6,7 @@
 //!
 //! Mirrors (a first-pass subset of) `DLS.Graphics.World.DevSceneDrawer`.
 
-use crate::description::{ChipDescription, ChipLibrary, NameLocation, PinBitCount, WireConnectionType, WireDescription};
+use crate::description::{ChipDescription, ChipLibrary, ChipType, NameLocation, PinBitCount, WireConnectionType, WireDescription};
 use crate::pin_state::LogicState;
 use crate::render::camera::Camera;
 use crate::render::layout;
@@ -192,6 +192,20 @@ pub struct PlacedSubChip<'a> {
     /// Per-instance output pin colour overrides, copied from this placed
     /// instance's `SubChipDescription::pin_colour_info`.
     pub pin_colour_info: Vec<(i32, Color)>,
+    /// Copied verbatim from this placed instance's
+    /// `SubChipDescription::internal_data` (empty if the subchip has none).
+    /// Interpretation is chip-type specific:
+    ///  - `Key`: `[0]` is the ASCII code (capitalised, e.g. `A` = 65) of the
+    ///    key this instance listens to.
+    ///  - `Rom256x16`: all 256 words of ROM contents, indexed by address.
+    ///  - `DisplayLed`: `[0]` is a `Color` palette index (same encoding as
+    ///    a pin's `Colour` field), used to tint the LED body.
+    ///  - Bus origin/terminus (`Bus1Bit`/`Bus4Bit`/`Bus8Bit`/
+    ///    `BusTerminus1Bit`/`BusTerminus4Bit`/`BusTerminus8Bit`): `[0]` is
+    ///    the id of the paired bus chip at the other end of the link,
+    ///    `[1]` is "is flipped" (`1` = draw this instance's visible pin on
+    ///    the opposite side from its type default).
+    pub internal_data: Vec<u32>,
 }
 
 impl<'a> PlacedSubChip<'a> {
@@ -250,6 +264,7 @@ pub fn place_sub_chips<'a>(chip: &ChipDescription, library: &'a ChipLibrary) -> 
             input_pin_y,
             output_pin_y,
             pin_colour_info: sub.pin_colour_info.clone(),
+            internal_data: sub.internal_data.clone().unwrap_or_default(),
         });
     }
 
@@ -331,7 +346,7 @@ pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dy
     // keeps pins sitting visibly on top of the wires that connect to them.
     draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
     draw_pins(&mut geo, chip, &placed, pin_state);
-    draw_components(&mut geo, &placed);
+    draw_components(&mut geo, &placed, pin_state);
 
     geo
 }
@@ -378,7 +393,7 @@ fn draw_wires(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedS
                 .unwrap_or(LogicState::Low);
             let colour = resolve_pin_colour(chip, placed, owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
             let bit_count = resolve_pin_bit_count(chip, placed, owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
-            let thickness = layout::WIRE_THICKNESS * bit_count as u32 as f32;
+            let thickness = layout::WIRE_THICKNESS * bit_count.to_int() as f32;
             let colour = theme::state_colour(logic, colour);
 
             let mut prev = src;
@@ -398,15 +413,22 @@ fn draw_wires(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedS
 /// bodies that own them.
 fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSubChip], pin_state: &dyn PinStateLookup) {
     for sub in placed {
-        for (i, pin) in sub.desc.input_pins.iter().enumerate() {
+        // Bus origin/terminus chips draw their one visible pin on a fixed
+        // default side (bus -> right, terminus -> left) unless flipped via
+        // saved `InternalData[1]` ("is flip"); see `PlacedSubChip::internal_data`.
+        let is_flipped = sub.desc.chip_type.is_bus_type() && sub.internal_data.get(1).copied().unwrap_or(0) != 0;
+
+        for (i, pin) in sub.desc.input_pins
+            .iter().filter(|p| !p.name.contains("(Hidden)")).enumerate() {
             let y = sub.input_pin_y.get(i).copied().unwrap_or(0.0);
-            let pos = layout::pin_world_position(sub.centre, sub.size, y, true);
+            let pos = layout::pin_world_position(sub.centre, sub.size, y, true ^ is_flipped);
             let logic = pin_state.logic_state(sub.id, pin.id).unwrap_or(LogicState::Low);
             geo.add_circle(pos, layout::PIN_RADIUS, theme::state_colour(logic, pin.colour), 16);
         }
-        for (i, pin) in sub.desc.output_pins.iter().enumerate() {
+        for (i, pin) in sub.desc.output_pins
+            .iter().filter(|p| !p.name.contains("(Hidden)")).enumerate() {
             let y = sub.output_pin_y.get(i).copied().unwrap_or(0.0);
-            let pos = layout::pin_world_position(sub.centre, sub.size, y, false);
+            let pos = layout::pin_world_position(sub.centre, sub.size, y, false ^ is_flipped);
             let logic = pin_state.logic_state(sub.id, pin.id).unwrap_or(LogicState::Low);
             // A specific placed instance can override its output pin's
             // colour (saved `OutputPinColourInfo`); fall back to the
@@ -433,23 +455,58 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
 
 /// Layer 3 (top): every subchip's body rectangle + name label, drawn last
 /// so a component's body is never occluded by a wire or pin drawn earlier.
-fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip]) {
+fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state: &dyn PinStateLookup) {
     for sub in placed {
+        // An LED's body *is* its indicator: tint it with the saved
+        // `InternalData[0]` colour (same palette-index encoding as a pin's
+        // `Colour` field), lit/dimmed/disconnected exactly like a wire of
+        // that colour would be, driven by the live state of its one input
+        // pin. Falls back to the ordinary body-colour handling below if
+        // this instance has no saved colour for some reason.
+        let led_colour = (sub.desc.chip_type == ChipType::DisplayLed)
+            .then(|| sub.internal_data.first().copied())
+            .flatten()
+            .map(|idx| {
+                let colour = Color::from_int(idx as i32);
+                let logic = sub
+                    .desc
+                    .input_pins
+                    .first()
+                    .and_then(|p| pin_state.logic_state(sub.id, p.id))
+                    .unwrap_or(LogicState::Low);
+                theme::state_colour(logic, colour)
+            });
+
         // Use this chip's saved body colour (alpha 0 means "not saved" --
         // fall back to the theme default) rather than always drawing every
         // chip with the same flat grey.
-        let body_colour = if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL };
+        let body_colour = led_colour
+            .unwrap_or_else(|| if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL });
         geo.add_rect(sub.centre, sub.size, body_colour);
 
         // Draw this subchip's name label, unless explicitly hidden (e.g.
         // display/bus/pin chips, which save NameLocation = Hidden since
         // their body is the visualisation). Mirrors
         // `DevSceneDrawer.DrawSubChip`'s "if (... desc.NameLocation !=
-        // NameDisplayLocation.Hidden)" gate; the `isKeyChip` special case
-        // (which shows a keybinding string even when hidden) isn't ported
-        // here since it needs live key-binding state this module doesn't
-        // have.
-        if sub.desc.name_location != NameLocation::Hidden {
+        // NameDisplayLocation.Hidden)" gate -- except for the Key chip,
+        // which forces its label to show regardless of the saved (always
+        // Hidden) `NameLocation`: its body has no other visualisation, so
+        // the bound key's letter (from saved `InternalData[0]`, an ASCII
+        // code -- capitalised, e.g. `A` = 65) is shown in its place.
+        let key_letter = (sub.desc.chip_type == ChipType::Key)
+            .then(|| sub.internal_data.first().copied())
+            .flatten()
+            .map(|code| (code as u8 as char).to_string());
+
+        if let Some(letter) = key_letter {
+            geo.labels.push(TextLabel {
+                pos: sub.centre,
+                text: letter,
+                colour: theme::text_colour_for_background(body_colour),
+                font_size: theme::FONT_SIZE_CHIP_NAME,
+                width: sub.size.x,
+            });
+        } else if sub.desc.name_location != NameLocation::Hidden {
             let label_pos = match sub.desc.name_location {
                 NameLocation::Top => Vec2::new(
                     sub.centre.x,
@@ -782,15 +839,19 @@ fn resolve_pin_position(
     // Case 1: owner refers to a subchip in this scene.
     if let Some(&idx) = owner_to_placed.get(&owner_id) {
         let sub = &placed[idx];
+        // Bus origin/terminus chips draw their one visible pin on a fixed
+        // default side (bus -> right, terminus -> left) unless flipped via
+        // saved `InternalData[1]` ("is flip"); see `PlacedSubChip::internal_data`.
+        let is_flipped = sub.desc.chip_type.is_bus_type() && sub.internal_data.get(1).copied().unwrap_or(0) != 0;
         if let Some((i, pin)) = sub.desc.input_pins.iter().enumerate().find(|(_, p)| p.id == pin_id) {
             let y = sub.input_pin_y.get(i).copied().unwrap_or(0.0);
             let _ = pin;
-            return Some(layout::pin_world_position(sub.centre, sub.size, y, true));
+            return Some(layout::pin_world_position(sub.centre, sub.size, y, true ^ is_flipped));
         }
         if let Some((i, pin)) = sub.desc.output_pins.iter().enumerate().find(|(_, p)| p.id == pin_id) {
             let y = sub.output_pin_y.get(i).copied().unwrap_or(0.0);
             let _ = pin;
-            return Some(layout::pin_world_position(sub.centre, sub.size, y, false));
+            return Some(layout::pin_world_position(sub.centre, sub.size, y, false ^ is_flipped));
         }
         return None;
     }
@@ -1529,6 +1590,7 @@ pin_colour_info: Vec::new(),
             input_pin_y: vec![0.25, -0.25],
             output_pin_y: vec![0.0],
             pin_colour_info: Vec::new(),
+            internal_data: Vec::new(),
         };
         let placed = vec![sub];
         let mut owner_to_placed = HashMap::new();
