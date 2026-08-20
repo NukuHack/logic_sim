@@ -1,0 +1,38 @@
+[package]
+name = "logic_sim"
+version = "0.1.0"
+edition = "2021"
+# `cargo run` (no --bin) launches the integrated app: project picker ->
+# chip viewer, in one window. `cargo run --bin viewer` / `--bin demo` are
+# still available for the standalone/headless-friendly entry points.
+default-run = "app"
+
+[dependencies]
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ---- rendering (wgpu + wgsl) ----
+wgpu = "22"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.3"
+winit = "0.30"
+env_logger = "0.11"
+glyphon = "0.6"
+
+[lib]
+name = "logic_sim"
+path = "src/lib.rs"
+
+[[bin]]
+name = "demo"
+path = "src/bin/demo.rs"
+
+[[bin]]
+name = "viewer"
+path = "src/bin/viewer.rs"
+
+[[bin]]
+name = "app"
+path = "src/bin/app.rs"
+

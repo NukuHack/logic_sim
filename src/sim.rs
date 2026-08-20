@@ -1,0 +1,835 @@
+//! Runtime simulation graph + stepping logic.
+//!
+//! Ported from DLS.Simulation (SimPin.cs, SimChip.cs, Simulator.cs).
+//!
+//! Design note: the original C# uses plain object references, which form a
+//! graph with cross-links (pin -> connected target pins in other chips).
+//! Rust doesn't like that kind of aliased mutable graph with owned
+//! references, so instead of Rc<RefCell<..>> everywhere we use a flat-arena
+//! design: all pins live in one `Vec<SimPin>` and all chips in one
+//! `Vec<SimChip>`, and everything else refers to them by index. This keeps
+//! the hot simulation loop allocation-free and cache-friendly, similar in
+//! spirit to the original's flat arrays.
+
+use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
+use crate::pin_state;
+use rand::Rng;
+use std::time::Instant;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PinIdx(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ChipIdx(pub usize);
+
+#[derive(Debug)]
+pub struct SimPin {
+    pub id: i32,
+    pub parent_chip: ChipIdx,
+    pub is_input: bool,
+    pub state: u32,
+
+    pub connected_target_pins: Vec<PinIdx>,
+
+    /// Simulation frame index on which this pin last received an input.
+    pub last_updated_frame_index: u64,
+    /// Address of the pin from which this pin last received its input.
+    pub latest_source_id: i32,
+    pub latest_source_parent_chip_id: i32,
+
+    /// Number of wires that feed a signal into this pin.
+    pub num_input_connections: i32,
+    pub num_inputs_received_this_frame: i32,
+}
+
+impl SimPin {
+    fn new(id: i32, is_input: bool, parent_chip: ChipIdx) -> Self {
+        let mut state = 0u32;
+        pin_state::set_all_disconnected(&mut state);
+        Self {
+            id,
+            parent_chip,
+            is_input,
+            state,
+            connected_target_pins: Vec::new(),
+            last_updated_frame_index: 0,
+            latest_source_id: -1,
+            latest_source_parent_chip_id: -1,
+            num_input_connections: 0,
+            num_inputs_received_this_frame: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SimChip {
+    pub chip_type: ChipType,
+    pub id: i32,
+    /// Some builtin chips (RAM, ROM, displays...) need internal state for
+    /// memory; also used for other arbitrary chip-specific data.
+    pub internal_state: Vec<u32>,
+    pub is_builtin: bool,
+
+    pub input_pins: Vec<PinIdx>,
+    pub output_pins: Vec<PinIdx>,
+    pub sub_chips: Vec<ChipIdx>,
+
+    pub num_connected_inputs: i32,
+    pub num_inputs_ready: i32,
+}
+
+impl SimChip {
+    pub fn is_ready(&self) -> bool {
+        self.num_inputs_ready == self.num_connected_inputs
+    }
+}
+
+/// External stimulus: values the "player"/host program is driving into
+/// input dev-pins on the root chip, addressed by (owner id, pin id).
+pub struct ExternalInput {
+    pub address: PinAddress,
+    pub state: u32,
+}
+
+/// Owns the whole simulation graph (all pins/chips across every level of
+/// nesting) and knows how to step it forward one simulation frame.
+pub struct Simulator {
+    pins: Vec<SimPin>,
+    chips: Vec<SimChip>,
+    root: ChipIdx,
+
+    pub simulation_frame: u64,
+    pub steps_per_clock_transition: u32,
+
+    needs_order_pass: bool,
+    can_dynamic_reorder_this_frame: bool,
+
+    pcg_rng_state: u32,
+    rng: rand::rngs::ThreadRng,
+
+    start_time: Instant,
+    elapsed_seconds_old: f64,
+
+    /// Key-chip state: which key characters are currently held (set by host).
+    pub held_keys: std::collections::HashSet<char>,
+    /// Buzzer notes registered this frame: (freq_index, volume_index).
+    pub registered_notes: Vec<(i32, u32)>,
+}
+
+impl Simulator {
+    /// Build a simulator whose root chip is `root_desc`, resolving any
+    /// subchips against `library`.
+    pub fn build(root_desc: &ChipDescription, library: &ChipLibrary) -> Self {
+        let mut pins = Vec::new();
+        let mut chips = Vec::new();
+        let root = build_recursive(root_desc, library, -1, None, &mut pins, &mut chips);
+
+        Simulator {
+            pins,
+            chips,
+            root,
+            simulation_frame: 0,
+            steps_per_clock_transition: 30,
+            needs_order_pass: true,
+            can_dynamic_reorder_this_frame: false,
+            pcg_rng_state: 0,
+            rng: rand::thread_rng(),
+            start_time: Instant::now(),
+            elapsed_seconds_old: 0.0,
+            held_keys: std::collections::HashSet::new(),
+            registered_notes: Vec::new(),
+        }
+    }
+
+    pub fn root(&self) -> ChipIdx {
+        self.root
+    }
+
+    pub fn chip(&self, idx: ChipIdx) -> &SimChip {
+        &self.chips[idx.0]
+    }
+
+    pub fn pin(&self, idx: PinIdx) -> &SimPin {
+        &self.pins[idx.0]
+    }
+
+    /// Find a pin anywhere within `chip` (its own dev-pins, or a direct
+    /// subchip's pins) by address. Mirrors SimChip.GetSimPinFromAddress.
+    pub fn find_pin(&self, chip: ChipIdx, address: PinAddress) -> Option<PinIdx> {
+        let c = &self.chips[chip.0];
+
+        for &sub in &c.sub_chips {
+            let s = &self.chips[sub.0];
+            if s.id == address.pin_owner_id {
+                for &p in s.input_pins.iter().chain(s.output_pins.iter()) {
+                    if self.pins[p.0].id == address.pin_id {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+
+        for &p in c.input_pins.iter().chain(c.output_pins.iter()) {
+            if self.pins[p.0].id == address.pin_owner_id {
+                return Some(p);
+            }
+        }
+
+        None
+    }
+
+    /// Run a single simulation step: apply external inputs, then propagate
+    /// signals through the whole chip graph.
+    pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput]) {
+        self.registered_notes.clear();
+
+        self.pcg_rng_state = self.rng.gen::<u32>();
+        self.can_dynamic_reorder_this_frame = self.simulation_frame % 100 == 0;
+        self.simulation_frame += 1;
+
+        // Step 1) copy externally-driven (player-controlled) input states in.
+        for input in external_inputs {
+            if let Some(pin_idx) = self.find_pin(self.root, input.address) {
+                self.pins[pin_idx.0].state = input.state;
+            }
+        }
+
+        if self.needs_order_pass {
+            self.step_chip_reorder(self.root);
+            self.needs_order_pass = false;
+        } else {
+            self.step_chip(self.root);
+        }
+
+        self.update_audio_state();
+    }
+
+    fn update_audio_state(&mut self) {
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let _delta_time = if self.simulation_frame <= 1 {
+            0.0
+        } else {
+            elapsed - self.elapsed_seconds_old
+        };
+        self.elapsed_seconds_old = elapsed;
+        // Host can inspect `registered_notes` after each step to drive audio.
+    }
+
+    /// Recursively propagate signals through this chip and its subchips.
+    fn step_chip(&mut self, chip_idx: ChipIdx) {
+        self.propagate_inputs(chip_idx);
+
+        let num_sub = self.chips[chip_idx.0].sub_chips.len();
+
+        // NOTE: subchips are assumed to be sorted in reverse order of desired visitation.
+        let mut i = num_sub as isize - 1;
+        while i >= 0 {
+            let idx = i as usize;
+            let mut next_sub_chip = self.chips[chip_idx.0].sub_chips[idx];
+
+            if self.can_dynamic_reorder_this_frame
+                && idx > 0
+                && !self.chips[next_sub_chip.0].is_ready()
+                && self.random_bool()
+            {
+                let potential_swap = self.chips[chip_idx.0].sub_chips[idx - 1];
+                if !self.chips[potential_swap.0].chip_type.is_bus_origin_type() {
+                    next_sub_chip = potential_swap;
+                    self.chips[chip_idx.0].sub_chips.swap(idx, idx - 1);
+                }
+            }
+
+            if self.chips[next_sub_chip.0].is_builtin {
+                self.process_builtin_chip(next_sub_chip);
+            } else {
+                self.step_chip(next_sub_chip);
+            }
+
+            self.propagate_outputs(next_sub_chip);
+
+            i -= 1;
+        }
+    }
+
+    /// Like `step_chip`, but also determines (and records) a good traversal
+    /// order for the subchips as it goes, swapping them into place. Needed
+    /// once after any structural edit to the graph.
+    fn step_chip_reorder(&mut self, chip_idx: ChipIdx) {
+        self.propagate_inputs(chip_idx);
+
+        let mut num_remaining = self.chips[chip_idx.0].sub_chips.len();
+
+        while num_remaining > 0 {
+            let next_idx = self.choose_next_sub_chip(chip_idx, num_remaining);
+            let next_sub_chip = self.chips[chip_idx.0].sub_chips[next_idx];
+
+            self.chips[chip_idx.0]
+                .sub_chips
+                .swap(next_idx, num_remaining - 1);
+            num_remaining -= 1;
+
+            if self.chips[next_sub_chip.0].chip_type == ChipType::Custom {
+                self.step_chip_reorder(next_sub_chip);
+            } else {
+                self.process_builtin_chip(next_sub_chip);
+            }
+
+            self.propagate_outputs(next_sub_chip);
+        }
+    }
+
+    fn choose_next_sub_chip(&mut self, chip_idx: ChipIdx, num: usize) -> usize {
+        let sub_chips = &self.chips[chip_idx.0].sub_chips;
+        let mut no_sub_chips_ready = true;
+        let mut is_non_bus_chip_remaining = false;
+        let mut next_index = 0usize;
+
+        for i in 0..num {
+            let sub = sub_chips[i];
+            if self.chips[sub.0].is_ready() {
+                no_sub_chips_ready = false;
+                next_index = i;
+                break;
+            }
+            is_non_bus_chip_remaining |= !self.chips[sub.0].chip_type.is_bus_origin_type();
+        }
+
+        if no_sub_chips_ready {
+            next_index = (self.rng.gen::<u32>() as usize) % num;
+
+            if is_non_bus_chip_remaining {
+                for _ in 0..num {
+                    let sub_chips = &self.chips[chip_idx.0].sub_chips;
+                    if !self.chips[sub_chips[next_index].0].chip_type.is_bus_origin_type() {
+                        break;
+                    }
+                    next_index = (next_index + 1) % num;
+                }
+            }
+        }
+
+        next_index
+    }
+
+    fn propagate_inputs(&mut self, chip_idx: ChipIdx) {
+        let pins = self.chips[chip_idx.0].input_pins.clone();
+        for p in pins {
+            self.propagate_signal(p);
+        }
+    }
+
+    fn propagate_outputs(&mut self, chip_idx: ChipIdx) {
+        let pins = self.chips[chip_idx.0].output_pins.clone();
+        for p in pins {
+            self.propagate_signal(p);
+        }
+        self.chips[chip_idx.0].num_inputs_ready = 0;
+    }
+
+    fn propagate_signal(&mut self, source: PinIdx) {
+        let targets = self.pins[source.0].connected_target_pins.clone();
+        for target in targets {
+            self.receive_input(target, source);
+        }
+    }
+
+    /// Called on sub-chip input pins, or chip dev-pins, when a connected
+    /// source pin propagates its signal to them.
+    fn receive_input(&mut self, target: PinIdx, source: PinIdx) {
+        let frame = self.simulation_frame;
+
+        if self.pins[target.0].last_updated_frame_index != frame {
+            self.pins[target.0].last_updated_frame_index = frame;
+            self.pins[target.0].num_inputs_received_this_frame = 0;
+        }
+
+        let set;
+        let source_state = self.pins[source.0].state;
+
+        if self.pins[target.0].num_inputs_received_this_frame > 0 {
+            // Already received input this frame: choose randomly whether to
+            // accept the conflicting input (same choice for all bits).
+            let cur_state = self.pins[target.0].state;
+            let or = source_state | cur_state;
+            let and = source_state & cur_state;
+            let bits_new: u16 = if self.random_bool() { or as u16 } else { and as u16 };
+
+            let mask = (or >> 16) as u16; // tristate flags
+            let bits_new = (bits_new & !mask) | ((or as u16) & mask);
+
+            let tristate_new = (and >> 16) as u16;
+            let state_new = (bits_new as u32) | ((tristate_new as u32) << 16);
+
+            set = state_new != cur_state;
+            self.pins[target.0].state = state_new;
+        } else {
+            self.pins[target.0].state = source_state;
+            set = true;
+        }
+
+        if set {
+            self.pins[target.0].latest_source_id = self.pins[source.0].id;
+            self.pins[target.0].latest_source_parent_chip_id =
+                self.chips[self.pins[source.0].parent_chip.0].id;
+        }
+
+        self.pins[target.0].num_inputs_received_this_frame += 1;
+
+        let target_pin = &self.pins[target.0];
+        if target_pin.is_input
+            && target_pin.num_inputs_received_this_frame == target_pin.num_input_connections
+        {
+            let parent = target_pin.parent_chip;
+            self.chips[parent.0].num_inputs_ready += 1;
+        }
+    }
+
+    /// PCG-based pseudo-random bool, matching the original's algorithm so
+    /// race-condition resolution has the same statistical behaviour.
+    fn random_bool(&mut self) -> bool {
+        self.pcg_rng_state = self
+            .pcg_rng_state
+            .wrapping_mul(747796405)
+            .wrapping_add(2891336453);
+        let state = self.pcg_rng_state;
+        let mut result = ((state >> ((state >> 28).wrapping_add(4))) ^ state).wrapping_mul(277803737);
+        result = (result >> 22) ^ result;
+        result < u32::MAX / 2
+    }
+
+    pub fn add_connection(&mut self, chip_idx: ChipIdx, source: PinAddress, target: PinAddress) {
+        let (Some(source_pin), Some(target_pin)) =
+            (self.find_pin(chip_idx, source), self.find_pin(chip_idx, target))
+        else {
+            // Mirrors the original: silently ignore if a pin can't be found
+            // (e.g. stale saved chip referencing a since-removed pin).
+            return;
+        };
+
+        self.pins[source_pin.0].connected_target_pins.push(target_pin);
+        self.pins[target_pin.0].num_input_connections += 1;
+
+        if self.pins[target_pin.0].num_input_connections == 1 {
+            // Find owning chip of target pin among subchips of chip_idx (if any)
+            for &sub in &self.chips[chip_idx.0].sub_chips {
+                if self.chips[sub.0].id == target.pin_owner_id {
+                    self.chips[sub.0].num_connected_inputs += 1;
+                    break;
+                }
+            }
+        }
+
+        self.needs_order_pass = true;
+    }
+
+    fn process_builtin_chip(&mut self, chip_idx: ChipIdx) {
+        use ChipType::*;
+        let chip_type = self.chips[chip_idx.0].chip_type;
+
+        macro_rules! in_state {
+            ($i:expr) => {
+                self.pins[self.chips[chip_idx.0].input_pins[$i].0].state
+            };
+        }
+        macro_rules! set_out {
+            ($i:expr, $v:expr) => {{
+                let p = self.chips[chip_idx.0].output_pins[$i];
+                self.pins[p.0].state = $v;
+            }};
+        }
+
+        match chip_type {
+            Nand => {
+                let nand_op = 1 ^ (in_state!(0) & in_state!(1));
+                set_out!(0, nand_op & 1);
+            }
+            Clock => {
+                let spct = self.steps_per_clock_transition;
+                let high = spct != 0 && ((self.simulation_frame / spct as u64) & 1) == 0;
+                set_out!(0, if high { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
+            }
+            Pulse => {
+                const DURATION: usize = 0;
+                const TICKS_REMAINING: usize = 1;
+                const INPUT_OLD: usize = 2;
+
+                let input_state = in_state!(0);
+                let pulse_input_high = pin_state::first_bit_high(input_state);
+                let mut ticks_remaining = self.chips[chip_idx.0].internal_state[TICKS_REMAINING];
+
+                if ticks_remaining == 0 {
+                    let is_rising_edge =
+                        pulse_input_high && self.chips[chip_idx.0].internal_state[INPUT_OLD] == 0;
+                    if is_rising_edge {
+                        ticks_remaining = self.chips[chip_idx.0].internal_state[DURATION];
+                        self.chips[chip_idx.0].internal_state[TICKS_REMAINING] = ticks_remaining;
+                    }
+                }
+
+                let mut output_state = pin_state::LOGIC_LOW as u32;
+                if ticks_remaining > 0 {
+                    self.chips[chip_idx.0].internal_state[TICKS_REMAINING] -= 1;
+                    output_state = pin_state::LOGIC_HIGH as u32;
+                } else if pin_state::tristate_flags(input_state) != 0 {
+                    pin_state::set_all_disconnected(&mut output_state);
+                }
+
+                set_out!(0, output_state);
+                self.chips[chip_idx.0].internal_state[INPUT_OLD] = pulse_input_high as u32;
+            }
+            Split4To1Bit => {
+                let in4 = in_state!(0);
+                set_out!(0, (in4 >> 3) & pin_state::SINGLE_BIT_MASK);
+                set_out!(1, (in4 >> 2) & pin_state::SINGLE_BIT_MASK);
+                set_out!(2, (in4 >> 1) & pin_state::SINGLE_BIT_MASK);
+                set_out!(3, (in4 >> 0) & pin_state::SINGLE_BIT_MASK);
+            }
+            Merge1To4Bit => {
+                let a = in_state!(3) & pin_state::SINGLE_BIT_MASK; // lsb
+                let b = in_state!(2) & pin_state::SINGLE_BIT_MASK;
+                let c = in_state!(1) & pin_state::SINGLE_BIT_MASK;
+                let d = in_state!(0) & pin_state::SINGLE_BIT_MASK;
+                set_out!(0, a | (b << 1) | (c << 2) | (d << 3));
+            }
+            Merge1To8Bit => {
+                let a = in_state!(7) & pin_state::SINGLE_BIT_MASK;
+                let b = in_state!(6) & pin_state::SINGLE_BIT_MASK;
+                let c = in_state!(5) & pin_state::SINGLE_BIT_MASK;
+                let d = in_state!(4) & pin_state::SINGLE_BIT_MASK;
+                let e = in_state!(3) & pin_state::SINGLE_BIT_MASK;
+                let f = in_state!(2) & pin_state::SINGLE_BIT_MASK;
+                let g = in_state!(1) & pin_state::SINGLE_BIT_MASK;
+                let h = in_state!(0) & pin_state::SINGLE_BIT_MASK;
+                set_out!(
+                    0,
+                    a | (b << 1) | (c << 2) | (d << 3) | (e << 4) | (f << 5) | (g << 6) | (h << 7)
+                );
+            }
+            Merge4To8Bit => {
+                let a4 = in_state!(0);
+                let b4 = in_state!(1);
+                let mut out8 = 0u32;
+                pin_state::set_8bit_from_4bit_sources(&mut out8, b4, a4);
+                set_out!(0, out8);
+            }
+            Split8To4Bit => {
+                let in8 = in_state!(0);
+                let mut a4 = 0u32;
+                let mut b4 = 0u32;
+                pin_state::set_4bit_from_8bit_source(&mut a4, in8, false);
+                pin_state::set_4bit_from_8bit_source(&mut b4, in8, true);
+                set_out!(0, a4);
+                set_out!(1, b4);
+            }
+            Split8To1Bit => {
+                let in8 = in_state!(0);
+                for bit in 0..8 {
+                    set_out!(bit, (in8 >> (7 - bit)) & pin_state::SINGLE_BIT_MASK);
+                }
+            }
+            TriStateBuffer => {
+                let data = in_state!(0);
+                let enable = in_state!(1);
+                if pin_state::first_bit_high(enable) {
+                    set_out!(0, data);
+                } else {
+                    let mut disconnected = 0u32;
+                    pin_state::set_all_disconnected(&mut disconnected);
+                    set_out!(0, disconnected);
+                }
+            }
+            Key => {
+                let key_char = self.chips[chip_idx.0].internal_state[0] as u8 as char;
+                let is_held = self.held_keys.contains(&key_char);
+                set_out!(0, if is_held { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
+            }
+            DisplayRgb => self.process_display_rgb(chip_idx),
+            DisplayDot => self.process_display_dot(chip_idx),
+            DevRam8Bit => self.process_ram_8bit(chip_idx),
+            Rom256x16 => {
+                const BYTE_MASK: u32 = 0b1111_1111;
+                let address = pin_state::bit_states(in_state!(0)) as usize;
+                let data = self.chips[chip_idx.0].internal_state[address];
+                set_out!(0, (data >> 8) & BYTE_MASK);
+                set_out!(1, data & BYTE_MASK);
+            }
+            Buzzer => {
+                let freq_index = pin_state::bit_states(in_state!(0)) as i32;
+                let volume_index = pin_state::bit_states(in_state!(1)) as u32;
+                self.registered_notes.push((freq_index, volume_index));
+            }
+            _ => {
+                if chip_type.is_bus_origin_type() {
+                    let input = in_state!(0);
+                    set_out!(0, input);
+                }
+            }
+        }
+    }
+
+    fn process_ram_8bit(&mut self, chip_idx: ChipIdx) {
+        macro_rules! in_state {
+            ($i:expr) => {
+                self.pins[self.chips[chip_idx.0].input_pins[$i].0].state
+            };
+        }
+        let address_pin = in_state!(0);
+        let data_pin = in_state!(1);
+        let write_enable_pin = in_state!(2);
+        let reset_pin = in_state!(3);
+        let clock_pin = in_state!(4);
+
+        let internal = &mut self.chips[chip_idx.0].internal_state;
+        let last = internal.len() - 1;
+        let clock_high = pin_state::first_bit_high(clock_pin);
+        let is_rising_edge = clock_high && internal[last] == 0;
+        internal[last] = clock_high as u32;
+
+        if is_rising_edge {
+            if pin_state::first_bit_high(reset_pin) {
+                for i in 0..256 {
+                    internal[i] = 0;
+                }
+            } else if pin_state::first_bit_high(write_enable_pin) {
+                let addr = pin_state::bit_states(address_pin) as usize;
+                internal[addr] = pin_state::bit_states(data_pin) as u32;
+            }
+        }
+
+        let addr = pin_state::bit_states(address_pin) as usize;
+        let out_val = self.chips[chip_idx.0].internal_state[addr] as u16 as u32;
+        let out_pin = self.chips[chip_idx.0].output_pins[0];
+        self.pins[out_pin.0].state = out_val;
+    }
+
+    fn process_display_rgb(&mut self, chip_idx: ChipIdx) {
+        const ADDRESS_SPACE: usize = 256;
+        macro_rules! in_state {
+            ($i:expr) => {
+                self.pins[self.chips[chip_idx.0].input_pins[$i].0].state
+            };
+        }
+        let address_pin = in_state!(0);
+        let red_pin = in_state!(1);
+        let green_pin = in_state!(2);
+        let blue_pin = in_state!(3);
+        let reset_pin = in_state!(4);
+        let write_pin = in_state!(5);
+        let refresh_pin = in_state!(6);
+        let clock_pin = in_state!(7);
+
+        let internal = &mut self.chips[chip_idx.0].internal_state;
+        let last = internal.len() - 1;
+        let clock_high = pin_state::first_bit_high(clock_pin);
+        let is_rising_edge = clock_high && internal[last] == 0;
+        internal[last] = clock_high as u32;
+
+        if is_rising_edge {
+            if pin_state::first_bit_high(reset_pin) {
+                for i in 0..ADDRESS_SPACE {
+                    internal[i + ADDRESS_SPACE] = 0;
+                }
+            } else if pin_state::first_bit_high(write_pin) {
+                let addr = pin_state::bit_states(address_pin) as usize + ADDRESS_SPACE;
+                let data = pin_state::bit_states(red_pin) as u32
+                    | ((pin_state::bit_states(green_pin) as u32) << 4)
+                    | ((pin_state::bit_states(blue_pin) as u32) << 8);
+                internal[addr] = data;
+            }
+
+            if pin_state::first_bit_high(refresh_pin) {
+                for i in 0..ADDRESS_SPACE {
+                    internal[i] = internal[i + ADDRESS_SPACE];
+                }
+            }
+        }
+
+        let col_data = self.chips[chip_idx.0].internal_state[pin_state::bit_states(address_pin) as usize];
+        macro_rules! set_out {
+            ($i:expr, $v:expr) => {{
+                let p = self.chips[chip_idx.0].output_pins[$i];
+                self.pins[p.0].state = $v;
+            }};
+        }
+        set_out!(0, (col_data >> 0) & 0b1111);
+        set_out!(1, (col_data >> 4) & 0b1111);
+        set_out!(2, (col_data >> 8) & 0b1111);
+    }
+
+    fn process_display_dot(&mut self, chip_idx: ChipIdx) {
+        const ADDRESS_SPACE: usize = 256;
+        macro_rules! in_state {
+            ($i:expr) => {
+                self.pins[self.chips[chip_idx.0].input_pins[$i].0].state
+            };
+        }
+        let address_pin = in_state!(0);
+        let pixel_input_pin = in_state!(1);
+        let reset_pin = in_state!(2);
+        let write_pin = in_state!(3);
+        let refresh_pin = in_state!(4);
+        let clock_pin = in_state!(5);
+
+        let internal = &mut self.chips[chip_idx.0].internal_state;
+        let last = internal.len() - 1;
+        let clock_high = pin_state::first_bit_high(clock_pin);
+        let is_rising_edge = clock_high && internal[last] == 0;
+        internal[last] = clock_high as u32;
+
+        if is_rising_edge {
+            if pin_state::first_bit_high(reset_pin) {
+                for i in 0..ADDRESS_SPACE {
+                    internal[i + ADDRESS_SPACE] = 0;
+                }
+            } else if pin_state::first_bit_high(write_pin) {
+                let addr = pin_state::bit_states(address_pin) as usize + ADDRESS_SPACE;
+                internal[addr] = pin_state::bit_states(pixel_input_pin) as u32;
+            }
+
+            if pin_state::first_bit_high(refresh_pin) {
+                for i in 0..ADDRESS_SPACE {
+                    internal[i] = internal[i + ADDRESS_SPACE];
+                }
+            }
+        }
+
+        let pixel_state =
+            self.chips[chip_idx.0].internal_state[pin_state::bit_states(address_pin) as usize] as u16 as u32;
+        let out_pin = self.chips[chip_idx.0].output_pins[0];
+        self.pins[out_pin.0].state = pixel_state;
+    }
+}
+
+/// Recursively build the flat pin/chip arenas from a ChipDescription tree.
+fn build_recursive(
+    desc: &ChipDescription,
+    library: &ChipLibrary,
+    sub_chip_id: i32,
+    internal_state_override: Option<&[u32]>,
+    pins: &mut Vec<SimPin>,
+    chips: &mut Vec<SimChip>,
+) -> ChipIdx {
+    // Recursively create subchips first.
+    let mut sub_chip_indices = Vec::with_capacity(desc.sub_chips.len());
+    for sub_desc in &desc.sub_chips {
+        let full_desc = library.get(&sub_desc.name);
+        let idx = build_recursive(
+            full_desc,
+            library,
+            sub_desc.id,
+            sub_desc.internal_data.as_deref(),
+            pins,
+            chips,
+        );
+        sub_chip_indices.push(idx);
+    }
+
+    let is_builtin = desc.chip_type != ChipType::Custom;
+
+    let internal_state = build_internal_state(desc.chip_type, internal_state_override);
+
+    // Reserve the chip's own slot first so pins can point back to it.
+    let chip_idx = ChipIdx(chips.len());
+    chips.push(SimChip {
+        chip_type: desc.chip_type,
+        id: sub_chip_id,
+        internal_state,
+        is_builtin,
+        input_pins: Vec::new(),
+        output_pins: Vec::new(),
+        sub_chips: sub_chip_indices,
+        num_connected_inputs: 0,
+        num_inputs_ready: 0,
+    });
+
+    let mut input_pins = Vec::with_capacity(desc.input_pins.len());
+    for p in &desc.input_pins {
+        let idx = PinIdx(pins.len());
+        pins.push(SimPin::new(p.id, true, chip_idx));
+        input_pins.push(idx);
+    }
+
+    let mut output_pins = Vec::with_capacity(desc.output_pins.len());
+    for p in &desc.output_pins {
+        let idx = PinIdx(pins.len());
+        pins.push(SimPin::new(p.id, false, chip_idx));
+        output_pins.push(idx);
+    }
+
+    chips[chip_idx.0].input_pins = input_pins;
+    chips[chip_idx.0].output_pins = output_pins;
+
+    // Wire up connections declared on this (custom) chip.
+    for wire in &desc.wires {
+        connect(chip_idx, wire.source_pin_address, wire.target_pin_address, pins, chips);
+    }
+
+    chip_idx
+}
+
+fn connect(
+    chip_idx: ChipIdx,
+    source: PinAddress,
+    target: PinAddress,
+    pins: &mut [SimPin],
+    chips: &mut [SimChip],
+) {
+    let find = |addr: PinAddress, pins: &[SimPin], chips: &[SimChip]| -> Option<PinIdx> {
+        let c = &chips[chip_idx.0];
+        for &sub in &c.sub_chips {
+            let s = &chips[sub.0];
+            if s.id == addr.pin_owner_id {
+                for &p in s.input_pins.iter().chain(s.output_pins.iter()) {
+                    if pins[p.0].id == addr.pin_id {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+        for &p in c.input_pins.iter().chain(c.output_pins.iter()) {
+            if pins[p.0].id == addr.pin_owner_id {
+                return Some(p);
+            }
+        }
+        None
+    };
+
+    let (Some(source_pin), Some(target_pin)) =
+        (find(source, pins, chips), find(target, pins, chips))
+    else {
+        return; // stale wire referencing a removed pin; ignore, as original does
+    };
+
+    pins[source_pin.0].connected_target_pins.push(target_pin);
+    pins[target_pin.0].num_input_connections += 1;
+
+    if pins[target_pin.0].num_input_connections == 1 {
+        for &sub in &chips[chip_idx.0].sub_chips {
+            if chips[sub.0].id == target.pin_owner_id {
+                chips[sub.0].num_connected_inputs += 1;
+                break;
+            }
+        }
+    }
+}
+
+fn build_internal_state(chip_type: ChipType, override_state: Option<&[u32]>) -> Vec<u32> {
+    const ADDRESS_SIZE_8BIT: usize = 256;
+
+    match chip_type {
+        ChipType::DisplayRgb | ChipType::DisplayDot => vec![0u32; ADDRESS_SIZE_8BIT * 2 + 1],
+        ChipType::DevRam8Bit => {
+            let mut state = vec![0u32; ADDRESS_SIZE_8BIT + 1]; // +1 for clock edge state
+            let mut rng = rand::thread_rng();
+            use rand::RngCore;
+            for slot in state.iter_mut().take(ADDRESS_SIZE_8BIT) {
+                *slot = rng.next_u32();
+            }
+            state
+        }
+        _ => match override_state {
+            Some(s) if !s.is_empty() => s.to_vec(),
+            _ => Vec::new(),
+        },
+    }
+}
