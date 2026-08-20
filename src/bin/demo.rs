@@ -24,8 +24,8 @@ fn and_desc() -> ChipDescription {
     d.output_pins.push(PinDescription::new("OUT", 200, PinBitCount::Bit1));
 
     // subchip 1: first NAND, subchip 2: inverter NAND (both inputs tied together)
-    d.sub_chips.push(SubChipDescription { name: "NAND".into(), id: 1, internal_data: None, position: Vec2::new(-1.0, 0.0), pin_colour_info: Vec::new() });
-    d.sub_chips.push(SubChipDescription { name: "NAND".into(), id: 2, internal_data: None, position: Vec2::new(1.0, 0.0), pin_colour_info: Vec::new() });
+    d.sub_chips.push(SubChipDescription { name: "NAND".into(), id: 1, internal_data: None, label: None, position: Vec2::new(-1.0, 0.0), pin_colour_info: Vec::new() });
+    d.sub_chips.push(SubChipDescription { name: "NAND".into(), id: 2, internal_data: None, label: None, position: Vec2::new(1.0, 0.0), pin_colour_info: Vec::new() });
 
     // dev-pin A/B (owner id = -1 like original convention for chip's own IO... using 0 here
     // since our PinAddress just needs owner ids that resolve; the chip's own pins are matched

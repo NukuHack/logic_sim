@@ -241,7 +241,8 @@ impl ApplicationHandler for App {
 
                 let root_desc = self.library.get(&self.root_chip_name);
                 let lookup = SimulatorPinState { sim: &self.sim, scope: self.sim.root() };
-                let chip_scene = build_scene(root_desc, &self.library, &lookup);
+                let hover_world_pos = Some(self.camera.screen_to_world(self.last_cursor));
+                let chip_scene = build_scene(root_desc, &self.library, &lookup, hover_world_pos);
 
                 if !self.camera_fitted {
                     // Default zoom=1.0 shows ~viewport-pixel-count world
@@ -249,7 +250,7 @@ impl ApplicationHandler for App {
                     // ~0.125 -- so without this the whole scene would be an
                     // invisible speck in the middle of the window.
                     let bounds = bounding_box(&chip_scene)
-                        .or_else(|| bounding_box(&build_scene(root_desc, &self.library, &AllLow)));
+                        .or_else(|| bounding_box(&build_scene(root_desc, &self.library, &AllLow, None)));
                     if let Some((min, max)) = bounds {
                         self.camera.fit_to_bounds(min, max, 0.15);
                     }

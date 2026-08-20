@@ -61,7 +61,14 @@ pub const CHIP_OUTLINE_COL: Rgba = rgb(0.15, 0.15, 0.16);
 
 /// World-space font size (grid units) used for a subchip's name label.
 /// Mirrors `DrawSettings.FontSizeChipName`.
-pub const FONT_SIZE_CHIP_NAME: f32 = 0.25;
+pub const FONT_SIZE_CHIP_NAME: f32 = 0.2;
+
+/// Text colour used for a hover-triggered name label (a pin's or a
+/// component's), drawn directly over the background/grid rather than over
+/// a component body -- so, unlike `text_colour_for_background`, it isn't
+/// picked per-background; it just needs to read clearly against the dark
+/// `BACKGROUND_COL`/`GRID_COL`.
+pub const HOVER_LABEL_COL: Rgba = rgb(0.95, 0.95, 0.95);
 
 /// Perceptual (Rec. 709) luminance of an RGBA colour, ignoring alpha.
 /// Mirrors `ColHelper.Luminance`.

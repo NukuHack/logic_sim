@@ -509,10 +509,11 @@ impl App {
 
                 let root_desc = v.library.get(&v.root_chip_name);
                 let lookup = SimulatorPinState { sim: &v.sim, scope: v.sim.root() };
-                let chip_scene = build_scene(root_desc, &v.library, &lookup);
+                let hover_world_pos = Some(v.camera.screen_to_world(self.mouse_pos));
+                let chip_scene = build_scene(root_desc, &v.library, &lookup, hover_world_pos);
 
                 if !v.camera_fitted {
-                    let bounds = bounding_box(&chip_scene).or_else(|| bounding_box(&build_scene(root_desc, &v.library, &AllLow)));
+                    let bounds = bounding_box(&chip_scene).or_else(|| bounding_box(&build_scene(root_desc, &v.library, &AllLow, None)));
                     if let Some((min, max)) = bounds {
                         v.camera.fit_to_bounds(min, max, 0.15);
                     }

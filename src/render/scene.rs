@@ -177,6 +177,158 @@ impl SceneGeometry {
             colour,
         );
     }
+
+    /// A thick polyline through `points`, drawn as one continuous ribbon
+    /// with proper mitered joins at every interior vertex -- unlike
+    /// drawing each segment as its own independent `add_line` rectangle
+    /// (which leaves a visible gap or overlap at any bend that isn't
+    /// perfectly straight), this keeps the two edges of the ribbon
+    /// touching exactly at each bend. See `offset_polyline` (used for both
+    /// this ribbon's two edges and, separately, for laying out each
+    /// individual bit-strand's own centreline) for the actual join maths.
+    pub fn add_polyline(&mut self, points: &[Vec2], thickness: f32, colour: Rgba) {
+        if points.len() < 2 {
+            return;
+        }
+        let half = thickness / 2.0;
+        let left = offset_polyline(points, half);
+        let right = offset_polyline(points, -half);
+        for i in 0..points.len() - 1 {
+            self.push_quad(left[i], left[i + 1], right[i + 1], right[i], colour);
+        }
+    }
+}
+
+/// Offsets every point of a polyline sideways by a constant perpendicular
+/// `distance` (positive = to the left of each segment's direction of
+/// travel, i.e. rotate the segment direction +90 degrees; negative = to
+/// the right), producing a new polyline that stays exactly `distance` away
+/// from the original at every point along it -- including through bends,
+/// via a proper miter join at each interior vertex, rather than naively
+/// offsetting each segment independently and leaving a gap/overlap where
+/// two differently-offset segments would otherwise meet.
+///
+/// This one function backs two different uses in this module:
+///  - `add_polyline` calls it twice (once with `+thickness/2`, once with
+///    `-thickness/2`) to get a stroked ribbon's two edges.
+///  - `draw_wires` calls it once per bit-strand, with that strand's own
+///    constant centreline offset, to lay out each strand's path before
+///    stroking *that* with `add_polyline` at a single strand's thickness.
+///
+/// At an interior vertex, the offset direction is the (normalized) sum of
+/// the incoming and outgoing segments' own perpendicular normals -- the
+/// angle bisector -- scaled up by `1 / cos(theta / 2)` (`theta` being the
+/// angle between the two segments) so the offset point still sits exactly
+/// `distance` away from *both* adjacent (infinite) segment lines, not just
+/// nearer one of them. This is the standard "miter join" used for stroking
+/// polylines. For a perfect 180-degree reversal (incoming and outgoing
+/// directions exactly opposite, so their normals cancel to zero and the
+/// bisector is undefined) this falls back to just the incoming segment's
+/// own normal; the miter scale is also clamped (`MITER_LIMIT`) so a very
+/// sharp near-reversal bend doesn't spike out to an enormous, visually
+/// broken offset point.
+fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
+    const MITER_LIMIT: f32 = 4.0;
+    let n = points.len();
+    let mut out = Vec::with_capacity(n);
+
+    // Unit normal (rotate direction +90 degrees) of the segment from `a`
+    // to `b`, or `None` if the two points coincide (zero-length segment).
+    fn segment_normal(a: Vec2, b: Vec2) -> Option<Vec2> {
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 1e-6 {
+            None
+        } else {
+            Some(Vec2::new(-dy / len, dx / len))
+        }
+    }
+
+    for i in 0..n {
+        let normal_in = if i > 0 { segment_normal(points[i - 1], points[i]) } else { None };
+        let normal_out = if i + 1 < n { segment_normal(points[i], points[i + 1]) } else { None };
+
+        let normal = match (normal_in, normal_out) {
+            (Some(a), Some(b)) => {
+                let sum = Vec2::new(a.x + b.x, a.y + b.y);
+                let sum_len = (sum.x * sum.x + sum.y * sum.y).sqrt();
+                if sum_len < 1e-6 {
+                    // Exact 180-degree reversal -- bisector is undefined;
+                    // fall back to the incoming segment's own normal.
+                    a
+                } else {
+                    let bisector = Vec2::new(sum.x / sum_len, sum.y / sum_len);
+                    let cos_half = (bisector.x * a.x + bisector.y * a.y).max(1.0 / MITER_LIMIT);
+                    Vec2::new(bisector.x / cos_half, bisector.y / cos_half)
+                }
+            }
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => Vec2::ZERO, // single-point polyline; no direction to offset along.
+        };
+
+        out.push(Vec2::new(points[i].x + normal.x * distance, points[i].y + normal.y * distance));
+    }
+
+    out
+}
+
+/// A point-in-shape test matching `SceneGeometry::add_rounded_rect`'s
+/// actual drawn geometry exactly (same corner-rounding rules), so hover
+/// hit-testing lines up with what's on screen instead of assuming every
+/// pin is a plain circle. Corners flagged `round_left`/`round_right` are
+/// treated as a quarter-circle around the same arc centre `add_rounded_rect`
+/// uses; the flat middle "cross" (within the bounding box but outside any
+/// rounded corner's own box) always counts as inside, same as a square
+/// corner would. `radius` is clamped the same way `add_rounded_rect` clamps
+/// it, so callers can pass the exact same arguments used to draw the shape.
+pub fn point_in_rounded_rect(point: Vec2, centre: Vec2, size: Vec2, radius: f32, round_left: bool, round_right: bool) -> bool {
+    let hw = size.x / 2.0;
+    let hh = size.y / 2.0;
+    if hw <= 0.0 || hh <= 0.0 {
+        return false;
+    }
+    let r = radius.max(0.0).min(hw).min(hh);
+    let dx = point.x - centre.x;
+    let dy = point.y - centre.y;
+    if dx.abs() > hw || dy.abs() > hh {
+        return false;
+    }
+    // A point only falls within a rounded corner's own carved-out region
+    // when it's *simultaneously* past the corner threshold on both axes
+    // (dx AND dy, not either alone) -- e.g. a point sitting right at the
+    // vertical centre of a rounded-right edge (dy near 0, dx near hw) is
+    // just on the flat middle of that edge, not anywhere near the actual
+    // arc, and must count as inside without ever touching the circle
+    // test below. Gating on dx alone (as an earlier version of this
+    // function did) wrongly treated that entire vertical strip -- most of
+    // a pill's flat sides -- as if it were corner territory, and then
+    // rejected it for sitting far from the arc centre; that's what made
+    // hover hit-testing miss large swathes of any non-circle pin shape.
+    let in_dx_corner = dx.abs() > hw - r;
+    let in_dy_corner = dy.abs() > hh - r;
+    if !(in_dx_corner && in_dy_corner) {
+        return true;
+    }
+    let rounded_side = if dx > 0.0 { round_right } else { round_left };
+    if !rounded_side {
+        // A square corner's whole bounding box is filled -- no arc to test.
+        return true;
+    }
+    let arc_cx = if dx > 0.0 { hw - r } else { -(hw - r) };
+    let arc_cy = if dy > 0.0 { hh - r } else { -(hh - r) };
+    let ddx = dx - arc_cx;
+    let ddy = dy - arc_cy;
+    ddx * ddx + ddy * ddy <= r * r
+}
+
+/// A point-in-circle test, for hit-testing a plain circle shape (a 1-bit
+/// pin's connection dot -- see `draw_pin_shape`).
+pub fn point_in_circle(point: Vec2, centre: Vec2, radius: f32) -> bool {
+    let dx = point.x - centre.x;
+    let dy = point.y - centre.y;
+    dx * dx + dy * dy <= radius * radius
 }
 
 /// Resolved placement of one subchip instance within the scene, in world
@@ -189,6 +341,8 @@ pub struct PlacedSubChip<'a> {
     pub size: Vec2,
     pub input_pin_y: Vec<f32>,
     pub output_pin_y: Vec<f32>,
+    /// Label
+    pub label: Option<String>,
     /// Per-instance output pin colour overrides, copied from this placed
     /// instance's `SubChipDescription::pin_colour_info`.
     pub pin_colour_info: Vec<(i32, Color)>,
@@ -261,6 +415,7 @@ pub fn place_sub_chips<'a>(chip: &ChipDescription, library: &'a ChipLibrary) -> 
             desc,
             centre: sub.position,
             size,
+            label: sub.label.clone(),
             input_pin_y,
             output_pin_y,
             pin_colour_info: sub.pin_colour_info.clone(),
@@ -289,6 +444,19 @@ pub trait PinStateLookup {
         self.is_high(pin_owner_id, pin_id)
             .map(|high| if high { LogicState::High } else { LogicState::Low })
     }
+
+    /// Same as `logic_state`, but for one specific bit of a multi-bit pin
+    /// (`bit_index` counting from 0, the same convention
+    /// `pin_state::get_bit_tristated_value` uses), so a wire carrying more
+    /// than one bit can be drawn as that many individually-coloured
+    /// strands (see `draw_wires`) instead of a single "averaged" colour.
+    /// Defaults to `logic_state` regardless of `bit_index` -- correct for
+    /// any lookup that can't distinguish bits from each other (`AllLow`,
+    /// the fixed-state test doubles below), and overridden by
+    /// `SimulatorPinState` to report each bit's own real state.
+    fn bit_logic_state(&self, pin_owner_id: i32, pin_id: i32, _bit_index: u32) -> Option<LogicState> {
+        self.logic_state(pin_owner_id, pin_id)
+    }
 }
 
 /// Trivial lookup that always reports every pin as low -- useful for static
@@ -302,9 +470,9 @@ impl PinStateLookup for AllLow {
 
 /// Live lookup backed by a running `Simulator`: resolves `(owner, pin)`
 /// addresses the same way the sim graph does (`Simulator::find_pin`) and
-/// reports the pin's first bit's state. Multi-bit buses are simplified to
-/// "first bit's state" for this first rendering pass -- full per-bit
-/// colour-coding is a follow-up once the multi-bit pin visuals are ported.
+/// reports the pin's per-bit state (`bit_logic_state`) as well as its
+/// first bit's state alone (`logic_state`, used wherever only a single
+/// representative colour is needed -- e.g. a pin's own drawn shape).
 pub struct SimulatorPinState<'a> {
     pub sim: &'a crate::sim::Simulator,
     pub scope: crate::sim::ChipIdx,
@@ -323,13 +491,52 @@ impl<'a> PinStateLookup for SimulatorPinState<'a> {
         let raw = crate::pin_state::get_bit_tristated_value(self.sim.pin(pin_idx).state, 0);
         Some(LogicState::from_tristated_value(raw))
     }
+
+    fn bit_logic_state(&self, pin_owner_id: i32, pin_id: i32, bit_index: u32) -> Option<LogicState> {
+        let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
+        let pin_idx = self.sim.find_pin(self.scope, addr)?;
+        let raw = crate::pin_state::get_bit_tristated_value(self.sim.pin(pin_idx).state, bit_index);
+        Some(LogicState::from_tristated_value(raw))
+    }
+}
+
+/// Draws one wire's full `bit_count` as that many individually-coloured,
+/// 1-bit-wide parallel strands rather than a single `bit_count`-scaled-
+/// thick line -- so e.g. a mixed-signal 4-bit bus shows its actual 4
+/// separate colours side by side, instead of a single line whose colour
+/// only reflects bit 0's state (the old behaviour), or some blended
+/// "average" that isn't any bit's real state.
+///
+/// Each strand's centreline is `centreline` (the wire's actual path,
+/// including any player-authored bend points) offset sideways by that
+/// strand's own constant distance via `offset_polyline` -- so every
+/// strand bends together with the wire and stays a clean parallel line
+/// through every corner, not just on straight runs.
+///
+/// Strand layout, `layout::WIRE_THICKNESS` apart: for `n` bits, strand `i`
+/// sits at offset `WIRE_THICKNESS * (i - (n - 1) / 2)`. This single
+/// formula handles both parities the way a real ribbon cable does: for an
+/// *odd* bit count the middle strand's offset comes out to exactly `0`
+/// (a real centred "middle wire"); for an *even* bit count there's no
+/// strand at `0` at all -- the two middle strands straddle the centreline
+/// at `+/- WIRE_THICKNESS / 2` instead, same spacing as every other
+/// adjacent pair.
+fn draw_wire_strands(geo: &mut SceneGeometry, centreline: &[Vec2], bit_count: u32, colour: Color, pin_owner_id: i32, pin_id: i32, pin_state: &dyn PinStateLookup) {
+    let bit_count = bit_count.max(1);
+    for bit_index in 0..bit_count {
+        let offset = layout::WIRE_THICKNESS * (bit_index as f32 - (bit_count - 1) as f32 / 2.0);
+        let strand_points = if offset == 0.0 { centreline.to_vec() } else { offset_polyline(centreline, offset) };
+        let logic = pin_state.bit_logic_state(pin_owner_id, pin_id, bit_index).unwrap_or(LogicState::Low);
+        let strand_colour = theme::state_colour(logic, colour);
+        geo.add_polyline(&strand_points, layout::WIRE_THICKNESS, strand_colour);
+    }
 }
 
 /// Build the full drawable scene for one chip: every subchip's body + pins,
 /// plus wires connecting them. `chip.input_pins`/`output_pins` are treated
 /// as this chip's own boundary dev-pins (owner id == the pin's own id, per
 /// the on-disk wire-address convention).
-pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dyn PinStateLookup) -> SceneGeometry {
+pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dyn PinStateLookup, hover_world_pos: Option<Vec2>) -> SceneGeometry {
     let mut geo = SceneGeometry::default();
     let placed = place_sub_chips(chip, library);
 
@@ -344,11 +551,40 @@ pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dy
     // name labels) on top. This keeps a component's body from ever being
     // occluded by a wire or pin that happens to be drawn after it, and
     // keeps pins sitting visibly on top of the wires that connect to them.
+    //
+    // Name labels (for both pins and components) are hover-gated: they're
+    // only added to `geo.labels` for whichever single thing (if any)
+    // `hover_world_pos` currently lands on, using the exact same shape
+    // each thing is actually drawn with -- a plain circle for a 1-bit
+    // pin, a "pill" for a wider pin (`point_in_rounded_rect`/
+    // `point_in_circle`, mirroring `draw_pin_shape`'s own branching), a
+    // dev-pin's partially-rounded body, or a subchip's plain rect body --
+    // rather than a fixed always-on label or an approximate hit-test that
+    // doesn't match what's on screen. Pins are checked before components,
+    // so hovering a pin sitting on a component's edge shows the pin's
+    // name, not the component's.
     draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
-    draw_pins(&mut geo, chip, &placed, pin_state);
-    draw_components(&mut geo, &placed, pin_state);
+    let hovered_pin_name = draw_pins(&mut geo, chip, &placed, pin_state, hover_world_pos);
+    draw_components(&mut geo, &placed, pin_state, hover_world_pos, hovered_pin_name.is_some());
+    if let Some((pos, name)) = hovered_pin_name {
+        push_hover_label(&mut geo, pos, name);
+    }
 
     geo
+}
+
+/// Pushes a small hover-triggered name label just above `pos`. Shared by
+/// both the pin and component hover paths in `build_scene` so their
+/// labels look consistent.
+fn push_hover_label(geo: &mut SceneGeometry, pos: Vec2, name: String) {
+    let width = layout::estimate_text_width(&name, theme::FONT_SIZE_CHIP_NAME);
+    geo.labels.push(TextLabel {
+        pos: Vec2::new(pos.x, pos.y + layout::GRID_SIZE * 2.0),
+        text: name,
+        colour: theme::HOVER_LABEL_COL,
+        font_size: theme::FONT_SIZE_CHIP_NAME,
+        width,
+    });
 }
 
 /// Layer 1 (bottom): every wire in `chip.wires`, resolved to world-space
@@ -383,35 +619,49 @@ fn draw_wires(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedS
         let dst = resolve_wire_endpoint(chip, placed, owner_to_placed, &chip.wires, wire_idx, true, &mut wire_point_cache, 0);
 
         if let (Some(src), Some(dst)) = (src, dst) {
-            // Colour/bit-count/state always trace back to the wire's real
+            // Colour/bit-count always trace back to the wire's real
             // originating pin (`source_pin_address`), regardless of
             // `connection_type` -- a wire tapped off another wire still
             // carries that other wire's underlying signal, so this
             // resolution doesn't need to change for the bend fix above.
-            let logic = pin_state
-                .logic_state(wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id)
-                .unwrap_or(LogicState::Low);
             let colour = resolve_pin_colour(chip, placed, owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
             let bit_count = resolve_pin_bit_count(chip, placed, owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
-            let thickness = layout::WIRE_THICKNESS * bit_count.to_int() as f32;
-            let colour = theme::state_colour(logic, colour);
 
-            let mut prev = src;
-            for &bend in &wire.points {
-                geo.add_line(prev, bend, thickness, colour);
-                prev = bend;
-            }
-            geo.add_line(prev, dst, thickness, colour);
+            let mut centreline = Vec::with_capacity(wire.points.len() + 2);
+            centreline.push(src);
+            centreline.extend_from_slice(&wire.points);
+            centreline.push(dst);
+
+            draw_wire_strands(
+                geo,
+                &centreline,
+                bit_count as u32,
+                colour,
+                wire.source_pin_address.pin_owner_id,
+                wire.source_pin_address.pin_id,
+                pin_state,
+            );
         }
     }
 }
 
-/// Layer 2 (middle): every pin -- each subchip's input/output pins (plain
-/// circles) plus this chip's own boundary dev-pins (small rounded-rect
+/// Layer 2 (middle): every pin -- each subchip's input/output pins
+/// (`draw_pin_shape` -- a plain circle for 1-bit, a "pill" for wider
+/// pins) plus this chip's own boundary dev-pins (small rounded-rect
 /// bodies, drawn via `draw_dev_pin_body`) -- so pins always sit visibly on
 /// top of the wires that connect to them, and underneath the component
 /// bodies that own them.
-fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSubChip], pin_state: &dyn PinStateLookup) {
+///
+/// Also hit-tests every pin against `hover_world_pos` (if given) using its
+/// *exact* drawn shape (`point_in_pin_shape`/`point_in_rounded_rect`,
+/// mirroring `draw_pin_shape`/`draw_dev_pin_body`'s own geometry) and
+/// returns the first hit's `(label anchor position, pin name)`, for
+/// `build_scene` to turn into a hover label. Pins are hit-tested in the
+/// same order they're drawn, so if two overlap the topmost (drawn last)
+/// wins, matching what's visibly on top.
+fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSubChip], pin_state: &dyn PinStateLookup, hover_world_pos: Option<Vec2>) -> Option<(Vec2, String)> {
+    let mut hovered: Option<(Vec2, String)> = None;
+
     for sub in placed {
         // Bus origin/terminus chips draw their one visible pin on a fixed
         // default side (bus -> right, terminus -> left) unless flipped via
@@ -423,7 +673,10 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
             let y = sub.input_pin_y.get(i).copied().unwrap_or(0.0);
             let pos = layout::pin_world_position(sub.centre, sub.size, y, true ^ is_flipped);
             let logic = pin_state.logic_state(sub.id, pin.id).unwrap_or(LogicState::Low);
-            geo.add_circle(pos, layout::PIN_RADIUS, theme::state_colour(logic, pin.colour), 16);
+            draw_pin_shape(geo, pos, pin.bit_count, theme::state_colour(logic, pin.colour));
+            if hover_world_pos.is_some_and(|p| point_in_pin_shape(p, pos, pin.bit_count)) {
+                hovered = Some((pos, pin.name.clone()));
+            }
         }
         for (i, pin) in sub.desc.output_pins
             .iter().filter(|p| !p.name.contains("(Hidden)")).enumerate() {
@@ -434,7 +687,10 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
             // colour (saved `OutputPinColourInfo`); fall back to the
             // chip-level pin colour when there's no override for this pin.
             let colour_idx = sub.output_pin_colour(pin.id, pin.colour);
-            geo.add_circle(pos, layout::PIN_RADIUS, theme::state_colour(logic, colour_idx), 16);
+            draw_pin_shape(geo, pos, pin.bit_count, theme::state_colour(logic, colour_idx));
+            if hover_world_pos.is_some_and(|p| point_in_pin_shape(p, pos, pin.bit_count)) {
+                hovered = Some((pos, pin.name.clone()));
+            }
         }
     }
 
@@ -447,15 +703,34 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
     // plain circle. Mirrors `layout::dev_pin_body_size`'s docs.
     for pin in &chip.input_pins {
         draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), true);
+        if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, true)) {
+            hovered = Some((pin.position, pin.name.clone()));
+        }
     }
     for pin in &chip.output_pins {
         draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), false);
+        if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, false)) {
+            hovered = Some((pin.position, pin.name.clone()));
+        }
     }
+
+    hovered
 }
 
-/// Layer 3 (top): every subchip's body rectangle + name label, drawn last
-/// so a component's body is never occluded by a wire or pin drawn earlier.
-fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state: &dyn PinStateLookup) {
+/// Layer 3 (top): every subchip's body rectangle, drawn last so a
+/// component's body is never occluded by a wire or pin drawn earlier.
+///
+/// The name label is hover-gated: it's only added when `hover_world_pos`
+/// lands on this subchip's body rect *and* `pin_already_hovered` is
+/// false (a pin sitting on/near the component's edge takes precedence --
+/// see `build_scene`'s doc comment), and even then only if the chip's own
+/// `NameLocation` isn't `Hidden` (e.g. display/bus/pin chips, whose body
+/// is the visualisation, never show a name). Mirrors
+/// `DevSceneDrawer.DrawSubChip`'s "if (... desc.NameLocation !=
+/// NameDisplayLocation.Hidden)" gate; the `isKeyChip` special case (which
+/// shows a keybinding string even when hidden) isn't ported here since it
+/// needs live key-binding state this module doesn't have.
+fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state: &dyn PinStateLookup, hover_world_pos: Option<Vec2>, pin_already_hovered: bool) {
     for sub in placed {
         // An LED's body *is* its indicator: tint it with the saved
         // `InternalData[0]` colour (same palette-index encoding as a pin's
@@ -515,12 +790,80 @@ fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state:
                 _ => sub.centre,
             };
             geo.labels.push(TextLabel {
-                pos: label_pos,
+                pos: name_pos,
                 text: sub.desc.name.clone(),
                 colour: theme::text_colour_for_background(body_colour),
                 font_size: theme::FONT_SIZE_CHIP_NAME,
                 width: sub.size.x,
             });
+        }
+        if let Some(label) = &sub.label {
+            if is_hovered {
+                let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
+                geo.labels.push(TextLabel {
+                    pos: label_pos,
+                    text: label.into(),
+                    colour: theme::text_colour_for_background(body_colour),
+                    font_size: theme::FONT_SIZE_CHIP_NAME,
+                    width: sub.size.x,
+                });
+            }
+        }
+    }
+}
+
+/// A point-in-shape test mirroring `draw_pin_shape`'s exact branching: a
+/// plain circle for a 1-bit pin, or the same "pill" `add_rounded_rect`
+/// call (round on both sides) for a wider pin -- see
+/// `point_in_rounded_rect`/`point_in_circle`.
+fn point_in_pin_shape(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> bool {
+    match bit_count {
+        PinBitCount::Bit1 => point_in_circle(point, pos, layout::pin_radius_for_bit_count(bit_count)),
+        PinBitCount::Bit4 | PinBitCount::Bit8 => {
+            let size = layout::pin_visual_shape_size(bit_count);
+            point_in_rounded_rect(point, pos, size, size.y / 2.0, true, true)
+        }
+    }
+}
+
+/// A point-in-shape test mirroring `draw_dev_pin_body`'s exact geometry
+/// (its outer, full-size border shape -- the fill is strictly smaller, so
+/// testing against the border is the more generous/correct hit area).
+fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount, round_left: bool) -> bool {
+    let size = layout::dev_pin_body_size(bit_count);
+    let radius = layout::dev_pin_corner_radius(size);
+    point_in_rounded_rect(point, pos, size, radius, round_left, !round_left)
+}
+
+/// A plain axis-aligned rectangle hit-test, for a subchip's body (which,
+/// unlike its pins, is never rounded).
+fn point_in_rect(point: Vec2, centre: Vec2, size: Vec2) -> bool {
+    (point.x - centre.x).abs() <= size.x / 2.0 && (point.y - centre.y).abs() <= size.y / 2.0
+}
+
+/// Draws a single subchip pin's connection shape at `pos`, coloured
+/// `colour`, scaled by `bit_count`: a plain circle for a 1-bit pin, or a
+/// "pill" (a rectangular body with a half-circle cap on each end) for a
+/// wider pin -- so a 4/8-bit pin reads as visibly carrying more than a
+/// 1-bit pin's single wire, rather than every pin drawing at the same
+/// fixed size. See `layout::pin_radius_for_bit_count`/
+/// `pin_visual_shape_size` for the exact sizing rule.
+///
+/// The pill's rounded corners become true semicircle caps (not just
+/// quarter-round corners) because `pin_visual_shape_size` always returns a
+/// shape whose height already equals twice the intended cap radius, and
+/// that radius is what's passed to `add_rounded_rect` below (see
+/// `add_rounded_rect`'s own docs on how corner arcs merge into a full
+/// semicircle when `radius == height / 2`).
+fn draw_pin_shape(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Rgba) {
+    match bit_count {
+        PinBitCount::Bit1 => {
+            geo.add_circle(pos, layout::pin_radius_for_bit_count(bit_count), colour, 16);
+        }
+        PinBitCount::Bit4 | PinBitCount::Bit8 => {
+            let size = layout::pin_visual_shape_size(bit_count);
+            let radius = size.y / 2.0;
+            geo.add_rounded_rect(pos, size, colour, radius, true, true, 16);
         }
     }
 }
@@ -942,6 +1285,7 @@ mod tests {
             name: "Full Adder".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::ZERO,
             pin_colour_info: Vec::new(),
         });
@@ -976,11 +1320,15 @@ mod tests {
             name: "Full Adder".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::ZERO,
             pin_colour_info: Vec::new(),
         });
 
-        let scene = build_scene(&parent, &lib, &AllLow);
+        // Hover at the subchip's own centre (Vec2::ZERO) -- labels are now
+        // hover-gated (see `draw_components`), so this test needs to
+        // actually be "hovering" the component to get a label at all.
+        let scene = build_scene(&parent, &lib, &AllLow, Some(Vec2::ZERO));
         assert_eq!(scene.labels.len(), 1);
         let label = &scene.labels[0];
         assert_eq!(label.text, "Full Adder");
@@ -1003,6 +1351,7 @@ mod tests {
             name: "NAND".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::ZERO,
             pin_colour_info: Vec::new(),
         });
@@ -1010,6 +1359,7 @@ mod tests {
             name: "NONEXISTENT".into(),
             id: 2,
             internal_data: None,
+            label: None,
             position: Vec2::new(1.0, 0.0),
             pin_colour_info: Vec::new(),
         });
@@ -1031,22 +1381,24 @@ mod tests {
             name: "NAND".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::new(-1.0, 0.0),
-pin_colour_info: Vec::new(),
+            pin_colour_info: Vec::new(),
         });
         parent.sub_chips.push(SubChipDescription {
             name: "NAND".into(),
             id: 2,
             internal_data: None,
+            label: None,
             position: Vec2::new(1.0, 0.0),
-pin_colour_info: Vec::new(),
+            pin_colour_info: Vec::new(),
         });
         parent.wires.push(WireDescription::new(
             PinAddress::new(1, 0), // NAND #1's output pin id 0
             PinAddress::new(2, 0), // NAND #2's input pin id 0
         ));
 
-        let scene = build_scene(&parent, &lib, &AllLow);
+        let scene = build_scene(&parent, &lib, &AllLow, None);
         // 2 chip bodies (6 verts each) + 6 pins (3 in + 3 out across both
         // NANDs = 2*(2+1)=6 pins, 16 segments * 3 verts each) + 1 wire (6 verts).
         let expected_body = 2 * 6;
@@ -1072,6 +1424,7 @@ pin_colour_info: Vec::new(),
             name: "NAND".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::ZERO,
 pin_colour_info: Vec::new(),
         });
@@ -1094,6 +1447,7 @@ pin_colour_info: Vec::new(),
             name: "NAND".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::ZERO,
 pin_colour_info: Vec::new(),
         });
@@ -1102,7 +1456,7 @@ pin_colour_info: Vec::new(),
             PinAddress::new(999, 0), // unknown owner
         ));
 
-        let scene = build_scene(&parent, &lib, &AllLow);
+        let scene = build_scene(&parent, &lib, &AllLow, None);
         // Only the one chip body (6) + its 3 pins (16*3 each) should be drawn; no wire.
         assert_eq!(scene.triangles.len(), 6 + 3 * 16 * 3);
     }
@@ -1136,7 +1490,7 @@ pin_colour_info: Vec::new(),
     #[test]
     fn wire_tap_endpoint_resolves_onto_referenced_wire_segment_not_the_underlying_pin() {
         let mut lib = ChipLibrary::new();
-        lib.add(nand_desc());
+        lib.add(nand_desc());git push -u origin main
 
         let mut chip = ChipDescription::new("TAP_TEST", ChipType::Custom);
         for id in [1, 2, 3] {
@@ -1144,6 +1498,7 @@ pin_colour_info: Vec::new(),
                 name: "NAND".into(),
                 id,
                 internal_data: None,
+            label: None,
                 position: Vec2::new(id as f32 * 4.0, 0.0),
                 pin_colour_info: Vec::new(),
             });
@@ -1204,6 +1559,7 @@ pin_colour_info: Vec::new(),
                 name: "NAND".into(),
                 id,
                 internal_data: None,
+            label: None,
                 position: Vec2::new(id as f32 * 4.0, 0.0),
                 pin_colour_info: Vec::new(),
             });
@@ -1228,7 +1584,7 @@ pin_colour_info: Vec::new(),
         let wire0_bend = chip.wires[0].points[0];
         let expected_tap_point = closest_point_on_segment(chip.wires[1].cached_source_point, wire0_src, wire0_bend);
 
-        let scene = build_scene(&chip, &lib, &AllLow);
+        let scene = build_scene(&chip, &lib, &AllLow, None);
 
         // wire 1 is unbent (no interior points), so it's drawn as exactly
         // one quad (6 verts). Wires are drawn first (see `draw_wires`),
@@ -1250,12 +1606,16 @@ pin_colour_info: Vec::new(),
         assert_eq!(start_mid, expected_tap_point);
     }
 
+    /// The old "one line, `WIRE_THICKNESS * bit_count` thick" rendering
+    /// is gone -- a wide bus is now `bit_count` individually-drawn 1-bit
+    /// strands (see `draw_wire_strands`), each exactly `WIRE_THICKNESS`
+    /// wide on its own. This checks the *total* perpendicular spread
+    /// across every strand still grows with bit count (a real 8-bit bus
+    /// visibly occupies more space than a 1-bit wire), while each
+    /// individual strand's own thickness never exceeds one bit's worth.
     #[test]
-    fn wire_thickness_scales_with_bit_count() {
-        // A straight (unbent) dev-pin-to-dev-pin wire is drawn as exactly
-        // one quad, so its perpendicular spread directly reflects the
-        // thickness `build_scene` chose for it.
-        fn horizontal_wire_half_thickness(bit_count: PinBitCount) -> f32 {
+    fn wire_total_spread_scales_with_bit_count_but_each_strand_stays_one_bit_wide() {
+        fn horizontal_wire_geometry(bit_count: PinBitCount) -> Vec<SceneVertex> {
             let lib = ChipLibrary::new();
             let mut chip = ChipDescription::new("BUS_TEST", ChipType::Custom);
             let mut in_pin = PinDescription::new("IN", 10, bit_count);
@@ -1266,32 +1626,226 @@ pin_colour_info: Vec::new(),
             chip.output_pins.push(out_pin);
             chip.wires.push(WireDescription::new(PinAddress::new(10, 0), PinAddress::new(20, 0)));
 
-            let scene = build_scene(&chip, &lib, &AllLow);
-            // Both dev-pins are placed at y=0 (their saved `position`), so
-            // this wire is perfectly horizontal. Wires are now drawn
-            // first (see `draw_wires`), before pins/components, and it's
-            // unbent (no interior points) -- so it's drawn as exactly one
-            // quad (6 verts) at the very start of the buffer. Look at just
-            // those, rather than the whole scene, since dev-pins are also
-            // drawn as small bodies (see `draw_dev_pin_body`) whose own
-            // half-height (for wide buses) can otherwise dwarf the wire's.
-            let wire_verts = &scene.triangles[..6];
-            wire_verts.iter().map(|v| v.pos.y.abs()).fold(0.0_f32, f32::max)
+            let scene = build_scene(&chip, &lib, &AllLow, None);
+            // Both dev-pins are placed at y=0, so this wire (and every one
+            // of its strands) is perfectly horizontal, and each strand is
+            // unbent -> exactly one quad (6 verts) per strand. Wires are
+            // drawn first (see `draw_wires`), so the first `bit_count * 6`
+            // vertices are exactly this wire's strands, before any
+            // dev-pin body geometry.
+            scene.triangles[..bit_count as u32 as usize * 6].to_vec()
         }
 
-        let bit1 = horizontal_wire_half_thickness(PinBitCount::Bit1);
-        let bit4 = horizontal_wire_half_thickness(PinBitCount::Bit4);
-        let bit8 = horizontal_wire_half_thickness(PinBitCount::Bit8);
+        for bit_count in [PinBitCount::Bit1, PinBitCount::Bit4, PinBitCount::Bit8] {
+            let verts = horizontal_wire_geometry(bit_count);
+            // Every strand quad's own perpendicular spread (min to max y
+            // within any single 6-vertex quad) must never exceed one
+            // strand's thickness.
+            for quad in verts.chunks(6) {
+                let min_y = quad.iter().map(|v| v.pos.y).fold(f32::INFINITY, f32::min);
+                let max_y = quad.iter().map(|v| v.pos.y).fold(f32::NEG_INFINITY, f32::max);
+                assert!(
+                    (max_y - min_y - layout::WIRE_THICKNESS).abs() < 1e-5,
+                    "each strand quad must be exactly WIRE_THICKNESS tall, got {} for {:?}",
+                    max_y - min_y,
+                    bit_count
+                );
+            }
+        }
 
-        assert!((bit1 - layout::WIRE_THICKNESS * 1.0 / 2.0).abs() < 1e-5);
-        assert!((bit4 - layout::WIRE_THICKNESS * 4.0 / 2.0).abs() < 1e-5);
-        assert!((bit8 - layout::WIRE_THICKNESS * 8.0 / 2.0).abs() < 1e-5);
-
-        // Explicitly guard against the "uniform thickness" symptom: each
-        // step up in bit count must actually be thicker than the last.
-        assert!(bit4 > bit1);
-        assert!(bit8 > bit4);
+        let total_spread = |bit_count: PinBitCount| -> f32 {
+            let verts = horizontal_wire_geometry(bit_count);
+            let min_y = verts.iter().map(|v| v.pos.y).fold(f32::INFINITY, f32::min);
+            let max_y = verts.iter().map(|v| v.pos.y).fold(f32::NEG_INFINITY, f32::max);
+            max_y - min_y
+        };
+        let spread1 = total_spread(PinBitCount::Bit1);
+        let spread4 = total_spread(PinBitCount::Bit4);
+        let spread8 = total_spread(PinBitCount::Bit8);
+        assert!(spread4 > spread1);
+        assert!(spread8 > spread4);
     }
+
+    /// Strand offset layout (`draw_wire_strands`): an *odd* bit count
+    /// (like a hypothetical 1-bit-wide single strand, or any odd `n`) puts
+    /// one strand exactly on the wire's own centreline (offset `0`);
+    /// `PinBitCount` only actually has one odd value (`Bit1`), so this is
+    /// checked directly against that.
+    #[test]
+    fn wire_strands_bit1_sits_exactly_on_the_centreline() {
+        let lib = ChipLibrary::new();
+        let mut chip = ChipDescription::new("BUS_TEST", ChipType::Custom);
+        let mut in_pin = PinDescription::new("IN", 10, PinBitCount::Bit1);
+        in_pin.position = Vec2::new(-4.0, 3.0);
+        let mut out_pin = PinDescription::new("OUT", 20, PinBitCount::Bit1);
+        out_pin.position = Vec2::new(4.0, 3.0);
+        chip.input_pins.push(in_pin);
+        chip.output_pins.push(out_pin);
+        chip.wires.push(WireDescription::new(PinAddress::new(10, 0), PinAddress::new(20, 0)));
+
+        let scene = build_scene(&chip, &lib, &AllLow, None);
+        let strand = &scene.triangles[..6];
+        let centre_y = (strand.iter().map(|v| v.pos.y).fold(f32::INFINITY, f32::min)
+            + strand.iter().map(|v| v.pos.y).fold(f32::NEG_INFINITY, f32::max))
+            / 2.0;
+        assert!((centre_y - 3.0).abs() < 1e-5, "the lone strand of a 1-bit wire must sit exactly on the wire's own centreline");
+    }
+
+    /// Strand offset layout for an *even* bit count: no strand sits on the
+    /// centreline itself -- the two middle strands straddle it at
+    /// `+/- WIRE_THICKNESS / 2`, same spacing as any other adjacent pair.
+    #[test]
+    fn wire_strands_even_bit_count_has_no_middle_strand_on_the_centreline() {
+        let lib = ChipLibrary::new();
+        let mut chip = ChipDescription::new("BUS_TEST", ChipType::Custom);
+        let mut in_pin = PinDescription::new("IN", 10, PinBitCount::Bit4);
+        in_pin.position = Vec2::new(-4.0, 0.0);
+        let mut out_pin = PinDescription::new("OUT", 20, PinBitCount::Bit4);
+        out_pin.position = Vec2::new(4.0, 0.0);
+        chip.input_pins.push(in_pin);
+        chip.output_pins.push(out_pin);
+        chip.wires.push(WireDescription::new(PinAddress::new(10, 0), PinAddress::new(20, 0)));
+
+        let scene = build_scene(&chip, &lib, &AllLow, None);
+        // 4 strands, 6 verts each, at the very start of the buffer.
+        let mut strand_centres: Vec<f32> = scene.triangles[..24]
+            .chunks(6)
+            .map(|quad| {
+                let min_y = quad.iter().map(|v| v.pos.y).fold(f32::INFINITY, f32::min);
+                let max_y = quad.iter().map(|v| v.pos.y).fold(f32::NEG_INFINITY, f32::max);
+                (min_y + max_y) / 2.0
+            })
+            .collect();
+        strand_centres.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // No strand at y = 0.
+        assert!(strand_centres.iter().all(|&y| y.abs() > 1e-5), "no strand should sit exactly on the centreline for an even bit count");
+        // The two middle strands straddle 0 at +/- WIRE_THICKNESS/2.
+        let expected = [
+            -1.5 * layout::WIRE_THICKNESS,
+            -0.5 * layout::WIRE_THICKNESS,
+            0.5 * layout::WIRE_THICKNESS,
+            1.5 * layout::WIRE_THICKNESS,
+        ];
+        for (actual, expected) in strand_centres.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 1e-5, "expected strand centre {}, got {}", expected, actual);
+        }
+    }
+
+    /// Each strand must reflect *its own* bit's real logic state, not
+    /// bit 0's state applied uniformly -- the whole point of splitting a
+    /// bus into individual strands instead of one "averaged" line.
+    #[test]
+    fn wire_strands_are_individually_coloured_by_their_own_bit() {
+        struct PerBitState;
+        impl PinStateLookup for PerBitState {
+            fn is_high(&self, _pin_owner_id: i32, _pin_id: i32) -> Option<bool> {
+                Some(false)
+            }
+            fn bit_logic_state(&self, _pin_owner_id: i32, _pin_id: i32, bit_index: u32) -> Option<LogicState> {
+                // Alternate low/high by bit index, so adjacent strands
+                // must visibly differ if per-bit colouring is wired up.
+                Some(if bit_index % 2 == 0 { LogicState::Low } else { LogicState::High })
+            }
+        }
+
+        let lib = ChipLibrary::new();
+        let mut chip = ChipDescription::new("BUS_TEST", ChipType::Custom);
+        let mut in_pin = PinDescription::new("IN", 10, PinBitCount::Bit4);
+        in_pin.position = Vec2::new(-4.0, 0.0);
+        let mut out_pin = PinDescription::new("OUT", 20, PinBitCount::Bit4);
+        out_pin.position = Vec2::new(4.0, 0.0);
+        chip.input_pins.push(in_pin);
+        chip.output_pins.push(out_pin);
+        chip.wires.push(WireDescription::new(PinAddress::new(10, 0), PinAddress::new(20, 0)));
+
+        let scene = build_scene(&chip, &lib, &PerBitState, None);
+        // 4 strands, 6 verts each, at the very start of the buffer, in
+        // ascending bit-index order (see `draw_wire_strands`).
+        let strand_colours: Vec<Rgba> = scene.triangles[..24].chunks(6).map(|quad| quad[0].colour).collect();
+        assert_eq!(strand_colours.len(), 4);
+        let low_colour = theme::state_colour(LogicState::Low, Color::default());
+        let high_colour = theme::state_colour(LogicState::High, Color::default());
+        assert_eq!(strand_colours[0], low_colour);
+        assert_eq!(strand_colours[1], high_colour);
+        assert_eq!(strand_colours[2], low_colour);
+        assert_eq!(strand_colours[3], high_colour);
+    }
+
+    /// `offset_polyline` on a single straight segment (no interior
+    /// vertices) is the simple case: every point shifts by the same
+    /// constant perpendicular vector, same as if there were no miter
+    /// logic involved at all.
+    #[test]
+    fn offset_polyline_straight_segment_shifts_uniformly() {
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)];
+        let offset = offset_polyline(&points, 1.0);
+        // Rotating the rightward direction (1,0) by +90 degrees gives (0,1).
+        assert_eq!(offset[0], Vec2::new(0.0, 1.0));
+        assert_eq!(offset[1], Vec2::new(10.0, 1.0));
+    }
+
+    /// `offset_polyline` at a clean 90-degree bend must produce a sharp,
+    /// exact corner via the miter-join formula, not a naive per-segment
+    /// offset that would leave a gap. Manually worked out for this L-shape
+    /// (right, then a left turn upward) offset by `distance = 1`:
+    ///  - `p0 = (0,0)`: only the first segment's normal `(0,1)` applies ->
+    ///    `(0,1)`.
+    ///  - `p1 = (10,0)` (the bend): normals `(0,1)` (incoming) and
+    ///    `(-1,0)` (outgoing) bisect to `(-1,1)/sqrt(2)`, scaled by
+    ///    `1/cos(45deg) = sqrt(2)` -> net offset vector `(-1,1)` -> the
+    ///    corner lands at `(9,1)`.
+    ///  - `p2 = (10,10)`: only the second segment's normal `(-1,0)`
+    ///    applies -> `(9,10)`.
+    #[test]
+    fn offset_polyline_90_degree_bend_produces_exact_miter_corner() {
+        // Right, then up: a clean 90-degree left turn.
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+        let offset = offset_polyline(&points, 1.0);
+        assert_eq!(offset[0], Vec2::new(0.0, 1.0));
+        assert_eq!(offset[1], Vec2::new(9.0, 1.0));
+        assert_eq!(offset[2], Vec2::new(9.0, 10.0));
+    }
+
+    /// Two consecutive collinear segments (a bend point that isn't
+    /// actually a bend -- both segments point the same direction) must
+    /// offset as if it were one straight line: the "corner" point offsets
+    /// by exactly the same amount as every other point, no miter spike.
+    #[test]
+    fn offset_polyline_collinear_bend_point_has_no_miter_spike() {
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(5.0, 0.0), Vec2::new(10.0, 0.0)];
+        let offset = offset_polyline(&points, 1.0);
+        assert_eq!(offset[0], Vec2::new(0.0, 1.0));
+        assert_eq!(offset[1], Vec2::new(5.0, 1.0));
+        assert_eq!(offset[2], Vec2::new(10.0, 1.0));
+    }
+
+    /// `add_polyline` must draw a fully-joined ribbon with no gap between
+    /// segments at a bend: the shared corner vertices on both the left and
+    /// right edges of the ribbon must be identical between the quad
+    /// ending at the bend and the quad starting there.
+    ///
+    /// Vertex layout for 2 quads (`push_quad(p0,p1,p2,p3)` -> triangles
+    /// `(p0,p1,p2)` then `(p0,p2,p3)`, 6 verts per quad):
+    ///  - quad 0 (segment `points[0]->points[1]`): indices
+    ///    `[0,1,2] = (left0,left1,right1)`, `[3,4,5] = (left0,right1,right0)`.
+    ///  - quad 1 (segment `points[1]->points[2]`): indices
+    ///    `[6,7,8] = (left1,left2,right2)`, `[9,10,11] = (left1,right2,right1)`.
+    ///
+    /// So `left1` shows up at indices 1 and 6, and `right1` at indices 2
+    /// and 11 -- each pair must match exactly for the join to be gap-free.
+    #[test]
+    fn add_polyline_has_no_gap_at_a_bend() {
+        let mut geo = SceneGeometry::default();
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(10.0, 10.0)];
+        geo.add_polyline(&points, 0.5, theme::PIN_COL);
+        assert_eq!(geo.triangles.len(), 12); // 2 segments * 2 triangles * 3 verts
+
+        assert_eq!(geo.triangles[1].pos, geo.triangles[6].pos, "left edge must not gap at the bend");
+        assert_eq!(geo.triangles[2].pos, geo.triangles[11].pos, "right edge must not gap at the bend");
+    }
+
+
 
     /// A lookup that always reports `Disconnected`, regardless of palette
     /// index -- for testing that disconnected pins/wires render flat black
@@ -1317,13 +1871,14 @@ pin_colour_info: Vec::new(),
                 name: "NAND".into(),
                 id,
                 internal_data: None,
+            label: None,
                 position: Vec2::new(id as f32 * 4.0, 0.0),
                 pin_colour_info: Vec::new(),
             });
         }
         parent.wires.push(WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0)));
 
-        let scene = build_scene(&parent, &lib, &AllDisconnected);
+        let scene = build_scene(&parent, &lib, &AllDisconnected, None);
 
         // The wire is unbent -> exactly one quad (6 verts). Wires are
         // drawn first (see `draw_wires`), so it's at the start of the buffer.
@@ -1342,6 +1897,7 @@ pin_colour_info: Vec::new(),
                 name: "NAND".into(),
                 id,
                 internal_data: None,
+            label: None,
                 position: Vec2::new(id as f32 * 4.0, 0.0),
                 pin_colour_info: Vec::new(),
             });
@@ -1349,7 +1905,7 @@ pin_colour_info: Vec::new(),
         parent.wires.push(WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0)));
 
         // AllLow reports every pin as (non-disconnected) low.
-        let scene = build_scene(&parent, &lib, &AllLow);
+        let scene = build_scene(&parent, &lib, &AllLow, None);
         // Wires are drawn first (see `draw_wires`), so it's at the start of the buffer.
         let wire_verts = &scene.triangles[..6];
 
@@ -1592,6 +2148,7 @@ pin_colour_info: Vec::new(),
             centre: Vec2::new(2.0, 0.0),
             size: Vec2::new(1.0, 1.0),
             input_pin_y: vec![0.25, -0.25],
+            label: None,
             output_pin_y: vec![0.0],
             pin_colour_info: Vec::new(),
             internal_data: Vec::new(),
@@ -1631,6 +2188,448 @@ pin_colour_info: Vec::new(),
         assert_eq!(geo.triangles.len(), expected_points as usize * 3);
     }
 
+    /// `pin_radius_for_bit_count`'s scaling curve: radius stays at
+    /// `PIN_RADIUS` for 1-bit, doubles for the 4x jump to 4-bit, and then
+    /// holds steady from 4-bit to 8-bit (only a 2x jump in bit count, not
+    /// the 4x that triggers another doubling).
+    #[test]
+    fn pin_radius_for_bit_count_scales_slower_than_bit_count() {
+        assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit1), layout::PIN_RADIUS);
+        assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit4), layout::PIN_RADIUS * 2.0);
+        assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit8), layout::pin_radius_for_bit_count(PinBitCount::Bit4));
+    }
+
+    /// `pin_visual_shape_size`: a 4-bit pin's pill is a square body (its
+    /// own width equals its height/diameter) with a half-circle cap
+    /// glued onto each end, so its total width is `diameter * 2` (body +
+    /// 2 * radius of caps) and its height is just `diameter`.
+    #[test]
+    fn pin_visual_shape_size_4bit_is_a_square_body_with_end_caps() {
+        let r = layout::pin_radius_for_bit_count(PinBitCount::Bit4);
+        let size = layout::pin_visual_shape_size(PinBitCount::Bit4);
+        assert_eq!(size, Vec2::new(r * 4.0, r * 2.0));
+    }
+
+    /// `pin_visual_shape_size`: an 8-bit pin's pill keeps 4-bit's height
+    /// (radius doesn't double again), but its body width doubles
+    /// relative to 4-bit's square body, with the same-radius end caps
+    /// still glued on -- so total width is `4-bit's total width + 2 *
+    /// (4-bit's own body width)`, i.e. `radius * 6`, while height stays
+    /// `radius * 2` same as 4-bit.
+    #[test]
+    fn pin_visual_shape_size_8bit_keeps_4bit_height_but_doubles_body_width() {
+        let r4 = layout::pin_radius_for_bit_count(PinBitCount::Bit4);
+        let size4 = layout::pin_visual_shape_size(PinBitCount::Bit4);
+        let r8 = layout::pin_radius_for_bit_count(PinBitCount::Bit8);
+        let size8 = layout::pin_visual_shape_size(PinBitCount::Bit8);
+
+        assert_eq!(r8, r4, "8-bit must not grow taller than 4-bit");
+        assert_eq!(size8.y, size4.y, "8-bit pill height must match 4-bit's");
+        assert_eq!(size8, Vec2::new(r4 * 6.0, r4 * 2.0));
+    }
+
+    /// `draw_pin_shape` must actually branch on bit count: a 1-bit pin
+    /// draws a plain circle (`add_circle`'s fan: `segments` triangles), a
+    /// wider pin draws a pill (`add_rounded_rect` fully rounded on both
+    /// sides, which -- per its own docs -- becomes `2 * (segments + 1)`
+    /// triangles for a shape with no square corners at all, since both
+    /// ends are rounded).
+    #[test]
+    fn draw_pin_shape_uses_a_circle_for_1bit_and_a_pill_for_wider_pins() {
+        let mut geo_1bit = SceneGeometry::default();
+        draw_pin_shape(&mut geo_1bit, Vec2::ZERO, PinBitCount::Bit1, theme::PIN_COL);
+        assert_eq!(geo_1bit.triangles.len(), 16 * 3);
+
+        let segments = 16u32;
+        // All 4 corners are rounded (round_left AND round_right), each
+        // contributing its own `segments + 1`-point arc -- the right
+        // side's two corner-arcs (and separately the left side's) share
+        // the same arc centre when radius == height/2, so together they
+        // trace a continuous semicircle, but `add_rounded_rect` still
+        // counts each of the 4 corners independently.
+        let expected_pill_tris = 4 * (segments + 1) as usize;
+        let mut geo_4bit = SceneGeometry::default();
+        draw_pin_shape(&mut geo_4bit, Vec2::ZERO, PinBitCount::Bit4, theme::PIN_COL);
+        assert_eq!(geo_4bit.triangles.len(), expected_pill_tris * 3);
+
+        let mut geo_8bit = SceneGeometry::default();
+        draw_pin_shape(&mut geo_8bit, Vec2::ZERO, PinBitCount::Bit8, theme::PIN_COL);
+        assert_eq!(geo_8bit.triangles.len(), expected_pill_tris * 3);
+
+        // The 8-bit pill's own vertices should spread wider in x than the
+        // 4-bit pill's (wider body), but no taller in y (same height/radius).
+        let extent = |geo: &SceneGeometry, axis: fn(&Vec2) -> f32| -> f32 { geo.triangles.iter().map(|v| axis(&v.pos).abs()).fold(0.0_f32, f32::max) };
+        let x_extent_4 = extent(&geo_4bit, |p| p.x);
+        let x_extent_8 = extent(&geo_8bit, |p| p.x);
+        let y_extent_4 = extent(&geo_4bit, |p| p.y);
+        let y_extent_8 = extent(&geo_8bit, |p| p.y);
+        assert!(x_extent_8 > x_extent_4, "8-bit pill should be wider than 4-bit's");
+        assert!((y_extent_8 - y_extent_4).abs() < 1e-5, "8-bit pill should be the same height as 4-bit's");
+    }
+
+    /// End-to-end through `build_scene`: a subchip with a 4-bit input pin
+    /// should have that pin drawn as a pill, not a plain circle -- i.e.
+    /// its drawn shape should be visibly wider than `PIN_RADIUS * 2`
+    /// (a 1-bit circle's diameter).
+    #[test]
+    fn build_scene_draws_wider_pin_shape_for_multibit_pins() {
+        let mut lib = ChipLibrary::new();
+        let mut chip4bit = ChipDescription::new("BUS4", ChipType::Custom);
+        chip4bit.input_pins.push(PinDescription::new("A", 0, PinBitCount::Bit4));
+        chip4bit.output_pins.push(PinDescription::new("OUT", 1, PinBitCount::Bit4));
+        lib.add(chip4bit);
+
+        let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
+        parent.sub_chips.push(SubChipDescription {
+            name: "BUS4".into(),
+            id: 1,
+            internal_data: None,
+            label: None,
+            position: Vec2::ZERO,
+            pin_colour_info: Vec::new(),
+        });
+
+        let scene = build_scene(&parent, &lib, &AllLow, None);
+        // Wires layer is empty (no wires), components layer is the last 6
+        // verts (one body rect); everything before that is the pins layer.
+        let pin_verts = &scene.triangles[..scene.triangles.len() - 6];
+        let max_x = pin_verts.iter().map(|v| v.pos.x.abs()).fold(0.0_f32, f32::max);
+        // A 4-bit pill's half-width is `pin_visual_shape_size(Bit4).x / 2`,
+        // strictly more than a 1-bit circle's radius would ever be.
+        assert!(max_x > layout::PIN_RADIUS, "4-bit pin should be drawn wider than a 1-bit circle's radius");
+    }
+
+    /// `point_in_rounded_rect` mirrors `add_rounded_rect`'s actual drawn
+    /// shape: a corner flagged as rounded excludes its own square corner
+    /// area (a point out past the arc, still inside the raw bounding box,
+    /// must NOT count as a hit), while a corner left square still counts
+    /// its whole box as a hit.
+    #[test]
+    fn point_in_rounded_rect_respects_rounded_vs_square_corners() {
+        let centre = Vec2::ZERO;
+        let size = Vec2::new(1.0, 1.0);
+        let radius = 0.3;
+
+        // Top-right corner, rounded (round_right = true): the exact
+        // bounding-box corner (0.5, 0.5) is well outside the arc (arc
+        // centre (0.2, 0.2), radius 0.3 -> corner is sqrt(0.3^2*2) =~
+        // 0.424 from the arc centre, safely past radius 0.3).
+        assert!(!point_in_rounded_rect(Vec2::new(0.5, 0.5), centre, size, radius, false, true));
+        // Same corner region, but round_right = false (square): must be a hit.
+        assert!(point_in_rounded_rect(Vec2::new(0.5, 0.5), centre, size, radius, false, false));
+        // Centre point is always inside, regardless of rounding.
+        assert!(point_in_rounded_rect(Vec2::ZERO, centre, size, radius, true, true));
+        // A point just outside the whole bounding box is never a hit.
+        assert!(!point_in_rounded_rect(Vec2::new(0.6, 0.0), centre, size, radius, true, true));
+    }
+
+    /// Regression test for the exact bug being fixed here: a point sitting
+    /// on the flat middle of a rounded edge -- past the corner's x
+    /// threshold, but nowhere near its y threshold, so it's really just on
+    /// the straight part of that side, not anywhere near the rounded
+    /// corner's arc -- must still count as a hit. This only shows up when
+    /// the radius is smaller than the half-height (so the rounding is a
+    /// true partial corner-only arc, not a full semicircle cap) -- e.g. a
+    /// dev-pin's body (see `point_in_dev_pin_body`), unlike a pin's pill
+    /// (`point_in_pin_shape`) where radius always equals the half-height
+    /// and this particular edge case happens to self-correct.
+    #[test]
+    fn point_in_rounded_rect_counts_flat_edge_between_corners_as_a_hit() {
+        let centre = Vec2::ZERO;
+        let size = Vec2::new(1.0, 1.0);
+        let radius = 0.2; // well under half-height (0.5) -> corners only, not a full semicircle.
+
+        // Right edge, vertical centre (dy = 0): squarely on the flat part
+        // of the rounded-right side, nowhere near either corner's arc.
+        assert!(point_in_rounded_rect(Vec2::new(0.49, 0.0), centre, size, radius, false, true));
+        // Left edge, vertical centre: same, mirrored, for the rounded-left side.
+        assert!(point_in_rounded_rect(Vec2::new(-0.49, 0.0), centre, size, radius, true, false));
+        // Sanity: the actual rounded corner is still correctly excluded.
+        assert!(!point_in_rounded_rect(Vec2::new(0.49, 0.49), centre, size, radius, false, true));
+    }
+
+    /// Same flat-edge-vs-corner distinction as the test above, but on the
+    /// *top and bottom* edges instead of left/right -- guards against a
+    /// fix that only special-cased the x-axis strip and left the y-axis
+    /// one still broken.
+    #[test]
+    fn point_in_rounded_rect_counts_flat_top_and_bottom_edges_as_a_hit() {
+        let centre = Vec2::ZERO;
+        let size = Vec2::new(1.0, 1.0);
+        let radius = 0.2;
+
+        // Top edge, horizontal centre (dx = 0): on the flat top, far from
+        // either top corner's arc, for a shape rounded on both sides.
+        assert!(point_in_rounded_rect(Vec2::new(0.0, 0.49), centre, size, radius, true, true));
+        // Bottom edge, horizontal centre: same, mirrored.
+        assert!(point_in_rounded_rect(Vec2::new(0.0, -0.49), centre, size, radius, true, true));
+    }
+
+    /// Every one of the 4 possible `(round_left, round_right)` combinations
+    /// must independently gate its own two corners: rounding one side must
+    /// never affect whether the *other* side's corners are treated as
+    /// rounded or square.
+    #[test]
+    fn point_in_rounded_rect_each_side_gates_only_its_own_corners() {
+        let centre = Vec2::ZERO;
+        let size = Vec2::new(1.0, 1.0);
+        let radius = 0.3;
+        // Same corner point on the right vs. left, each just past the arc
+        // (far enough from the arc centre to miss a rounded corner, but
+        // still inside the flat square-corner bounding box).
+        let top_right = Vec2::new(0.5, 0.5);
+        let top_left = Vec2::new(-0.5, 0.5);
+
+        // Neither side rounded: both corners are square -- always hits.
+        assert!(point_in_rounded_rect(top_right, centre, size, radius, false, false));
+        assert!(point_in_rounded_rect(top_left, centre, size, radius, false, false));
+        // Only right rounded: right corner excluded, left corner still square (hit).
+        assert!(!point_in_rounded_rect(top_right, centre, size, radius, false, true));
+        assert!(point_in_rounded_rect(top_left, centre, size, radius, false, true));
+        // Only left rounded: mirrored.
+        assert!(point_in_rounded_rect(top_right, centre, size, radius, true, false));
+        assert!(!point_in_rounded_rect(top_left, centre, size, radius, true, false));
+        // Both rounded: both corners excluded.
+        assert!(!point_in_rounded_rect(top_right, centre, size, radius, true, true));
+        assert!(!point_in_rounded_rect(top_left, centre, size, radius, true, true));
+    }
+
+    /// A radius of exactly 0 degenerates every "rounded" side into a plain
+    /// square corner (there's no arc to speak of), so it must behave
+    /// identically to `round_left = round_right = false` regardless of
+    /// what's passed for them.
+    #[test]
+    fn point_in_rounded_rect_zero_radius_behaves_like_a_plain_rect() {
+        let centre = Vec2::new(1.0, -2.0);
+        let size = Vec2::new(0.6, 0.4);
+        for point in [Vec2::new(1.29, -1.81), Vec2::new(0.71, -2.19), Vec2::ZERO, Vec2::new(1.3, -2.0)] {
+            let plain = point_in_rect(point, centre, size);
+            assert_eq!(point_in_rounded_rect(point, centre, size, 0.0, true, true), plain);
+        }
+    }
+
+    /// A radius bigger than the shape's own half-width/half-height is
+    /// clamped (mirrors `add_rounded_rect`'s clamping in the draw path --
+    /// see that function's docs), so the hit-test must never treat the
+    /// requested (oversized) radius as gospel and produce a nonsensical
+    /// (e.g. always-false, or bowtie-shaped) result. The clamped radius
+    /// for a square, fully-rounded shape becomes half its side length,
+    /// i.e. the shape degenerates into a circle -- the centre must still
+    /// be a hit, and a corner point right at the bounding box's edge must
+    /// still correctly miss.
+    #[test]
+    fn point_in_rounded_rect_clamps_oversized_radius() {
+        let centre = Vec2::ZERO;
+        let size = Vec2::new(0.4, 0.4);
+        assert!(point_in_rounded_rect(Vec2::ZERO, centre, size, 5.0, true, true));
+        assert!(!point_in_rounded_rect(Vec2::new(0.2, 0.2), centre, size, 5.0, true, true));
+    }
+
+    /// `point_in_pin_shape` for `Bit8` must use `Bit8`'s own (wider) pill
+    /// size, not silently reuse `Bit4`'s -- a point past `Bit4`'s pill
+    /// width but still within `Bit8`'s must hit for `Bit8` and miss for
+    /// `Bit4`.
+    #[test]
+    fn point_in_pin_shape_bit8_uses_its_own_wider_size_not_bit4s() {
+        let pos = Vec2::ZERO;
+        let size4 = layout::pin_visual_shape_size(PinBitCount::Bit4);
+        let size8 = layout::pin_visual_shape_size(PinBitCount::Bit8);
+        assert!(size8.x > size4.x, "sanity: 8-bit pill must be wider than 4-bit's");
+
+        let point = Vec2::new((size4.x + size8.x) / 4.0, 0.0); // strictly between the two half-widths
+        assert!(!point_in_pin_shape(point, pos, PinBitCount::Bit4), "should miss the narrower 4-bit pill");
+        assert!(point_in_pin_shape(point, pos, PinBitCount::Bit8), "should hit the wider 8-bit pill");
+    }
+
+    /// `point_in_dev_pin_body`'s `round_left` flag must actually flip
+    /// which side is rounded (input dev-pins round left/outward, output
+    /// dev-pins round right/outward -- see `draw_dev_pin_body`'s docs), not
+    /// just be accepted and ignored. Pick a corner point that's a
+    /// rounded-corner miss on one side but a square-corner hit on the
+    /// other, and check both orientations disagree on it as expected.
+    #[test]
+    fn point_in_dev_pin_body_round_left_flag_actually_flips_the_rounded_side() {
+        let pos = Vec2::ZERO;
+        let bit_count = PinBitCount::Bit1;
+        let size = layout::dev_pin_body_size(bit_count);
+        let radius = layout::dev_pin_corner_radius(size);
+        // Just past the (rounded) corner's arc, on the right side, still
+        // inside the plain bounding box.
+        let right_corner = Vec2::new(size.x / 2.0 - 1e-4, size.y / 2.0 - 1e-4);
+
+        // Sanity: at this size/radius, the exact corner point is actually
+        // excluded by a rounded corner but included by a square one.
+        assert!(!point_in_rounded_rect(right_corner, pos, size, radius, false, true));
+        assert!(point_in_rounded_rect(right_corner, pos, size, radius, false, false));
+
+        // round_left = false -> input-style, but here we're checking the
+        // *output* convention (round_right, i.e. round_left = false):
+        // right side rounded -> this corner should miss.
+        assert!(!point_in_dev_pin_body(right_corner, pos, bit_count, false));
+        // round_left = true -> input-style: right side is the square one
+        // -> this same corner point should hit.
+        assert!(point_in_dev_pin_body(right_corner, pos, bit_count, true));
+    }
+
+    /// `point_in_dev_pin_body` must scale with `bit_count` the same way
+    /// `draw_dev_pin_body` draws it (`layout::dev_pin_body_size`) -- an
+    /// 8-bit dev-pin's body is taller than a 1-bit one's, so a point at
+    /// 1-bit's edge but still within 8-bit's must hit only for 8-bit.
+    #[test]
+    fn point_in_dev_pin_body_scales_with_bit_count() {
+        let pos = Vec2::ZERO;
+        let size1 = layout::dev_pin_body_size(PinBitCount::Bit1);
+        let size8 = layout::dev_pin_body_size(PinBitCount::Bit8);
+        assert!(size8.y > size1.y, "sanity: 8-bit dev-pin body must be taller than 1-bit's");
+
+        let point = Vec2::new(0.0, (size1.y + size8.y) / 4.0); // strictly between the two half-heights
+        assert!(!point_in_dev_pin_body(point, pos, PinBitCount::Bit1, true));
+        assert!(point_in_dev_pin_body(point, pos, PinBitCount::Bit8, true));
+    }
+
+    /// A hover point sitting in a 4-bit pin's pill "wing" (past where a
+    /// same-position 1-bit circle would reach) must still register as a
+    /// hit -- this is the concrete regression the "real shape, not just a
+    /// circle" requirement guards against: a naive circle-radius hit-test
+    /// centred on the pin would miss this point entirely.
+    #[test]
+    fn point_in_pin_shape_hits_the_pill_wing_a_1bit_circle_would_miss() {
+        let pos = Vec2::new(2.0, 0.0);
+        let size = layout::pin_visual_shape_size(PinBitCount::Bit4);
+        // A point near the pill's far horizontal edge, at pin-centre
+        // height -- well past a 1-bit circle's radius from `pos`, but
+        // still inside the wider pill.
+        let point = Vec2::new(pos.x + size.x / 2.0 - 1e-3, pos.y);
+
+        assert!(!point_in_circle(point, pos, layout::pin_radius_for_bit_count(PinBitCount::Bit1)), "sanity: a 1-bit circle should NOT reach this point");
+        assert!(point_in_pin_shape(point, pos, PinBitCount::Bit4), "the actual pill shape should reach this point");
+    }
+
+    /// End-to-end: hovering directly over a subchip's pin should produce
+    /// exactly one label, with the pin's own name -- not the subchip's.
+    #[test]
+    fn build_scene_shows_pin_name_label_when_pin_is_hovered() {
+        let mut lib = ChipLibrary::new();
+        lib.add(nand_desc());
+
+        let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
+        parent.sub_chips.push(SubChipDescription {
+            name: "NAND".into(),
+            id: 1,
+            internal_data: None,
+            label: None,
+            position: Vec2::ZERO,
+            pin_colour_info: Vec::new(),
+        });
+
+        let placed = place_sub_chips(&parent, &lib);
+        let output_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].output_pin_y[0], false);
+
+        let scene = build_scene(&parent, &lib, &AllLow, Some(output_pos));
+        assert_eq!(scene.labels.len(), 1);
+        assert_eq!(scene.labels[0].text, "OUT");
+    }
+
+    /// End-to-end: hovering a wide (4-bit) pin's pill "wing" -- a point a
+    /// naive circle-based hit-test would miss -- must still show that
+    /// pin's label. This is the real-shape regression check at the
+    /// `build_scene` level (`point_in_pin_shape_hits_the_pill_wing...`
+    /// above checks the same thing at the hit-test-function level).
+    #[test]
+    fn build_scene_shows_pin_label_when_hovering_a_multibit_pins_pill_wing() {
+        let mut lib = ChipLibrary::new();
+        let mut chip4bit = ChipDescription::new("BUS4", ChipType::Custom);
+        chip4bit.input_pins.push(PinDescription::new("WIDE_IN", 0, PinBitCount::Bit4));
+        lib.add(chip4bit);
+
+        let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
+        parent.sub_chips.push(SubChipDescription {
+            name: "BUS4".into(),
+            id: 1,
+            internal_data: None,
+            label: None,
+            position: Vec2::ZERO,
+            pin_colour_info: Vec::new(),
+        });
+
+        let placed = place_sub_chips(&parent, &lib);
+        let pin_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].input_pin_y[0], true);
+        let size = layout::pin_visual_shape_size(PinBitCount::Bit4);
+        let wing_point = Vec2::new(pin_pos.x - size.x / 2.0 + 1e-3, pin_pos.y);
+
+        let scene = build_scene(&parent, &lib, &AllLow, Some(wing_point));
+        assert_eq!(scene.labels.len(), 1);
+        assert_eq!(scene.labels[0].text, "WIDE_IN");
+    }
+
+    /// End-to-end: hovering a chip's own boundary dev-pin (drawn as a
+    /// rounded-rect body, not a circle/pill) should show its name too.
+    #[test]
+    fn build_scene_shows_dev_pin_name_label_when_hovered() {
+        let lib = ChipLibrary::new();
+        let mut chip = ChipDescription::new("DEV_PIN_HOVER_TEST", ChipType::Custom);
+        let mut in0 = PinDescription::new("MY_INPUT", 10, PinBitCount::Bit1);
+        in0.position = Vec2::new(-3.0, 0.0);
+        chip.input_pins.push(in0);
+
+        let scene = build_scene(&chip, &lib, &AllLow, Some(Vec2::new(-3.0, 0.0)));
+        assert_eq!(scene.labels.len(), 1);
+        assert_eq!(scene.labels[0].text, "MY_INPUT");
+    }
+
+    /// With no hover position at all, nothing should show a label -- not
+    /// even a component whose `NameLocation` would otherwise be visible,
+    /// since labels are now purely hover-gated rather than always-on.
+    #[test]
+    fn build_scene_shows_no_labels_when_nothing_is_hovered() {
+        let mut lib = ChipLibrary::new();
+        lib.add(nand_desc());
+
+        let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
+        parent.sub_chips.push(SubChipDescription {
+            name: "NAND".into(),
+            id: 1,
+            internal_data: None,
+            label: None,
+            position: Vec2::ZERO,
+            pin_colour_info: Vec::new(),
+        });
+
+        let scene = build_scene(&parent, &lib, &AllLow, None);
+        assert!(scene.labels.is_empty());
+
+        // Also check a hover point that lands nowhere near anything.
+        let scene_far_hover = build_scene(&parent, &lib, &AllLow, Some(Vec2::new(1000.0, 1000.0)));
+        assert!(scene_far_hover.labels.is_empty());
+    }
+
+    /// When a pin and its owning component's body overlap at the hover
+    /// point, the pin's label wins (checked first) -- a component's name
+    /// should never show while the mouse is actually over one of its own
+    /// pins.
+    #[test]
+    fn build_scene_prefers_pin_label_over_component_label_on_overlap() {
+        let mut lib = ChipLibrary::new();
+        lib.add(nand_desc());
+
+        let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
+        parent.sub_chips.push(SubChipDescription {
+            name: "NAND".into(),
+            id: 1,
+            internal_data: None,
+            label: None,
+            position: Vec2::ZERO,
+            pin_colour_info: Vec::new(),
+        });
+
+        let placed = place_sub_chips(&parent, &lib);
+        let output_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].output_pin_y[0], false);
+
+        let scene = build_scene(&parent, &lib, &AllLow, Some(output_pos));
+        assert_eq!(scene.labels.len(), 1);
+        assert_eq!(scene.labels[0].text, "OUT", "pin label should win over the component's own name");
+    }
+
     /// End-to-end draw-order check: `build_scene` must draw wires first
     /// (bottom layer), then all pins (subchip pins + this chip's own
     /// dev-pins), then component bodies (+ labels) last (top layer) --
@@ -1656,13 +2655,14 @@ pin_colour_info: Vec::new(),
             name: "NAND".into(),
             id: 1,
             internal_data: None,
+            label: None,
             position: Vec2::ZERO,
             pin_colour_info: Vec::new(),
         });
         // Dev-pin -> subchip's input pin A (id 0).
         chip.wires.push(WireDescription::new(PinAddress::new(10, 0), PinAddress::new(1, 0)));
 
-        let scene = build_scene(&chip, &lib, &AllLow);
+        let scene = build_scene(&chip, &lib, &AllLow, None);
 
         // Layer 1: the wire. Unbent -> exactly one quad (6 verts), at the
         // very start of the buffer.
@@ -1748,7 +2748,7 @@ pin_colour_info: Vec::new(),
         out0.position = Vec2::new(3.0, -0.5);
         chip.output_pins.push(out0);
 
-        let scene = build_scene(&chip, &lib, &AllLow);
+        let scene = build_scene(&chip, &lib, &AllLow, None);
 
         let segments = layout::DEV_PIN_ROUND_SEGMENTS;
         let points_per_shape = 2 * (segments + 1) + 2;
