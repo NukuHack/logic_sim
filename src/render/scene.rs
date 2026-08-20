@@ -782,7 +782,7 @@ fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state:
                 width: sub.size.x,
             });
         } else if sub.desc.name_location != NameLocation::Hidden {
-            let label_pos = match sub.desc.name_location {
+            let name_pos = match sub.desc.name_location {
                 NameLocation::Top => Vec2::new(
                     sub.centre.x,
                     sub.centre.y + sub.size.y / 2.0 - theme::FONT_SIZE_CHIP_NAME / 2.0 - layout::GRID_SIZE / 2.0,
@@ -797,6 +797,7 @@ fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state:
                 width: sub.size.x,
             });
         }
+        let is_hovered = !pin_already_hovered && hover_world_pos.is_some_and(|p| point_in_rect(p, sub.centre, sub.size));
         if let Some(label) = &sub.label {
             if is_hovered {
                 let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
@@ -1490,7 +1491,7 @@ pin_colour_info: Vec::new(),
     #[test]
     fn wire_tap_endpoint_resolves_onto_referenced_wire_segment_not_the_underlying_pin() {
         let mut lib = ChipLibrary::new();
-        lib.add(nand_desc());git push -u origin main
+        lib.add(nand_desc());
 
         let mut chip = ChipDescription::new("TAP_TEST", ChipType::Custom);
         for id in [1, 2, 3] {
