@@ -232,6 +232,66 @@ pub fn dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
     calculate_min_chip_size_for_pins(&[bit_count], &[])
 }
 
+/// Radius of the clickable circle drawn for a 1-bit *input* dev-pin's
+/// body: twice the ordinary connection-pin radius (`PIN_RADIUS`), so the
+/// thing a player actually has to click to toggle a switch is
+/// comfortably bigger than a plain wire-attachment pin, not the same
+/// tiny size. Also doubles as the side length of the square cell used
+/// for each individual bit of a *wider* input (see
+/// `INPUT_BIT_CELL_SIZE`) -- both trace back to this one constant so a
+/// 4/8-bit input's per-bit cells read as the same scale as the 1-bit
+/// case's circle, not an arbitrary unrelated size.
+pub const INPUT_BIT_CIRCLE_RADIUS: f32 = PIN_RADIUS * 2.0;
+
+/// Side length of the square clickable cell drawn for each individual
+/// bit of a multi-bit input (4-bit, 8-bit, ...). Equal to
+/// `INPUT_BIT_CIRCLE_RADIUS`, per that constant's docs.
+pub const INPUT_BIT_CELL_SIZE: f32 = INPUT_BIT_CIRCLE_RADIUS;
+
+/// Grid arrangement (columns, rows) of per-bit clickable cells for an
+/// *input* dev-pin's body, based on its bit width -- unlike an ordinary
+/// pin (whose drawn size only grows a little with bit width), an input's
+/// whole point is that every individual bit is its own clickable toggle,
+/// so its total clickable footprint grows with how many bits it carries:
+/// a single 1-bit input is just one circle (no grid, 1x1); 4 bits arrange
+/// as a 2x2 grid; 8 bits as 2x4 (same 2-wide column count, twice as
+/// tall). Mirrors the `1 = 1, 4 = 2x2, 8 = 2x4` layout.
+pub fn input_bit_grid_dims(bit_count: PinBitCount) -> (i32, i32) {
+    match bit_count {
+        PinBitCount::Bit1 => (1, 1),
+        PinBitCount::Bit4 => (2, 2),
+        PinBitCount::Bit8 => (2, 4),
+    }
+}
+
+/// World-space bounding size of an input dev-pin's whole clickable body:
+/// the grid of per-bit cells from `input_bit_grid_dims`, each
+/// `INPUT_BIT_CELL_SIZE` square (for `Bit1` this is just that one cell,
+/// which draws as a circle rather than a square -- see
+/// `input_bit_cell_offsets`/`draw_input_dev_pin_body`).
+pub fn input_dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
+    let (cols, rows) = input_bit_grid_dims(bit_count);
+    Vec2::new(INPUT_BIT_CELL_SIZE * cols as f32, INPUT_BIT_CELL_SIZE * rows as f32)
+}
+
+/// World-space centre offsets (from the input dev-pin's own position) of
+/// each individual bit's clickable cell, in bit-index order (bit 0
+/// first), filling `input_bit_grid_dims`'s grid left-to-right then
+/// top-to-bottom.
+pub fn input_bit_cell_offsets(bit_count: PinBitCount) -> Vec<Vec2> {
+    let (cols, rows) = input_bit_grid_dims(bit_count);
+    let total = input_dev_pin_body_size(bit_count);
+    let mut offsets = Vec::with_capacity((cols * rows) as usize);
+    for row in 0..rows {
+        for col in 0..cols {
+            let x = -total.x / 2.0 + INPUT_BIT_CELL_SIZE * (col as f32 + 0.5);
+            let y = total.y / 2.0 - INPUT_BIT_CELL_SIZE * (row as f32 + 0.5);
+            offsets.push(Vec2::new(x, y));
+        }
+    }
+    offsets
+}
+
 /// World-space thickness of the grey-ish border drawn around a dev-pin's
 /// body (see `render::scene::build_scene`'s dev-pin drawing). Kept as its
 /// own constant, distinct from `CHIP_OUTLINE_WIDTH`, since a dev-pin body

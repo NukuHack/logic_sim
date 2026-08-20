@@ -39,7 +39,7 @@ use logic_sim::render::theme;
 use logic_sim::sim::Simulator;
 use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
-use logic_sim::{default_chip_collections, load_project, register_all_builtins, ChipLibrary, SavePaths, Saver};
+use logic_sim::{ChipLibrary, ChipType, SavePaths, Saver, default_chip_collections, load_project, register_all_builtins};
 use std::path::PathBuf;
 use std::sync::Arc;
 use logic_sim::sim::key_mods_bits;
@@ -123,6 +123,38 @@ impl ViewerState {
     }
 }
 
+/// Finds whichever bit of one of `root_desc`'s own boundary *input*
+/// dev-pins (if any) `world_pos` landed on -- the same per-bit grid
+/// `render::scene::draw_input_dev_pin_body` draws for each input pin
+/// (one clickable circle for a 1-bit input, a 2x2/2x4 grid of cells for
+/// 4/8-bit) -- returning that pin's own id and the clicked bit's index.
+/// Output pins are never hit -- only inputs are meant to be toggled by a
+/// click.
+fn hit_test_root_input_pin_click(root_desc: &logic_sim::description::ChipDescription, world_pos: Vec2) -> Option<(i32, u32)> {
+    for pin in &root_desc.input_pins {
+        if let Some(bit_index) = logic_sim::render::scene::hit_test_input_dev_pin_bit(world_pos, pin.position, pin.bit_count) {
+            return Some((pin.id, bit_index));
+        }
+    }
+    None
+}
+
+/// Flips one bit (`bit_index`) of input dev-pin `pin_id`'s own
+/// `PinDescription::driven_state`, directly on its entry in `library` --
+/// see that field's docs for why it lives there rather than in a
+/// separate lookup on `ViewerState`. The tristate flags half of the
+/// packed state is left untouched (stays "driven", i.e. `0`) -- a
+/// clicked input is always actively driven, never floating.
+fn toggle_driven_input_bit(library: &mut ChipLibrary, root_chip_name: &str, pin_id: i32, bit_index: u32) {
+    let chip = library.get_mut(root_chip_name);
+    if let Some(pin) = chip.input_pins.iter_mut().find(|p| p.id == pin_id) {
+        let last_state = pin.driven_state;
+        let mut bits = logic_sim::pin_state::bit_states(last_state);
+        bits ^= 1 << bit_index;
+        logic_sim::pin_state::set(&mut pin.driven_state, bits, logic_sim::pin_state::tristate_flags(last_state));
+    }
+}
+
 /// `editor_ui`'s builders lay out screen-pixel coordinates as if drawn
 /// through a fixed camera positioned at `(vw/2, vh/2)` with `zoom = 1.0`
 /// (see `menu_ui::to_world`, the same convention the main menu uses) --
@@ -162,6 +194,20 @@ fn cycle_pref(prefs: &mut ProjectDescription, row_index: usize) {
     }
 }
 
+/// Zeroes `driven_state` on every input dev-pin of every chip in
+/// `library` -- called whenever the viewer switches which chip is the
+/// current root, so a switch clicked while viewing chip A doesn't stay
+/// "remembered" the next time the player navigates back to A (each visit
+/// starts from a fresh, all-off simulation, rather than the pin's state
+/// being some kind of persistent save data).
+fn reset_all_driven_inputs(library: &mut ChipLibrary) {
+    for chip in library.iter_mut() {
+        for pin in &mut chip.input_pins {
+            pin.driven_state = 0;
+        }
+    }
+}
+
 /// Applies a click on one of the editor overlays. A free function (not an
 /// `App` method) so it can be called from inside a `match &mut self.screen`
 /// arm that's already holding `v`, while still touching the sibling
@@ -183,11 +229,22 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
             v.overlay = Overlay::None;
         }
         EditorAction::SelectChip(name) => {
-            if v.library.iter().any(|d| d.name == name) {
-                v.root_chip_name = name;
+            let is_custom = v.library.iter()
+                .find(|d| d.name == name)
+                .map(|d| d.chip_type == ChipType::Custom)
+                .unwrap_or(false);
+            
+            if is_custom {
+                v.root_chip_name = name.clone();
+                reset_all_driven_inputs(&mut v.library);
                 v.rebuild_sim();
             } else {
-                *status = Some(format!("Chip '{name}' not found in library"));
+                let exists = v.library.iter().any(|d| d.name == name);
+                if exists {
+                    *status = Some(format!("Chip '{}' is a builtin component", name));
+                } else {
+                    *status = Some(format!("Chip '{}' not found in library", name));
+                }
             }
         }
         EditorAction::ToggleCollection(i) => {
@@ -198,6 +255,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
         EditorAction::UseChip(name) => {
             if v.library.iter().any(|d| d.name == name) {
                 v.root_chip_name = name;
+                reset_all_driven_inputs(&mut v.library);
                 v.rebuild_sim();
             } else {
                 *status = Some(format!("Chip '{name}' not found in library"));
@@ -518,6 +576,10 @@ impl ApplicationHandler for App {
                 self.handle_mouse_button(btn_state, event_loop);
             }
 
+            WindowEvent::MouseInput { state: btn_state, button: winit::event::MouseButton::Middle, .. } => {
+                self.handle_middle_mouse_button(btn_state);
+            }
+
             WindowEvent::CursorMoved { position, .. } => {
                 let cursor = Vec2::new(position.x as f32, position.y as f32);
                 self.mouse_pos = cursor;
@@ -550,6 +612,15 @@ impl ApplicationHandler for App {
 }
 
 impl App {
+    /// Left-click handling: overlay/UI button hits first (unchanged), then
+    /// -- new -- toggling one bit of a root input dev-pin if the click
+    /// landed on one of its clickable cells. Falls through to the toggle
+    /// check whenever the click wasn't swallowed by a *modal* popup --
+    /// same "overlay is None or the (non-modal) Library sidebar" gate the
+    /// old dragging code used, so switching a chip from the Library
+    /// sidebar doesn't leave clicks stuck unable to reach the canvas.
+    /// Camera panning is *not* handled here any more -- see
+    /// `handle_middle_mouse_button`.
     fn handle_mouse_button(&mut self, btn_state: ElementState, event_loop: &ActiveEventLoop) {
         match &mut self.screen {
             Screen::Menu => {
@@ -569,12 +640,35 @@ impl App {
                     }
                     if v.overlay != Overlay::Library {
                         // Modal popup: swallow the click instead of
-                        // letting it fall through to camera dragging.
+                        // letting it fall through to the canvas below.
                         return;
                     }
                 }
-                v.dragging = btn_state == ElementState::Pressed;
+
+                if btn_state == ElementState::Pressed {
+                    let root_desc = v.library.get(&v.root_chip_name);
+                    let world_pos = v.camera.screen_to_world(self.mouse_pos);
+                    if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
+                        let root_chip_name = v.root_chip_name.clone();
+                        toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+                    }
+                }
             }
+        }
+    }
+
+    /// Middle-click handling: drags/pans the camera, exactly like left-click
+    /// used to. Split out from `handle_mouse_button` so left-click is free
+    /// to toggle input dev-pins instead (right-click is reserved for a
+    /// future action). Mirrors the same "swallow clicks while a modal
+    /// popup is open" gate `handle_mouse_button` applies, so panning can't
+    /// happen "through" an open popup either.
+    fn handle_middle_mouse_button(&mut self, btn_state: ElementState) {
+        if let Screen::Viewer(v) = &mut self.screen {
+            if btn_state == ElementState::Pressed && v.overlay != Overlay::None && v.overlay != Overlay::Library {
+                return;
+            }
+            v.dragging = btn_state == ElementState::Pressed;
         }
     }
 
@@ -710,7 +804,16 @@ impl App {
                 frame.geometry
             }
             Screen::Viewer(v) => {
-                v.sim.run_simulation_step(&[]);
+                let root_desc = v.library.get(&v.root_chip_name);
+                let external_inputs: Vec<logic_sim::sim::ExternalInput> = root_desc
+                    .input_pins
+                    .iter()
+                    .map(|pin| logic_sim::sim::ExternalInput {
+                        address: logic_sim::description::PinAddress::new(pin.id, 0),
+                        state: pin.driven_state,
+                    })
+                    .collect();
+                v.sim.run_simulation_step(&external_inputs);
 
                 let root_desc = v.library.get(&v.root_chip_name);
                 let lookup = SimulatorPinState { sim: &v.sim, scope: v.sim.root() };

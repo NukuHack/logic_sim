@@ -274,6 +274,19 @@ pub struct PinDescription {
     /// saved on disk under this pin's `ValueDisplayMode` field). Defaults
     /// to `None` (no value shown).
     pub value_display_mode: ValueDisplayMode,
+    /// Raw `pin_state` value (bit states in the low 16 bits, tristate
+    /// flags in the high 16) currently being driven into this pin by the
+    /// player clicking it, when it's one of a chip's own boundary
+    /// *input* dev-pins (see `render::scene::draw_input_dev_pin_body`'s
+    /// clickable per-bit grid). Lives on the pin itself (rather than in
+    /// some separate id-keyed map in the viewer) so it survives
+    /// switching which chip is the currently-viewed root and can never
+    /// go stale/collide with an unrelated pin that happens to reuse the
+    /// same id in a different chip. Not saved to disk -- purely runtime,
+    /// UI-driven state -- and meaningless for anything other than an
+    /// input dev-pin, so it defaults to `0` (all-low, not tristated,
+    /// i.e. "never touched") for every other kind of pin.
+    pub driven_state: u32,
 }
 
 impl PinDescription {
@@ -285,6 +298,7 @@ impl PinDescription {
             bit_count,
             colour: Color::default(),
             value_display_mode: ValueDisplayMode::None,
+            driven_state: 0,
         }
     }
 
@@ -296,6 +310,7 @@ impl PinDescription {
             bit_count,
             colour,
             value_display_mode: ValueDisplayMode::None,
+            driven_state: 0,
         }
     }
 
@@ -310,7 +325,7 @@ impl PinDescription {
         colour: Color,
         value_display_mode: ValueDisplayMode,
     ) -> Self {
-        Self { name: name.into(), id, position, bit_count, colour, value_display_mode }
+        Self { name: name.into(), id, position, bit_count, colour, value_display_mode, driven_state: 0 }
     }
 }
 
@@ -501,6 +516,17 @@ impl ChipLibrary {
             .unwrap_or_else(|| panic!("Chip not found in library: {name}"))
     }
 
+    /// Mutable counterpart to `get` -- used by the viewer to update a
+    /// chip's own input dev-pins' `driven_state` in place when the player
+    /// clicks one (see `PinDescription::driven_state`'s docs), so that
+    /// state lives with the pin itself rather than in some separate
+    /// lookup the viewer has to keep in sync across chip switches.
+    pub fn get_mut(&mut self, name: &str) -> &mut ChipDescription {
+        self.by_name
+            .get_mut(&name.to_ascii_lowercase())
+            .unwrap_or_else(|| panic!("Chip not found in library: {name}"))
+    }
+
     pub fn try_get(&self, name: &str) -> Option<&ChipDescription> {
         self.by_name.get(&name.to_ascii_lowercase())
     }
@@ -510,5 +536,14 @@ impl ChipLibrary {
     /// default chip to display rather than assuming a fixed name exists.
     pub fn iter(&self) -> impl Iterator<Item = &ChipDescription> {
         self.by_name.values()
+    }
+
+    /// Iterate mutably over every chip currently in the library (builtin +
+    /// custom). Used to reset every input dev-pin's `driven_state` in one
+    /// pass when the viewer switches which chip it's simulating (see
+    /// `reset_all_driven_inputs` in `bin/app.rs`) -- a toggled switch's
+    /// state shouldn't outlive the simulation run it was set in.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ChipDescription> {
+        self.by_name.values_mut()
     }
 }

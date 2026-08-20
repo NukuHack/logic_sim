@@ -236,8 +236,8 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
     }
 
     let selected_compatible = matches!(menu.selected_project_compatibility(), Some(Ok(())));
-    let toolbar_y = vh - 80.0;
-    let mut x = cx - (BUTTON_W * 2.0 + BUTTON_GAP * 1.5);
+    let toolbar_y = vh - BUTTON_H * 3.0;
+    let mut x = cx - BUTTON_W;
     for (label, action, enabled) in [
         ("Open", UiAction::OpenSelected, selected_compatible),
         ("Rename", UiAction::RenameSelected, selected_compatible),
@@ -249,7 +249,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
         x += BUTTON_W / 2.0 + BUTTON_GAP / 2.0;
     }
 
-    let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - 30.0, BUTTON_W, BUTTON_H);
+    let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - BUTTON_H * 1.2, BUTTON_W, BUTTON_H);
     add_button(frame, vw, vh, back_rect, "Back", UiAction::BackToMain, true, mouse);
 }
 

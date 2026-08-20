@@ -702,8 +702,8 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
     // so they read as visually distinct from a regular subchip pin's
     // plain circle. Mirrors `layout::dev_pin_body_size`'s docs.
     for pin in &chip.input_pins {
-        draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), true);
-        if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, true)) {
+        draw_input_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin.id, pin_state);
+        if hover_world_pos.is_some_and(|p| point_in_input_dev_pin_body(p, pin.position, pin.bit_count)) {
             hovered = Some((pin.position, pin.name.clone()));
         }
     }
@@ -836,6 +836,39 @@ fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount, round_l
     point_in_rounded_rect(point, pos, size, radius, round_left, !round_left)
 }
 
+/// A point-in-shape test covering an *input* dev-pin's whole clickable
+/// body (the union of every individual bit cell) -- used for the
+/// coarse "is the cursor anywhere on this pin" hover check. For
+/// per-bit toggle handling (which exact bit a click landed on), use
+/// `hit_test_input_dev_pin_bit` instead.
+fn point_in_input_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> bool {
+    let size = layout::input_dev_pin_body_size(bit_count);
+    point_in_rect(point, pos, size)
+}
+
+/// Returns the bit index (0-based) of whichever of an input dev-pin's
+/// individual clickable cells `point` landed on, or `None` if it missed
+/// every cell. `pos` is the dev-pin's own saved position, the same value
+/// passed to `draw_input_dev_pin_body`. Bit-0's cell is the top-left of
+/// the grid (see `layout::input_bit_cell_offsets`), matching the same
+/// bit-index convention `pin_state::get_bit_tristated_value` uses --
+/// callers wiring up an actual click-to-toggle handler can flip bit
+/// `bit_index` of the pin's state directly.
+pub fn hit_test_input_dev_pin_bit(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> Option<u32> {
+    let cell_size = Vec2::new(layout::INPUT_BIT_CELL_SIZE, layout::INPUT_BIT_CELL_SIZE);
+    for (bit_index, offset) in layout::input_bit_cell_offsets(bit_count).into_iter().enumerate() {
+        let cell_pos = pos + offset;
+        let hit = match bit_count {
+            PinBitCount::Bit1 => point_in_circle(point, cell_pos, layout::INPUT_BIT_CIRCLE_RADIUS),
+            PinBitCount::Bit4 | PinBitCount::Bit8 => point_in_rect(point, cell_pos, cell_size),
+        };
+        if hit {
+            return Some(bit_index as u32);
+        }
+    }
+    None
+}
+
 /// A plain axis-aligned rectangle hit-test, for a subchip's body (which,
 /// unlike its pins, is never rounded).
 fn point_in_rect(point: Vec2, centre: Vec2, size: Vec2) -> bool {
@@ -891,6 +924,41 @@ fn draw_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount,
     let inner_size = Vec2::new((size.x - border * 2.0).max(0.0), (size.y - border * 2.0).max(0.0));
     let inner_radius = (radius - border).max(0.0);
     geo.add_rounded_rect(pos, inner_size, fill_colour, inner_radius, round_left, !round_left, layout::DEV_PIN_ROUND_SEGMENTS);
+}
+
+/// Draws one of a chip's own boundary *input* dev-pins as a grid of
+/// individually-clickable bit cells, rather than the single pill shape
+/// `draw_dev_pin_body` draws for a regular (or output) dev-pin -- an
+/// input's whole purpose is to be toggled bit-by-bit, so its drawn
+/// footprint scales with how many bits it carries: one circle (twice a
+/// plain pin's radius) for a 1-bit input, a 2x2 grid of squares for a
+/// 4-bit input, 2x4 for 8-bit. See `layout::input_bit_grid_dims`/
+/// `input_bit_cell_offsets` for the exact grid geometry, and
+/// `hit_test_input_dev_pin_bit` for the matching per-cell hit test. Each
+/// cell is coloured by that individual bit's own live state
+/// (`PinStateLookup::bit_logic_state`), so e.g. an 8-bit input shows all
+/// eight of its bits' states at a glance, not one averaged colour.
+fn draw_input_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Color, pin_id: i32, pin_state: &dyn PinStateLookup) {
+    for (bit_index, offset) in layout::input_bit_cell_offsets(bit_count).into_iter().enumerate() {
+        let cell_pos = pos + offset;
+        let logic = pin_state.bit_logic_state(pin_id, 0, bit_index as u32).unwrap_or(LogicState::Low);
+        let fill_colour = theme::state_colour(logic, colour);
+
+        match bit_count {
+            PinBitCount::Bit1 => {
+                geo.add_circle(cell_pos, layout::INPUT_BIT_CIRCLE_RADIUS, theme::CHIP_OUTLINE_COL, layout::DEV_PIN_ROUND_SEGMENTS * 2);
+                let border = layout::DEV_PIN_BORDER_WIDTH.min(layout::INPUT_BIT_CIRCLE_RADIUS);
+                geo.add_circle(cell_pos, (layout::INPUT_BIT_CIRCLE_RADIUS - border).max(0.0), fill_colour, layout::DEV_PIN_ROUND_SEGMENTS * 2);
+            }
+            PinBitCount::Bit4 | PinBitCount::Bit8 => {
+                let size = Vec2::new(layout::INPUT_BIT_CELL_SIZE, layout::INPUT_BIT_CELL_SIZE);
+                let border = layout::DEV_PIN_BORDER_WIDTH.min(size.x / 2.0).min(size.y / 2.0);
+                geo.add_rect(cell_pos, size, theme::CHIP_OUTLINE_COL);
+                let inner_size = Vec2::new((size.x - border * 2.0).max(0.0), (size.y - border * 2.0).max(0.0));
+                geo.add_rect(cell_pos, inner_size, fill_colour);
+            }
+        }
+    }
 }
 
 /// Memoizes resolved wire-endpoint world positions within one `build_scene`
@@ -2751,21 +2819,60 @@ pin_colour_info: Vec::new(),
 
         let scene = build_scene(&chip, &lib, &AllLow, None);
 
-        let segments = layout::DEV_PIN_ROUND_SEGMENTS;
-        let points_per_shape = 2 * (segments + 1) + 2;
-        let tris_per_pin = points_per_shape as usize * 2; // border + fill
+        // The output pin still draws as the ordinary rounded-rect "pill"
+        // dev-pin body (border + fill).
+        let out_segments = layout::DEV_PIN_ROUND_SEGMENTS;
+        let out_points_per_shape = 2 * (out_segments + 1) + 2;
+        let out_tris = out_points_per_shape as usize * 2; // border + fill
+
+        // The input pin (1-bit) now draws as a single clickable circle
+        // (border + fill), twice a plain pin's radius, per
+        // `draw_input_dev_pin_body`.
+        let in_segments = layout::DEV_PIN_ROUND_SEGMENTS * 2;
+        let in_tris = in_segments as usize * 2; // border + fill
+
         // No subchips and no wires here -- the whole scene is just the two
         // dev-pin bodies.
-        assert_eq!(scene.triangles.len(), tris_per_pin * 2 * 3);
+        assert_eq!(scene.triangles.len(), (out_tris + in_tris) * 3);
 
         // Every vertex should belong to one of the two pins' bodies,
         // centred close to their saved positions (within the body's own
         // half-size).
-        let size = layout::dev_pin_body_size(PinBitCount::Bit1);
+        let in_size = layout::input_dev_pin_body_size(PinBitCount::Bit1);
+        let out_size = layout::dev_pin_body_size(PinBitCount::Bit1);
         for v in &scene.triangles {
-            let near_in0 = (v.pos.x - (-3.0)).abs() <= size.x / 2.0 + 1e-3 && (v.pos.y - 0.5).abs() <= size.y / 2.0 + 1e-3;
-            let near_out0 = (v.pos.x - 3.0).abs() <= size.x / 2.0 + 1e-3 && (v.pos.y - (-0.5)).abs() <= size.y / 2.0 + 1e-3;
+            let near_in0 = (v.pos.x - (-3.0)).abs() <= in_size.x / 2.0 + 1e-3 && (v.pos.y - 0.5).abs() <= in_size.y / 2.0 + 1e-3;
+            let near_out0 = (v.pos.x - 3.0).abs() <= out_size.x / 2.0 + 1e-3 && (v.pos.y - (-0.5)).abs() <= out_size.y / 2.0 + 1e-3;
             assert!(near_in0 || near_out0, "vertex {:?} not near either dev-pin's saved position", v.pos);
         }
+    }
+
+    /// A 4-bit input dev-pin must draw as a 2x2 grid of 4 individually
+    /// clickable square cells (not a single pill), and
+    /// `hit_test_input_dev_pin_bit` must be able to identify each one by
+    /// its own bit index.
+    #[test]
+    fn build_scene_draws_input_dev_pin_as_bit_grid_for_wide_input() {
+        let lib = ChipLibrary::new();
+        let mut chip = ChipDescription::new("WIDE_INPUT_TEST", ChipType::Custom);
+        let mut in0 = PinDescription::new("IN0", 10, PinBitCount::Bit4);
+        in0.position = Vec2::ZERO;
+        chip.input_pins.push(in0);
+
+        let scene = build_scene(&chip, &lib, &AllLow, None);
+
+        // 4 cells, each a rect (border + fill), each rect = 2 triangles = 6 vertices.
+        assert_eq!(scene.triangles.len(), 4 * 2 * 2 * 3);
+
+        // Every one of the 4 bit indices should hit a distinct cell.
+        let mut hit_bits: Vec<u32> = layout::input_bit_cell_offsets(PinBitCount::Bit4)
+            .iter()
+            .filter_map(|offset| hit_test_input_dev_pin_bit(Vec2::ZERO + *offset, Vec2::ZERO, PinBitCount::Bit4))
+            .collect();
+        hit_bits.sort_unstable();
+        assert_eq!(hit_bits, vec![0, 1, 2, 3]);
+
+        // A point far outside the grid hits nothing.
+        assert_eq!(hit_test_input_dev_pin_bit(Vec2::new(100.0, 100.0), Vec2::ZERO, PinBitCount::Bit4), None);
     }
 }
