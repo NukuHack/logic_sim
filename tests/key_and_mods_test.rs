@@ -27,6 +27,7 @@ fn wrap_builtin_single_output(builtin_name: &str, out_bit_count: PinBitCount, in
         id: SUBCHIP_ID,
         internal_data,
         position: Vec2::ZERO,
+        label: None,
         pin_colour_info: Vec::new(),
     }];
     // Builtin's own output pin is always id 0 (see `builtins::create_input_key_chip` /

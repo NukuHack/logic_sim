@@ -6,6 +6,7 @@
 //!   - `theme`   -- colour palette (`DrawSettings.CreateTheme`)
 //!   - `camera`  -- pan/zoom world<->screen transform (`CameraController`, transform-only slice)
 //!   - `scene`   -- ChipDescription + ChipLibrary -> coloured triangles (`DevSceneDrawer`, first pass)
+//!   - `editor_ui` -- in-editor overlays: prefs, chip library, search, simple naming, key select
 //!   - `gpu`     -- wgpu device/pipeline/draw call, consumes the above
 //!
 //! `layout`, `theme`, `camera`, and `scene` have no GPU dependency and are
@@ -16,6 +17,7 @@
 //! details.
 
 pub mod camera;
+pub mod editor_ui;
 pub mod gpu;
 pub mod layout;
 pub mod menu_ui;
@@ -23,5 +25,6 @@ pub mod scene;
 pub mod theme;
 
 pub use camera::Camera;
+pub use editor_ui::{EditorAction, EditorButton, EditorFrame};
 pub use menu_ui::{MenuFrame, UiAction, UiButton, UiRect};
 pub use scene::{bounding_box, build_grid, build_scene, AllLow, PinStateLookup, SceneGeometry, SceneVertex, TextLabel};
