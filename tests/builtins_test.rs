@@ -8,8 +8,8 @@ fn fixture_dir() -> std::path::PathBuf {
 #[test]
 fn all_builtins_have_unique_valid_names() {
     let chips = logic_sim::create_all_builtins();
-    // 6 IO pins + key + 4 basic + 2 memory + 6 merge/split + 4 display + 6 bus + 1 buzzer = 30
-    assert_eq!(chips.len(), 30);
+    // 6 IO pins + key + key mods + 4 basic + 2 memory + 6 merge/split + 4 display + 6 bus + 1 buzzer = 31
+    assert_eq!(chips.len(), 31);
 
     let mut names = std::collections::HashSet::new();
     for c in &chips {

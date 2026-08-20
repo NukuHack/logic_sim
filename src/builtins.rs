@@ -30,6 +30,7 @@ pub fn create_all() -> Vec<ChipDescription> {
         create_input_or_output_pin(ChipType::In8Bit),
         create_input_or_output_pin(ChipType::Out8Bit),
         create_input_key_chip(),
+        create_key_mods_chip(),
         // ---- Basic Chips ----
         create_nand(),
         create_tristate_buffer(),
@@ -131,6 +132,14 @@ fn create_rom_8() -> ChipDescription {
 
 fn create_input_key_chip() -> ChipDescription {
     builtin_hidden_name(ChipType::Key, vec![], vec![pin1("OUT", 0)])
+}
+
+/// Outputs the host's current keyboard modifier keys (shift/ctrl/alt/super)
+/// as a bitmask on a single 8-bit pin -- see `sim::key_mods_bits` for which
+/// bit is which. No per-instance configuration (unlike `Key`), so the name
+/// stays visible on the chip body.
+fn create_key_mods_chip() -> ChipDescription {
+    builtin(ChipType::KeyMods, vec![], vec![pin("OUT", 0, PinBitCount::Bit8)])
 }
 
 fn create_tristate_buffer() -> ChipDescription {
@@ -314,6 +323,7 @@ pub fn name_for(chip_type: ChipType) -> String {
         Out4Bit => "OUT-4",
         Out8Bit => "OUT-8",
         Key => "KEY",
+        KeyMods => "MOD KEYS",
         Bus1Bit => "BUS-1",
         Bus4Bit => "BUS-4",
         Bus8Bit => "BUS-8",

@@ -27,8 +27,28 @@ use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use logic_sim::sim::key_mods_bits;
+use winit::keyboard::{Key, KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Window, WindowId};
+
+/// See the identical helper in `bin/app.rs` for why this uses winit's
+/// boolean modifier accessors rather than its raw `bits()` value.
+fn encode_modifiers(mods: ModifiersState) -> u32 {
+    let mut bits = 0u32;
+    if mods.shift_key() {
+        bits |= key_mods_bits::SHIFT;
+    }
+    if mods.control_key() {
+        bits |= key_mods_bits::CONTROL;
+    }
+    if mods.alt_key() {
+        bits |= key_mods_bits::ALT;
+    }
+    if mods.super_key() {
+        bits |= key_mods_bits::SUPER;
+    }
+    bits
+}
 
 #[allow(dead_code)] // kept for reference / future hot-reload support
 struct App {
@@ -115,7 +135,11 @@ impl App {
 
     fn rebuild_sim(&mut self) {
         let root_desc = self.library.get(&self.root_chip_name).clone();
+        let held_keys = std::mem::take(&mut self.sim.held_keys);
+        let key_modifiers = self.sim.key_modifiers;
         self.sim = Simulator::build(&root_desc, &self.library);
+        self.sim.held_keys = held_keys;
+        self.sim.key_modifiers = key_modifiers;
     }
 }
 
@@ -151,6 +175,22 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Key chip: feed held_keys on press *and* release. Stored/compared
+                // in capitals, so lowercase 'a' must also register as 'A'.
+                if let Key::Character(s) = &event.logical_key {
+                    if let Some(c) = s.chars().next() {
+                        let c = c.to_ascii_uppercase();
+                        match event.state {
+                            ElementState::Pressed => {
+                                self.sim.held_keys.insert(c);
+                            }
+                            ElementState::Released => {
+                                self.sim.held_keys.remove(&c);
+                            }
+                        }
+                    }
+                }
+
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
                         PhysicalKey::Code(KeyCode::KeyR) => self.rebuild_sim(),
@@ -159,6 +199,16 @@ impl ApplicationHandler for App {
                         _ => {}
                     }
                 }
+            }
+
+            WindowEvent::ModifiersChanged(mods) => {
+                self.sim.key_modifiers = encode_modifiers(mods.state());
+            }
+
+            // See the identical handling in `bin/app.rs` for why.
+            WindowEvent::Focused(false) => {
+                self.sim.held_keys.clear();
+                self.sim.key_modifiers = 0;
             }
 
             WindowEvent::MouseInput { state: btn_state, button: winit::event::MouseButton::Left, .. } => {

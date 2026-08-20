@@ -40,11 +40,33 @@ use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use logic_sim::{load_project, register_all_builtins, ChipLibrary, SavePaths};
 use std::path::PathBuf;
 use std::sync::Arc;
+use logic_sim::sim::key_mods_bits;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::keyboard::{Key, NamedKey};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
+
+/// Convert winit's modifier state into the `Simulator::key_modifiers`
+/// bitmask (see `key_mods_bits`), using winit's own boolean accessors
+/// rather than its raw `bits()` value -- see the doc comment on
+/// `key_mods_bits` for why.
+fn encode_modifiers(mods: ModifiersState) -> u32 {
+    let mut bits = 0u32;
+    if mods.shift_key() {
+        bits |= key_mods_bits::SHIFT;
+    }
+    if mods.control_key() {
+        bits |= key_mods_bits::CONTROL;
+    }
+    if mods.alt_key() {
+        bits |= key_mods_bits::ALT;
+    }
+    if mods.super_key() {
+        bits |= key_mods_bits::SUPER;
+    }
+    bits
+}
 
 /// State specific to viewing/simulating one open project's chip, split out
 /// so `App` can hold either this or the menu depending on `Screen`.
@@ -63,7 +85,11 @@ struct ViewerState {
 impl ViewerState {
     fn rebuild_sim(&mut self) {
         let root_desc = self.library.get(&self.root_chip_name).clone();
+        let held_keys = std::mem::take(&mut self.sim.held_keys);
+        let key_modifiers = self.sim.key_modifiers;
         self.sim = Simulator::build(&root_desc, &self.library);
+        self.sim.held_keys = held_keys;
+        self.sim.key_modifiers = key_modifiers;
         self.camera_fitted = false;
     }
 }
@@ -92,6 +118,10 @@ struct App {
     viewport: (f32, f32),
     mouse_pos: Vec2,
 
+    /// Current keyboard modifier state (updated from `WindowEvent::ModifiersChanged`,
+    /// which winit reports independently of individual key press/release events).
+    modifiers: ModifiersState,
+
     // Hit-boxes from the menu screen's *last drawn* frame, used by the
     // next mouse click (immediate-mode UI: layout is recomputed every
     // frame, so "what did I just draw" is also "what can be clicked").
@@ -111,6 +141,7 @@ impl App {
             state: None,
             viewport: (1280.0, 800.0),
             mouse_pos: Vec2::ZERO,
+            modifiers: ModifiersState::empty(),
             last_menu_buttons: Vec::new(),
         }
     }
@@ -153,7 +184,12 @@ impl App {
                     .unwrap_or_else(|| "NAND".to_string());
 
                 let root_desc = library.get(&root_chip_name).clone();
-                let sim = Simulator::build(&root_desc, &library);
+                let mut sim = Simulator::build(&root_desc, &library);
+                // In case modifier keys are already held down (e.g. Alt from
+                // the menu action that opened this project) by the time the
+                // viewer appears, rather than only picking them up on the
+                // next change.
+                sim.key_modifiers = encode_modifiers(self.modifiers);
                 let show_grid = project_desc.prefs_grid_display_mode == 1;
 
                 self.screen = Screen::Viewer(ViewerState {
@@ -319,6 +355,24 @@ impl ApplicationHandler for App {
 
             WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event, event_loop),
 
+            WindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods.state();
+                if let Screen::Viewer(v) = &mut self.screen {
+                    v.sim.key_modifiers = encode_modifiers(self.modifiers);
+                }
+            }
+
+            // Physically-held keys don't generate a release event if focus
+            // is lost while they're down (e.g. alt-tabbing away) -- without
+            // this, a Key/KeyMods chip could get stuck "on" indefinitely.
+            WindowEvent::Focused(false) => {
+                self.modifiers = ModifiersState::empty();
+                if let Screen::Viewer(v) = &mut self.screen {
+                    v.sim.held_keys.clear();
+                    v.sim.key_modifiers = 0;
+                }
+            }
+
             WindowEvent::MouseInput { state: btn_state, button: winit::event::MouseButton::Left, .. } => {
                 self.handle_mouse_button(btn_state, event_loop);
             }
@@ -372,6 +426,27 @@ impl App {
     }
 
     fn handle_key_event(&mut self, event: winit::event::KeyEvent, event_loop: &ActiveEventLoop) {
+        // Feed the Key chip's held-key set on both press *and* release (not
+        // just press, unlike the shortcut handling below) since it needs to
+        // know when a key stops being held, not just when it starts.
+        // The chip stores/compares its target letter in capitals, so a
+        // basic lowercase 'a' keypress must also register as 'A' here.
+        if let Key::Character(s) = &event.logical_key {
+            if let Screen::Viewer(v) = &mut self.screen {
+                if let Some(c) = s.chars().next() {
+                    let c = c.to_ascii_uppercase();
+                    match event.state {
+                        ElementState::Pressed => {
+                            v.sim.held_keys.insert(c);
+                        }
+                        ElementState::Released => {
+                            v.sim.held_keys.remove(&c);
+                        }
+                    }
+                }
+            }
+        }
+
         if event.state != ElementState::Pressed {
             return;
         }

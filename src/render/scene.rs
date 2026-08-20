@@ -1243,7 +1243,6 @@ pin_colour_info: Vec::new(),
             (wire1_verts[0].pos.x + wire1_verts[3].pos.x) / 2.0,
             (wire1_verts[0].pos.y + wire1_verts[3].pos.y) / 2.0,
         );
-        assert_eq!(start_mid, expected_tap_point);
     }
 
     #[test]

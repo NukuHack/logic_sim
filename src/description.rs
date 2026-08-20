@@ -51,6 +51,11 @@ pub enum ChipType {
 
     // ---- Audio ----
     Buzzer = 30,
+
+    /// Outputs the host's current keyboard modifier state (shift/ctrl/alt/super)
+    /// as a bitmask -- see `sim::key_mods_bits` for the bit layout. Not part of
+    /// the original DLS chip set, so this discriminant has no C# counterpart.
+    KeyMods = 31,
 }
 
 impl ChipType {
@@ -108,6 +113,7 @@ impl ChipType {
             28 => Self::Bus8Bit,
             29 => Self::BusTerminus8Bit,
             30 => Self::Buzzer,
+            31 => Self::KeyMods,
             _ => Self::default(),
         }
     }
