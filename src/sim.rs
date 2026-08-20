@@ -112,8 +112,25 @@ pub struct Simulator {
 
     /// Key-chip state: which key characters are currently held (set by host).
     pub held_keys: std::collections::HashSet<char>,
+    /// KeyMods-chip state: current modifier keys, as a `key_mods_bits` bitmask
+    /// (set by host).
+    pub key_modifiers: u32,
     /// Buzzer notes registered this frame: (freq_index, volume_index).
     pub registered_notes: Vec<(i32, u32)>,
+}
+
+/// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's
+/// output pin. Deliberately *not* the raw bit positions winit's own
+/// `ModifiersState::bits()` happens to use internally (those don't fit in
+/// this chip's 8-bit pin, and aren't guaranteed stable across winit
+/// versions/platforms anyway) -- instead each modifier gets one bit here,
+/// set from winit's `shift_key()`/`control_key()`/`alt_key()`/`super_key()`
+/// accessors, which is what actually makes this platform-independent.
+pub mod key_mods_bits {
+    pub const SHIFT: u32 = 1 << 0;
+    pub const CONTROL: u32 = 1 << 1;
+    pub const ALT: u32 = 1 << 2;
+    pub const SUPER: u32 = 1 << 3;
 }
 
 impl Simulator {
@@ -137,6 +154,7 @@ impl Simulator {
             start_time: Instant::now(),
             elapsed_seconds_old: 0.0,
             held_keys: std::collections::HashSet::new(),
+            key_modifiers: 0,
             registered_notes: Vec::new(),
         }
     }
@@ -539,9 +557,12 @@ impl Simulator {
                 }
             }
             Key => {
-                let key_char = self.chips[chip_idx.0].internal_state[0] as u8 as char;
+                let key_char = self.chips[chip_idx.0].internal_state.first().copied().unwrap_or(0) as u8 as char;
                 let is_held = self.held_keys.contains(&key_char);
                 set_out!(0, if is_held { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
+            }
+            KeyMods => {
+                set_out!(0, self.key_modifiers & 0xFF);
             }
             DisplayRgb => self.process_display_rgb(chip_idx),
             DisplayDot => self.process_display_dot(chip_idx),

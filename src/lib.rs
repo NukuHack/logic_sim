@@ -25,4 +25,4 @@ pub use save_system::{
 };
 pub use settings::{AppSettings, FullScreenMode};
 pub use ui_menu::{MainMenu, MenuOutcome};
-pub use sim::{ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator};
+pub use sim::{ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator, key_mods_bits};

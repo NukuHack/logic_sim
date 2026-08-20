@@ -255,11 +255,11 @@ pub const DEV_PIN_ROUND_SEGMENTS: u32 = 8;
 
 /// Absolute world-space position of one pin, given the parent chip's centre
 /// position + size and the pin's grid-space y-offset (from
-/// `calculate_default_pin_layout`). `is_input` picks the left (input) or
+/// `calculate_default_pin_layout`). `is_left_side` picks the left (input) or
 /// right (output) edge of the chip body.
-pub fn pin_world_position(chip_centre: Vec2, chip_size: Vec2, pin_grid_y: f32, is_input: bool) -> Vec2 {
+pub fn pin_world_position(chip_centre: Vec2, chip_size: Vec2, pin_grid_y: f32, is_left_side: bool) -> Vec2 {
     let half_w = chip_size.x / 2.0;
-    let x_offset = if is_input { -half_w - SUB_CHIP_PIN_INSET } else { half_w + SUB_CHIP_PIN_INSET };
+    let x_offset = if is_left_side { -half_w - SUB_CHIP_PIN_INSET } else { half_w + SUB_CHIP_PIN_INSET };
     Vec2::new(chip_centre.x + x_offset, chip_centre.y + pin_grid_y * GRID_SIZE)
 }
 
