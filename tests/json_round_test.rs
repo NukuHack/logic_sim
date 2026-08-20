@@ -475,6 +475,7 @@ fn serializes_chip_with_subchips() {
         name: "NAND".to_string(),
         id: 1,
         internal_data: Some(vec![1, 2, 3, 4]),
+            label: None,
         position: Vec2::new(1.0, 2.0),
         pin_colour_info: vec![(0, Color::Blue), (1, Color::Pink)],
     };
@@ -637,6 +638,7 @@ fn roundtrip_chip_with_all_features() {
         name: "Sub1".to_string(),
         id: 3,
         internal_data: Some(vec![5, 6, 7]),
+            label: None,
         position: Vec2::new(0.5, 1.5),
         pin_colour_info: vec![(0, Color::Purple), (1, Color::Pink)],
     });

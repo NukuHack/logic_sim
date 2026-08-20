@@ -208,6 +208,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
             name: s.name.clone(),
             id: s.id,
             internal_data: s.internal_data.clone(),
+            label: s.label.clone(),
             position: s.position,
             pin_colour_info: s
                 .pin_colour_info

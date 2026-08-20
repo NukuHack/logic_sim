@@ -39,13 +39,54 @@ pub fn pin_height_from_bit_count(bit_count: PinBitCount) -> f32 {
     }
 }
 
-/// World-space radius to draw a pin's connection circle at, based on its
-/// bit width -- mirrors `pin_height_from_bit_count` (a pin's drawn size
-/// scales with how many bits it carries, same as its reserved layout
-/// height) so e.g. an 8-bit pin's dot is visibly bigger than a 1-bit pin's,
-/// not just its reserved stacking height.
+/// World-space radius to draw a 1-bit pin's connection circle at, and the
+/// "half-height" (cap radius) used by wider pins' pill shapes -- see
+/// `pin_visual_shape_size`'s docs for the full picture. Scaling rule: a
+/// 4x jump in bit count (1 -> 4) doubles the radius; growing further to 8
+/// bits keeps the same radius (only the pill's body widens -- see
+/// `pin_visual_shape_size`), so the *height* of a pin's connection point
+/// only ever reflects "how many separate width tiers" it's in, not its
+/// exact bit count. This intentionally does *not* reuse
+/// `pin_height_from_bit_count`'s numbers (that function is a different,
+/// finer-grained scale used for reserved stacking height along a chip's
+/// edge) -- this one is deliberately a slower, coarser "size *= 2 when
+/// bit count *= 4" curve so a pin's drawn size stays legible rather than
+/// growing linearly with bit count.
 pub fn pin_radius_for_bit_count(bit_count: PinBitCount) -> f32 {
-    pin_height_from_bit_count(bit_count) / 2.0
+    match bit_count {
+        PinBitCount::Bit1 => PIN_RADIUS,
+        PinBitCount::Bit4 => PIN_RADIUS * 1.7,
+        PinBitCount::Bit8 => PIN_RADIUS * 2.5,
+    }
+}
+
+/// World-space bounding size of a pin's drawn connection shape, based on
+/// its bit width:
+///  - `Bit1`: not used for a pill -- callers draw a plain circle of
+///    radius `pin_radius_for_bit_count(Bit1)` instead (a 1-bit pin never
+///    becomes a pill, only wider pins do).
+///  - `Bit4`: a "pill" -- a square body (width == height == the pin's
+///    diameter) with a half-circle cap glued onto each of its two
+///    (left/right) ends, so the overall shape is `body(diameter) +
+///    cap(radius) + cap(radius)` wide, and just `diameter` tall.
+///  - `Bit8`: the same height (radius) as `Bit4` -- bit count growing
+///    from 4 to 8 doesn't trigger another radius doubling, since that's
+///    only a 2x jump, not the 4x that doubles radius -- but the body
+///    portion doubles in width (twice `Bit4`'s square body), with the
+///    same two half-circle caps still glued on either end.
+///
+/// Feed the result straight into `SceneGeometry::add_rounded_rect` with
+/// `radius = size.y / 2.0` and both `round_left`/`round_right = true` to
+/// get the actual pill shape (its rounded corners become true semicircle
+/// caps exactly when the radius equals half the height).
+pub fn pin_visual_shape_size(bit_count: PinBitCount) -> Vec2 {
+    let r = pin_radius_for_bit_count(bit_count);
+    let body_width = match bit_count {
+        PinBitCount::Bit1 => 0.0, // unused -- Bit1 draws a plain circle, not a pill.
+        PinBitCount::Bit4 => r * 0.6,
+        PinBitCount::Bit8 => r,
+    };
+    Vec2::new(r, body_width + r)
 }
 
 /// Grid-height (in units of `GRID_SIZE`) reserved for one pin along a

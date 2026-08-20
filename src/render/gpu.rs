@@ -220,6 +220,7 @@ impl Renderer {
         });
 
         let font_system = FontSystem::new();
+        eprintln!("glyphon: {} font face(s) available", font_system.db().faces().count());
         let swash_cache = SwashCache::new();
         let text_cache = TextCache::new(&device);
         let text_viewport = TextViewport::new(&device, &text_cache);

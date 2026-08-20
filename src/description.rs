@@ -320,6 +320,8 @@ pub struct SubChipDescription {
     /// grid units (see `layout::GRID_SIZE`). Editor/layout concern only --
     /// unused by the simulation core, but needed by the renderer.
     pub position: Vec2,
+    /// Label
+    pub label: Option<String>,
     /// Per-instance overrides of an output pin's state-colour palette index
     /// (see `PinDescription::colour`), keyed by pin id. Lets two placed
     /// instances of the same chip type show differently-coloured output
