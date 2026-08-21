@@ -9,7 +9,7 @@
 use crate::description::{ChipDescription, ChipLibrary, ChipType, NameLocation, PinBitCount, WireConnectionType, WireDescription};
 use crate::pin_state::LogicState;
 use crate::render::camera::Camera;
-use crate::render::layout;
+use crate::render::layout::{self};
 use crate::structs::Vec2;
 use crate::render::theme::{self, Rgba};
 use crate::description::Color;
@@ -702,10 +702,12 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
     // so they read as visually distinct from a regular subchip pin's
     // plain circle. Mirrors `layout::dev_pin_body_size`'s docs.
     for pin in &chip.input_pins {
-        draw_input_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin.id, pin_state);
-        if hover_world_pos.is_some_and(|p| point_in_input_dev_pin_body(p, pin.position, pin.bit_count)) {
+        draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), true);
+        if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, true)) {
             hovered = Some((pin.position, pin.name.clone()));
         }
+        // the clickable part
+        draw_input_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin.id, pin_state);
     }
     for pin in &chip.output_pins {
         draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), false);

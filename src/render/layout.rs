@@ -286,7 +286,9 @@ pub fn input_bit_cell_offsets(bit_count: PinBitCount) -> Vec<Vec2> {
         for col in 0..cols {
             let x = -total.x / 2.0 + INPUT_BIT_CELL_SIZE * (col as f32 + 0.5);
             let y = total.y / 2.0 - INPUT_BIT_CELL_SIZE * (row as f32 + 0.5);
-            offsets.push(Vec2::new(x, y));
+            // X, y = position, the offset of "PIN_HEIGHT_4BIT" is to make it not instersect with the pin itself
+            let offset = Vec2::new(x - PIN_HEIGHT_4BIT, y);
+            offsets.push(offset);
         }
     }
     offsets
