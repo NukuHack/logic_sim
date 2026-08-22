@@ -843,6 +843,7 @@ fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount, round_l
 /// coarse "is the cursor anywhere on this pin" hover check. For
 /// per-bit toggle handling (which exact bit a click landed on), use
 /// `hit_test_input_dev_pin_bit` instead.
+#[allow(dead_code)]
 fn point_in_input_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> bool {
     let size = layout::input_dev_pin_body_size(bit_count);
     point_in_rect(point, pos, size)
@@ -875,6 +876,130 @@ pub fn hit_test_input_dev_pin_bit(point: Vec2, pos: Vec2, bit_count: PinBitCount
 /// unlike its pins, is never rounded).
 fn point_in_rect(point: Vec2, centre: Vec2, size: Vec2) -> bool {
     (point.x - centre.x).abs() <= size.x / 2.0 && (point.y - centre.y).abs() <= size.y / 2.0
+}
+
+/// Finds whichever wire's drawn centreline `world_pos` is closest to
+/// (within `max_dist` world units of any of its segments), returning
+/// that wire's index into `chip.wires` -- used to resolve a right-click
+/// "delete wire" to *one specific* `WireDescription`, not e.g. every wire
+/// fanning out of the same source pin. Resolves each wire's endpoints
+/// (including tap-on-another-wire ones) the same way [`draw_wires`]
+/// does, so "closest to what's actually drawn" matches what the player
+/// sees, not just the saved bend points.
+pub fn hit_test_wire(chip: &ChipDescription, library: &ChipLibrary, world_pos: Vec2, max_dist: f32) -> Option<usize> {
+    let placed = place_sub_chips(chip, library);
+    let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+
+    let mut cache: WirePointCache = HashMap::new();
+    let mut best: Option<(usize, f32)> = None;
+    for wire_idx in 0..chip.wires.len() {
+        let src = resolve_wire_endpoint(chip, &placed, &owner_to_placed, &chip.wires, wire_idx, false, &mut cache, 0);
+        let dst = resolve_wire_endpoint(chip, &placed, &owner_to_placed, &chip.wires, wire_idx, true, &mut cache, 0);
+        let (Some(src), Some(dst)) = (src, dst) else { continue };
+
+        let mut centreline = Vec::with_capacity(chip.wires[wire_idx].points.len() + 2);
+        centreline.push(src);
+        centreline.extend_from_slice(&chip.wires[wire_idx].points);
+        centreline.push(dst);
+
+        for seg in centreline.windows(2) {
+            let closest = closest_point_on_segment(world_pos, seg[0], seg[1]);
+            let dist = ((closest.x - world_pos.x).powi(2) + (closest.y - world_pos.y).powi(2)).sqrt();
+            if dist <= max_dist && best.map(|(_, best_dist)| dist < best_dist).unwrap_or(true) {
+                best = Some((wire_idx, dist));
+            }
+        }
+    }
+    best.map(|(idx, _)| idx)
+}
+
+/// Removes wire `index` from `chip.wires` -- deliberately just that one
+/// entry (the "shortest possible section": a single `WireDescription`,
+/// which may be only one tap/branch of a larger fan-out or tap-chain),
+/// not e.g. every wire sharing its source pin. Any *other* wire that was
+/// tapping onto the removed one (`connection_type != ToPins` and
+/// `connected_wire_index == index`) would otherwise be left pointing at
+/// a dangling/wrong index, so those are removed too (recursively, since
+/// a wire can itself be tapped by further wires) -- there's no sensible
+/// position left to resolve them to once their anchor is gone. Every
+/// remaining wire's `connected_wire_index` is then shifted down to
+/// account for removed indices, so the rest of the tap graph stays
+/// intact. Returns the number of wires actually removed (1 + however
+/// many dependent taps cascaded).
+pub fn delete_wire(chip: &mut ChipDescription, index: usize) -> usize {
+    if index >= chip.wires.len() {
+        return 0;
+    }
+
+    // Collect every index that must go: `index` itself, plus (transitively)
+    // any wire tapping onto one already marked for removal.
+    let mut to_remove = vec![index];
+    loop {
+        let mut added = false;
+        for (i, w) in chip.wires.iter().enumerate() {
+            if to_remove.contains(&i) {
+                continue;
+            }
+            if w.connection_type != WireConnectionType::ToPins && to_remove.contains(&(w.connected_wire_index as usize)) {
+                to_remove.push(i);
+                added = true;
+            }
+        }
+        if !added {
+            break;
+        }
+    }
+    to_remove.sort_unstable();
+
+    let removed_count = to_remove.len();
+    // Remove back-to-front so earlier indices in `to_remove` stay valid.
+    for &i in to_remove.iter().rev() {
+        chip.wires.remove(i);
+    }
+
+    // Shift every surviving wire's `connected_wire_index` down by however
+    // many removed indices sat before it, so taps still point at the
+    // right (now-renumbered) wire.
+    for w in chip.wires.iter_mut() {
+        if w.connection_type == WireConnectionType::ToPins {
+            continue;
+        }
+        let shift = to_remove.iter().filter(|&&removed| (removed as i32) < w.connected_wire_index).count() as i32;
+        w.connected_wire_index -= shift;
+    }
+
+    removed_count
+}
+
+
+/// Finds whichever placed subchip's body (as laid out by
+/// [`place_sub_chips`]) contains `world_pos`, if any -- used to resolve a
+/// right-click on the canvas to "which component did the player click".
+/// Iterates back-to-front (last-placed first) so, on the rare case two
+/// bodies overlap, the one actually drawn on top (and thus visible to the
+/// player) is the one that gets hit, matching `draw_components`' draw
+/// order.
+pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec2) -> Option<&'b PlacedSubChip<'a>> {
+    placed.iter().rev().find(|p| point_in_rect(world_pos, p.centre, p.size))
+}
+
+/// Finds whichever of `chip`'s *own* boundary dev-pins (never a
+/// subchip's pins) has its body under `world_pos`, if any -- used to
+/// resolve a right-click to "Label this pin" (see `PlacedSubChip`'s and
+/// `point_in_dev_pin_body`'s docs for the input/output `round_left`
+/// distinction this mirrors). Returns `(is_input, pin_id)`.
+pub fn hit_test_dev_pin(chip: &ChipDescription, world_pos: Vec2) -> Option<(bool, i32)> {
+    for pin in &chip.input_pins {
+        if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, true) {
+            return Some((true, pin.id));
+        }
+    }
+    for pin in &chip.output_pins {
+        if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, false) {
+            return Some((false, pin.id));
+        }
+    }
+    None
 }
 
 /// Draws a single subchip pin's connection shape at `pos`, coloured

@@ -531,6 +531,17 @@ impl ChipLibrary {
         self.by_name.get(&name.to_ascii_lowercase())
     }
 
+    /// Removes a chip from the library (by name, same case-insensitive
+    /// lookup as everything else here), returning it if it was present.
+    /// Used by the viewer's save/rename/replace flow (see
+    /// `bin/app.rs`'s `finish_save_chip`) to drop an in-memory entry
+    /// that's being superseded -- e.g. the chip being backed-up-then-
+    /// overwritten by a `Replace`, or an old identity that's being
+    /// renamed away entirely.
+    pub fn remove(&mut self, name: &str) -> Option<ChipDescription> {
+        self.by_name.remove(&name.to_ascii_lowercase())
+    }
+
     /// Iterate over every chip currently in the library (builtin + custom).
     /// Used by tooling (e.g. the viewer) that needs to pick a sensible
     /// default chip to display rather than assuming a fixed name exists.

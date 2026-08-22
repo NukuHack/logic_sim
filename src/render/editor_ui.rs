@@ -15,6 +15,12 @@
 //!   single text field + Cancel/Confirm, reused for anything that just
 //!   needs a short name/label typed in).
 //! - [`build_key_select_popup`] -- `DLS.Graphics.RebindKeyChipMenu`.
+//! - [`build_rom_editor_popup`] -- 256-cell grid editor for a placed
+//!   `Rom256x16`'s contents (not ported from the original C# -- that
+//!   version doesn't have an in-place ROM editor at all).
+//! - [`build_save_chip_popup`] -- Ctrl+S: save/replace/save-as/rename
+//!   the currently open chip (also not in the original C# port; see
+//!   `bin/app.rs`'s `confirm_save_chip_popup` for the actual disk I/O).
 
 use crate::json::ChipCollection;
 use crate::json::ProjectDescription;
@@ -35,7 +41,10 @@ pub enum EditorAction {
     /// order the panel draws them) to its next option.
     CyclePref(usize),
     ApplyPreferences,
-    /// Chip library: pick a chip to place (by name).
+    /// Chip library: highlight a row (by name). Purely a selection --
+    /// the host no longer opens the chip just from this click; opening
+    /// happens via that same row's right-click "Open" popup instead (see
+    /// `render::context_menu`).
     SelectChip(String),
     /// Chip library: toggle a collection's open/closed state (by index
     /// into the collections slice passed to [`build_chip_library_panel`]).
@@ -46,6 +55,34 @@ pub enum EditorAction {
     /// Key select: choose this key (already upper-cased, alphanumeric).
     ChooseKey(char),
     ConfirmKey,
+    /// ROM editor: select cell `usize` (0..256) for editing -- its
+    /// current value gets loaded into the host's text-input buffer for
+    /// [`build_rom_editor_popup`]'s text field.
+    RomSelectCell(usize),
+    /// ROM editor: commit whatever's typed in the text field into the
+    /// currently-selected cell, then advance selection to the next cell
+    /// (wrapping at 255 -> 0) so typing several values in a row doesn't
+    /// need a click between each one.
+    RomConfirmCell,
+    /// ROM editor: write the whole edited buffer back to the subchip and
+    /// close the popup.
+    RomApply,
+    /// Save-chip popup: commit the typed name -- either a plain
+    /// overwrite/create (`SaveChipMode::Save`) or, when the name belongs
+    /// to a *different* existing chip, a backup-then-overwrite
+    /// (`SaveChipMode::Replace`). Which of those it actually does is
+    /// resolved by the host at click time the same way it was resolved
+    /// to choose which button/label to show -- see
+    /// `build_save_chip_popup`'s docs.
+    SaveChipConfirm,
+    /// Save-chip popup (`SaveChipMode::SaveAsOrRename` only): save a
+    /// *copy* of the current chip under the typed name, leaving the
+    /// chip's existing on-disk file (under its current name) untouched.
+    SaveChipSaveAs,
+    /// Save-chip popup (`SaveChipMode::SaveAsOrRename` only): actually
+    /// rename the chip -- moves its on-disk file to the typed name, no
+    /// copy left behind under the old name.
+    SaveChipRename,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +131,26 @@ fn add_button(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, label: &s
         [0.45, 0.45, 0.5, 1.0]
     } else {
         theme::CHIP_BODY_COL
+    };
+    panel_bg(frame, vw, vh, rect, bg);
+    add_label(frame, vw, vh, centre(&rect).x, centre(&rect).y, rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
+    frame.buttons.push(EditorButton { rect, action, enabled });
+}
+
+/// Same as [`add_button`], but with an explicit base colour (before the
+/// hover brightening) instead of the default grey -- used for the ROM
+/// editor's "Set" (default already) and the save-chip popup's "Replace"
+/// button, which is deliberately red (see `build_save_chip_popup`) since
+/// it's a destructive action (backs up, then overwrites, a different
+/// existing chip).
+fn add_button_coloured(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, label: &str, action: EditorAction, enabled: bool, mouse: Vec2, base_colour: theme::Rgba) {
+    let hovered = enabled && rect.contains(mouse);
+    let bg = if !enabled {
+        theme::PIN_INVALID_COL
+    } else if hovered {
+        [(base_colour[0] + 0.12).min(1.0), (base_colour[1] + 0.12).min(1.0), (base_colour[2] + 0.12).min(1.0), base_colour[3]]
+    } else {
+        base_colour
     };
     panel_bg(frame, vw, vh, rect, bg);
     add_label(frame, vw, vh, centre(&rect).x, centre(&rect).y, rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
@@ -338,6 +395,187 @@ pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse:
     finish(frame, mouse)
 }
 
+// ---------------------------------------------------------------------
+// ROM data editor (configuring a placed `Rom256x16`'s contents)
+// ---------------------------------------------------------------------
+
+/// Number of addressable words in a `Rom256x16` -- matches that chip
+/// type's name (256 sixteen-bit words) and `SubChipDescription::internal_data`'s
+/// expected length for one (see `sim::process_builtin_chip`'s `Rom256x16`
+/// arm, which indexes `internal_state` by the read address 0..256).
+pub const ROM_WORD_COUNT: usize = 256;
+const ROM_GRID_COLS: usize = 16;
+const ROM_GRID_ROWS: usize = ROM_WORD_COUNT / ROM_GRID_COLS;
+const ROM_CELL_W: f32 = 42.0;
+const ROM_CELL_H: f32 = 22.0;
+const ROM_CELL_GAP: f32 = 2.0;
+
+/// Builds the 256-cell ROM contents editor popup -- a proper grid (16x16,
+/// one cell per address) rather than the plain comma-separated text blob
+/// this used to be. `data` is the host's own working copy of all 256
+/// words (`ViewerState` keeps this separately from the saved
+/// `SubChipDescription::internal_data` until "Apply" is clicked, same
+/// "edit a draft, commit on confirm" shape as every other overlay here);
+/// `selected` is which cell's value `edit_text` currently represents.
+///
+/// Each cell shows its word in decimal; click one to select it (loads
+/// its value into the text field for editing), type a new value, then
+/// either click "Set" or press Enter (`EditorAction::RomConfirmCell`) to
+/// commit it and move on to the next cell. Accepts a leading `0x`/`0X`
+/// for hex input; displays decimal, to match the plain-number contents
+/// most ROM programs actually use.
+pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+    let mut frame = EditorFrame::default();
+
+    let grid_w = ROM_GRID_COLS as f32 * (ROM_CELL_W + ROM_CELL_GAP) - ROM_CELL_GAP;
+    let grid_h = ROM_GRID_ROWS as f32 * (ROM_CELL_H + ROM_CELL_GAP) - ROM_CELL_GAP;
+    let panel_w = grid_w + 40.0;
+    let header_h = 92.0;
+    let footer_h = 56.0;
+    let panel_h = header_h + grid_h + footer_h;
+    let cx = vw / 2.0;
+    let cy = vh / 2.0;
+
+    let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
+    panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+
+    add_label(&mut frame, vw, vh, cx, panel_rect.y + 20.0, panel_w - 30.0, "Configure ROM (256 x 16-bit)", [1.0, 1.0, 1.0, 1.0], 20.0);
+
+    let selected = selected.min(ROM_WORD_COUNT - 1);
+    let addr_label = format!("Address {selected} (0x{selected:02X})");
+    add_label(&mut frame, vw, vh, panel_rect.x + 90.0, panel_rect.y + 52.0, 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
+
+    let field_rect = UiRect::new(panel_rect.x + panel_w - 190.0, panel_rect.y + 38.0, 100.0, 30.0);
+    frame.geometry.add_rect(to_world(centre(&field_rect), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
+    let shown = if edit_text.is_empty() { "|".to_string() } else { format!("{edit_text}|") };
+    add_label(&mut frame, vw, vh, centre(&field_rect).x, centre(&field_rect).y, field_rect.w - 10.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+    frame.text_field = Some(field_rect);
+
+    let set_rect = UiRect::new(panel_rect.x + panel_w - 80.0, panel_rect.y + 38.0, 60.0, 30.0);
+    add_button(&mut frame, vw, vh, set_rect, "Set", EditorAction::RomConfirmCell, true, mouse);
+
+    let grid_origin = Vec2::new(panel_rect.x + (panel_w - grid_w) / 2.0, panel_rect.y + header_h);
+    for row in 0..ROM_GRID_ROWS {
+        for col in 0..ROM_GRID_COLS {
+            let idx = row * ROM_GRID_COLS + col;
+            let cell_rect = UiRect::new(grid_origin.x + col as f32 * (ROM_CELL_W + ROM_CELL_GAP), grid_origin.y + row as f32 * (ROM_CELL_H + ROM_CELL_GAP), ROM_CELL_W, ROM_CELL_H);
+            let is_selected = idx == selected;
+            let hovered = cell_rect.contains(mouse);
+            let value = data.get(idx).copied().unwrap_or(0);
+            let bg = if is_selected {
+                [0.35, 0.5, 0.75, 1.0]
+            } else if value != 0 {
+                [0.3, 0.3, 0.34, 1.0]
+            } else if hovered {
+                [0.28, 0.28, 0.3, 1.0]
+            } else {
+                [0.14, 0.14, 0.16, 1.0]
+            };
+            panel_bg(&mut frame, vw, vh, cell_rect, bg);
+            add_label(&mut frame, vw, vh, centre(&cell_rect).x, centre(&cell_rect).y, cell_rect.w - 4.0, &value.to_string(), theme::text_colour_for_background(bg), 11.0);
+            frame.buttons.push(EditorButton { rect: cell_rect, action: EditorAction::RomSelectCell(idx), enabled: true });
+        }
+    }
+
+    let apply_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0);
+    let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0);
+    add_button(&mut frame, vw, vh, apply_rect, "Apply", EditorAction::RomApply, true, mouse);
+    add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+
+    finish(frame, mouse)
+}
+
+// ---------------------------------------------------------------------
+// Save-chip popup (Ctrl+S)
+// ---------------------------------------------------------------------
+
+/// Which buttons [`build_save_chip_popup`] should offer, based on how the
+/// currently-typed name compares to the chip's current on-disk identity
+/// and the rest of the library -- computed by the host (it needs
+/// `ChipLibrary`/`ViewerState` access this module deliberately doesn't
+/// have) by comparing the typed name against `v.root_chip_name` and
+/// `v.library`, then re-derived identically on both the "which buttons
+/// to draw" side and the "what did this click actually mean" side, so
+/// the two can never disagree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveChipMode {
+    /// Typed name is exactly the chip's current identity (or, before
+    /// anything's been typed, defaults to it) -- plain overwrite/create,
+    /// no other chip is affected.
+    Save,
+    /// Typed name already belongs to a *different* chip that's saved to
+    /// disk -- confirming backs that other chip up (see
+    /// `Saver::delete_chip`'s `backup_in_deleted_folder`) and overwrites
+    /// it with this one.
+    Replace,
+    /// Typed name is free and differs from the chip's current identity
+    /// -- ambiguous by itself whether the player means "keep the
+    /// original too, also save a copy here" (Save As) or "this chip is
+    /// now called that" (Rename), so both are offered.
+    SaveAsOrRename,
+}
+
+/// Builds the Ctrl+S popup. `current_name` is the chip's own current
+/// identity (shown for context, e.g. "Saving: Full Adder"); `text` is
+/// the typed name field's contents; `mode` (see its own docs) picks
+/// which action buttons to show -- and, for `Replace`, colours it red
+/// since it's destructive to *some other* chip's save file.
+pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+    let mut frame = EditorFrame::default();
+    let panel_w = 420.0;
+    let panel_h = 178.0;
+    let cx = vw / 2.0;
+    let cy = vh / 2.0;
+
+    let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
+    panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+
+    add_label(&mut frame, vw, vh, cx, panel_rect.y + 24.0, panel_w - 40.0, &format!("Save chip (currently: {current_name})"), [1.0, 1.0, 1.0, 1.0], 18.0);
+
+    let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 48.0, panel_w - 60.0, 34.0);
+    frame.geometry.add_rect(to_world(centre(&field_rect), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
+    let shown = if text.is_empty() { "|".to_string() } else { format!("{text}|") };
+    add_label(&mut frame, vw, vh, centre(&field_rect).x, centre(&field_rect).y, field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+    frame.text_field = Some(field_rect);
+
+    let hint = match mode {
+        SaveChipMode::Save => "",
+        SaveChipMode::Replace => "A different chip already has this name.",
+        SaveChipMode::SaveAsOrRename => "Name changed -- keep both, or rename?",
+    };
+    if !hint.is_empty() {
+        add_label(&mut frame, vw, vh, cx, panel_rect.y + 92.0, panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
+    }
+
+    let confirm_enabled = !text.trim().is_empty();
+    let button_y = panel_rect.y + panel_h - 46.0;
+    match mode {
+        SaveChipMode::Save => {
+            let confirm_rect = UiRect::new(cx - 186.0, button_y, 180.0, 36.0);
+            let cancel_rect = UiRect::new(cx + 6.0, button_y, 180.0, 36.0);
+            add_button(&mut frame, vw, vh, confirm_rect, "Save", EditorAction::SaveChipConfirm, confirm_enabled, mouse);
+            add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+        }
+        SaveChipMode::Replace => {
+            let confirm_rect = UiRect::new(cx - 186.0, button_y, 180.0, 36.0);
+            let cancel_rect = UiRect::new(cx + 6.0, button_y, 180.0, 36.0);
+            add_button_coloured(&mut frame, vw, vh, confirm_rect, "Replace", EditorAction::SaveChipConfirm, confirm_enabled, mouse, [0.62, 0.18, 0.18, 1.0]);
+            add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+        }
+        SaveChipMode::SaveAsOrRename => {
+            let w = (panel_w - 60.0 - 16.0) / 3.0;
+            let save_as_rect = UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0);
+            let rename_rect = UiRect::new(save_as_rect.x + w + 8.0, button_y, w, 36.0);
+            let cancel_rect = UiRect::new(rename_rect.x + w + 8.0, button_y, w, 36.0);
+            add_button(&mut frame, vw, vh, save_as_rect, "Save As", EditorAction::SaveChipSaveAs, confirm_enabled, mouse);
+            add_button(&mut frame, vw, vh, rename_rect, "Rename", EditorAction::SaveChipRename, confirm_enabled, mouse);
+            add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+        }
+    }
+
+    finish(frame, mouse)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +688,48 @@ mod tests {
         let confirm_some = frame_some.buttons.iter().find(|b| b.action == EditorAction::ConfirmKey).unwrap();
         assert!(confirm_some.enabled);
         assert!(frame_some.geometry.labels.iter().any(|l| l.text == "Q"));
+    }
+
+    #[test]
+    fn rom_editor_has_one_selectable_cell_per_word() {
+        let data = vec![0u32; ROM_WORD_COUNT];
+        let frame = build_rom_editor_popup(&data, 0, "0", 1280.0, 800.0, Vec2::ZERO);
+        let cell_count = frame.buttons.iter().filter(|b| matches!(b.action, EditorAction::RomSelectCell(_))).count();
+        assert_eq!(cell_count, ROM_WORD_COUNT);
+        assert!(frame.buttons.iter().any(|b| b.action == EditorAction::RomApply));
+        assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
+        assert!(frame.text_field.is_some());
+    }
+
+    #[test]
+    fn rom_editor_shows_selected_cells_value_in_its_text_field() {
+        let mut data = vec![0u32; ROM_WORD_COUNT];
+        data[5] = 1234;
+        let frame = build_rom_editor_popup(&data, 5, "1234", 1280.0, 800.0, Vec2::ZERO);
+        assert!(frame.geometry.labels.iter().any(|l| l.text.contains("1234")));
+        assert!(frame.geometry.labels.iter().any(|l| l.text.contains("Address 5")));
+    }
+
+    #[test]
+    fn save_chip_mode_save_shows_single_confirm_button() {
+        let frame = build_save_chip_popup("Full Adder", "Full Adder", SaveChipMode::Save, 1280.0, 800.0, Vec2::ZERO);
+        assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SaveChipConfirm));
+        assert!(!frame.buttons.iter().any(|b| matches!(b.action, EditorAction::SaveChipSaveAs | EditorAction::SaveChipRename)));
+    }
+
+    #[test]
+    fn save_chip_mode_save_as_or_rename_shows_both_options() {
+        let frame = build_save_chip_popup("Full Adder", "Full Adder 2", SaveChipMode::SaveAsOrRename, 1280.0, 800.0, Vec2::ZERO);
+        assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SaveChipSaveAs));
+        assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SaveChipRename));
+        assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
+    }
+
+    #[test]
+    fn save_chip_confirm_disabled_for_empty_name() {
+        let frame = build_save_chip_popup("Full Adder", "", SaveChipMode::Save, 1280.0, 800.0, Vec2::ZERO);
+        let confirm = frame.buttons.iter().find(|b| b.action == EditorAction::SaveChipConfirm).unwrap();
+        assert!(!confirm.enabled);
     }
 
     #[test]

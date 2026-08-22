@@ -349,45 +349,101 @@ impl Renderer {
         buffers
     }
 
-    /// Upload `scene` and the current camera, then draw one frame,
-    /// including any gate/chip name labels (`scene.labels`) on top of the
-    /// flat-colour triangle geometry.
-    pub fn render(&mut self, scene: &SceneGeometry, camera: &Camera, clear_colour: [f32; 4]) -> Result<(), wgpu::SurfaceError> {
-        let vertices = scene_to_vertices(scene);
-        self.ensure_vertex_capacity(vertices.len());
-        self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
-        self.vertex_count = vertices.len() as u32;
-
+    /// Draws one frame from back to front, as an ordered stack of
+    /// `layers` (e.g. `[world, ui_overlay, context_menu]`) -- each
+    /// layer's own triangles *and* text labels are fully drawn (as their
+    /// own submitted GPU pass) before the next layer's are even
+    /// uploaded, so a later layer's triangles reliably paint over an
+    /// earlier layer's text, not just its shapes. Compare the old
+    /// single-`SceneGeometry` `render`, which drew *all* triangles from
+    /// every layer first and *all* text second -- meaning any label, no
+    /// matter which logical layer it belonged to, always rendered on top
+    /// of every triangle, including e.g. a modal popup's own background
+    /// that was meant to cover it.
+    ///
+    /// Each layer is deliberately its own `queue.submit()` (rather than
+    /// one shared encoder/pass per frame) precisely so that layer *N*+1's
+    /// `prepare_text` call -- which uploads into the same glyphon
+    /// text-vertex buffer `prepare_text` reuses every call -- can't race
+    /// layer *N*'s still-unexecuted `text_renderer.render` draw command.
+    /// `wgpu::Queue` preserves strict submission order for everything
+    /// pushed through it (`write_buffer`/`write_texture` calls *and*
+    /// `submit()`s alike), so submitting layer *N* fully before even
+    /// preparing layer *N*+1's text guarantees layer *N*'s glyphs are
+    /// already consumed by the time they'd otherwise be overwritten.
+    pub fn render(&mut self, layers: &[SceneGeometry], camera: &Camera, clear_colour: [f32; 4]) -> Result<(), wgpu::SurfaceError> {
         let camera_uniform = CameraUniform { view_proj: camera.view_proj_matrix() };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));
+
+        let frame = self.surface.get_current_texture()?;
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let mut drew_anything = false;
+        for layer in layers {
+            if layer.triangles.is_empty() && layer.labels.is_empty() {
+                continue;
+            }
+            self.render_layer(layer, camera, &view, clear_colour, !drew_anything);
+            drew_anything = true;
+        }
+        // Still need to clear the frame even if every layer was empty
+        // (e.g. a blank scene), or the previous frame's contents (or
+        // undefined memory, on the very first frame) would show through.
+        if !drew_anything {
+            self.render_layer(&SceneGeometry::default(), camera, &view, clear_colour, true);
+        }
+
+        frame.present();
+
+        // Evict glyphs that haven't been used recently so the atlas
+        // doesn't grow unbounded as different chip names scroll through
+        // view over a long session.
+        self.text_atlas.trim();
+
+        Ok(())
+    }
+
+    /// Draws one layer's triangles + text as a single submitted pass.
+    /// `clear` selects whether this pass clears the target (the first
+    /// non-empty layer of the frame) or loads/preserves whatever's
+    /// already there (every layer after that) -- see `render`'s doc
+    /// comment for why each layer gets its own `submit()` rather than
+    /// sharing one encoder.
+    fn render_layer(&mut self, layer: &SceneGeometry, camera: &Camera, view: &wgpu::TextureView, clear_colour: [f32; 4], clear: bool) {
+        let vertices = scene_to_vertices(layer);
+        self.ensure_vertex_capacity(vertices.len());
+        if !vertices.is_empty() {
+            self.queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+        }
+        self.vertex_count = vertices.len() as u32;
 
         // Must happen before the render pass begins -- glyphon's prepare()
         // writes into the atlas texture via the queue, it doesn't record
         // into a pass. `_text_buffers` just needs to outlive the pass below
         // (the `TextArea`s handed to `text_renderer` during prepare borrow
         // from it).
-        let _text_buffers = self.prepare_text(&scene.labels, camera);
-        let has_text = !scene.labels.is_empty();
+        let _text_buffers = self.prepare_text(&layer.labels, camera);
+        let has_text = !layer.labels.is_empty();
 
-        let frame = self.surface.get_current_texture()?;
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("dls-encoder") });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("dls-layer-encoder") });
         {
+            let load = if clear {
+                wgpu::LoadOp::Clear(wgpu::Color {
+                    r: clear_colour[0] as f64,
+                    g: clear_colour[1] as f64,
+                    b: clear_colour[2] as f64,
+                    a: clear_colour[3] as f64,
+                })
+            } else {
+                wgpu::LoadOp::Load
+            };
+
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("dls-pass"),
+                label: Some("dls-layer-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: clear_colour[0] as f64,
-                            g: clear_colour[1] as f64,
-                            b: clear_colour[2] as f64,
-                            a: clear_colour[3] as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -401,9 +457,11 @@ impl Renderer {
                 pass.draw(0..self.vertex_count, 0..1);
             }
 
-            // Text draws on top of the shapes, in the same pass (glyphon is
-            // designed as middleware over an existing pass -- no extra
-            // clear/load needed).
+            // Text draws on top of this layer's own shapes, in the same
+            // pass (glyphon is designed as middleware over an existing
+            // pass -- no extra clear/load needed) -- but never leaks
+            // into the *next* layer's pass, unlike the old single-pass
+            // renderer.
             if has_text {
                 self.text_renderer
                     .render(&self.text_atlas, &self.text_viewport, &mut pass)
@@ -412,14 +470,6 @@ impl Renderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
-
-        // Evict glyphs that haven't been used recently so the atlas
-        // doesn't grow unbounded as different chip names scroll through
-        // view over a long session.
-        self.text_atlas.trim();
-
-        Ok(())
     }
 }
 

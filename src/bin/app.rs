@@ -31,15 +31,16 @@
 
 use logic_sim::json::ProjectDescription;
 use logic_sim::render::camera::Camera;
+use logic_sim::render::context_menu::{self, ContextMenuButton, ContextMenuItem, ContextMenuState};
 use logic_sim::render::editor_ui::{self, EditorAction, EditorButton};
 use logic_sim::render::gpu::Renderer;
 use logic_sim::render::menu_ui::{self, UiAction};
-use logic_sim::render::scene::{bounding_box, build_grid, build_scene, AllLow, SceneGeometry, SimulatorPinState};
+use logic_sim::render::scene::{bounding_box, build_grid, build_scene, delete_wire, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, SceneGeometry, SimulatorPinState};
 use logic_sim::render::theme;
 use logic_sim::sim::Simulator;
 use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
-use logic_sim::{ChipLibrary, ChipType, SavePaths, Saver, default_chip_collections, load_project, register_all_builtins};
+use logic_sim::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver, default_chip_collections, load_project, register_all_builtins};
 use std::path::PathBuf;
 use std::sync::Arc;
 use logic_sim::sim::key_mods_bits;
@@ -61,6 +62,60 @@ enum Overlay {
     Preferences,
     Naming,
     KeySelect,
+    RomEditor,
+    SaveChip,
+}
+
+/// What `Overlay::Naming`'s Confirm/Enter should actually *do* with the
+/// typed text once confirmed -- the popup itself (a title + one text
+/// field) is generic, reused for the project-rename prompt as well as
+/// every "Label"/"Configure" popup opened from a right-click context menu
+/// (see `apply_context_menu_action`). Defaults to `RenameProject` so the
+/// existing 'n' shortcut keeps working unchanged; every other variant is
+/// set right before opening the overlay and consumed (reset back to
+/// `RenameProject`) by `confirm_naming_popup`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum NamingPurpose {
+    #[default]
+    RenameProject,
+    /// Set a placed subchip's display label (`SubChipDescription::label`).
+    /// `i32` is that subchip's id within the current root chip.
+    LabelComponent(i32),
+    /// Set the name of one of the *current root chip's own* boundary
+    /// dev-pins (`ChipDescription::input_pins`/`output_pins`) -- never a
+    /// subchip's pin, per the brief.
+    LabelDevPin { is_input: bool, id: i32 },
+    /// Pulse length, in simulation ticks (`SubChipDescription::internal_data[0]`,
+    /// mirrored into `Simulator`'s per-chip `internal_state[DURATION]` --
+    /// see `sim::process_builtin_chip`'s `Pulse` arm).
+    ConfigurePulseDuration(i32),
+}
+
+/// What `Overlay::KeySelect`'s Confirm/Enter should do with the chosen
+/// key -- same idea as `NamingPurpose`, for the one overlay that isn't a
+/// plain text field. Defaults to `Rebind` (today's placeholder "not yet
+/// wired to an action" behaviour); `ConfigureKeyChar` is used when a
+/// `Key` component's own "Configure" popup reuses this same overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum KeySelectPurpose {
+    #[default]
+    Rebind,
+    /// `SubChipDescription::internal_data[0]`, the ASCII code this `Key`
+    /// instance listens for -- `i32` is that subchip's id.
+    ConfigureKeyChar(i32),
+}
+
+/// Working state for the ROM contents grid editor (`Overlay::RomEditor` /
+/// `editor_ui::build_rom_editor_popup`) -- a draft copy of all 256 words
+/// plus which one's currently selected, kept separate from
+/// `SubChipDescription::internal_data` until "Apply" is clicked (same
+/// "edit a draft, commit on confirm" shape every other overlay here
+/// uses).
+struct RomEditorState {
+    /// Id of the subchip (within the current root chip) being configured.
+    component_id: i32,
+    data: Vec<u32>,
+    selected: usize,
 }
 
 /// Convert winit's modifier state into the `Simulator::key_modifiers`
@@ -106,12 +161,46 @@ struct ViewerState {
     overlay_text_input: String,
     /// Pending key choice for the key-select popup.
     overlay_key_choice: Option<char>,
+    /// What `Overlay::Naming`'s confirm should do -- see `NamingPurpose`'s
+    /// docs.
+    naming_purpose: NamingPurpose,
+    /// What `Overlay::KeySelect`'s confirm should do -- see
+    /// `KeySelectPurpose`'s docs.
+    key_select_purpose: KeySelectPurpose,
+    /// Draft state for `Overlay::RomEditor`, when open.
+    rom_editor: Option<RomEditorState>,
     /// Hit-boxes from the overlay's *last drawn* frame -- same
     /// immediate-mode pattern as `App::last_menu_buttons`.
     last_overlay_buttons: Vec<EditorButton>,
+
+    /// Chip name last left-clicked in the library sidebar, purely for
+    /// highlighting -- unlike `root_chip_name`, selecting a row here no
+    /// longer switches the viewer to it (see `EditorAction::SelectChip`);
+    /// that now only happens via the row's right-click "Open" popup.
+    selected_library_chip: Option<String>,
+
+    /// The right-click popup currently open (over a canvas component or
+    /// a library row), if any -- see `render::context_menu`. Always
+    /// drawn/hit-tested as the top-most layer of the frame, above even a
+    /// modal `overlay`, so it's never hidden behind (or accidentally
+    /// swallowed by) whatever else is open.
+    context_menu: Option<ContextMenuState>,
+    /// Hit-boxes from the context menu's *last drawn* frame -- same
+    /// immediate-mode pattern as `last_overlay_buttons`.
+    last_context_menu_buttons: Vec<ContextMenuButton>,
 }
 
 impl ViewerState {
+    /// Rebuilds `self.sim` from `self.library`'s current copy of
+    /// `self.root_chip_name` -- called after any edit that changes the
+    /// simulated structure (deleting a component/wire, re-configuring a
+    /// Pulse/Key/ROM, etc). Deliberately leaves the camera exactly where
+    /// it is: an in-place edit to the chip you're already looking at
+    /// shouldn't yank the view back to a fresh auto-fit every time (that
+    /// was `camera_fitted`'s old, wrong role here). Actually switching to
+    /// a *different* chip is a separate, explicit action --
+    /// `open_chip_by_name` resets `camera_fitted` itself, only when the
+    /// root chip is actually changing.
     fn rebuild_sim(&mut self) {
         let root_desc = self.library.get(&self.root_chip_name).clone();
         let held_keys = std::mem::take(&mut self.sim.held_keys);
@@ -119,7 +208,6 @@ impl ViewerState {
         self.sim = Simulator::build(&root_desc, &self.library);
         self.sim.held_keys = held_keys;
         self.sim.key_modifiers = key_modifiers;
-        self.camera_fitted = false;
     }
 }
 
@@ -166,7 +254,7 @@ fn toggle_driven_input_bit(library: &mut ChipLibrary, root_chip_name: &str, pin_
 /// (constant position and size in pixels) no matter how far the chip
 /// canvas underneath has been panned/zoomed, using one real render pass
 /// instead of needing a second camera/pipeline in `render::gpu`.
-fn pin_overlay_to_screen(mut geometry: SceneGeometry, camera: &Camera, vw: f32, vh: f32) -> SceneGeometry {
+fn pin_overlay_to_screen(mut geometry: SceneGeometry, camera: &Camera, _vw: f32, vh: f32) -> SceneGeometry {
     let to_screen_px = |world: Vec2| Vec2::new(world.x, vh - world.y); // inverse of `menu_ui::to_world`, which is its own inverse
     for v in &mut geometry.triangles {
         v.pos = camera.screen_to_world(to_screen_px(v.pos));
@@ -208,6 +296,526 @@ fn reset_all_driven_inputs(library: &mut ChipLibrary) {
     }
 }
 
+/// Whether `name` is a chip the player actually authored (as opposed to
+/// a built-in primitive like `AND`/`NAND`/`Pulse`) -- i.e. whether
+/// "Open" makes any sense for it. Builtins have no `ChipDescription` of
+/// their own worth navigating into (no subchips/wires to show), so every
+/// "Open" context-menu row is disabled for them (see
+/// `context_menu_items_for_chip_type`) and `open_chip_by_name` refuses to
+/// act on one even if somehow invoked anyway.
+fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
+    library.try_get(name).map(|d| d.chip_type == ChipType::Custom).unwrap_or(false)
+}
+
+/// Determines which buttons `Overlay::SaveChip` should show for the
+/// currently-typed name, by comparing it against `v.root_chip_name` (the
+/// chip's current identity) and the rest of `v.library` -- see
+/// `editor_ui::SaveChipMode`'s docs for what each variant means and
+/// `build_save_chip_popup`'s docs for why this is re-derived identically
+/// on both the render side and the click-handling side. Case-insensitive,
+/// matching `ChipLibrary`'s own lookup rules.
+fn save_chip_mode(v: &ViewerState, typed: &str) -> editor_ui::SaveChipMode {
+    let typed = typed.trim();
+    if typed.eq_ignore_ascii_case(&v.root_chip_name) {
+        editor_ui::SaveChipMode::Save
+    } else if v.library.try_get(typed).is_some() {
+        editor_ui::SaveChipMode::Replace
+    } else {
+        editor_ui::SaveChipMode::SaveAsOrRename
+    }
+}
+
+/// Adds `add_name` to the project's `all_custom_chip_names`/`chip_collections`
+/// bookkeeping if it isn't already there (and removes `remove_name` from
+/// both, if given), then persists the updated `ProjectDescription`.
+/// Mirrors what the sidebar/search actually list -- without this, a
+/// freshly Saved-As/Renamed chip would only be reachable if you already
+/// remembered its exact name to type into search.
+fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_name: Option<&str>, add_name: &str) {
+    if let Some(old) = remove_name {
+        v.prefs.all_custom_chip_names.retain(|n| n != old);
+        for c in v.prefs.chip_collections.iter_mut() {
+            c.chips.retain(|n| n != old);
+        }
+    }
+    if !v.prefs.all_custom_chip_names.iter().any(|n| n == add_name) {
+        v.prefs.all_custom_chip_names.push(add_name.to_string());
+    }
+    if !v.prefs.chip_collections.iter().any(|c| c.chips.iter().any(|n| n == add_name)) {
+        if let Some(first) = v.prefs.chip_collections.first_mut() {
+            first.chips.push(add_name.to_string());
+        }
+    }
+
+    let mut desc = v.prefs.clone();
+    match Saver::save_project_description(paths, &mut desc) {
+        Ok(()) => v.prefs = desc,
+        Err(e) => eprintln!("warning: failed to update project description: {e}"),
+    }
+}
+
+/// Plain overwrite/create (`SaveChipMode::Save`): writes the current
+/// in-memory chip back to its own file under its own (unchanged) name.
+/// No other chip or file is touched.
+fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+    let name = v.root_chip_name.clone();
+    let desc = v.library.get(&name).clone();
+    match Saver::save_chip(paths, &v.project_name, &desc) {
+        Ok(()) => *status = Some(format!("Saved '{name}'")),
+        Err(e) => *status = Some(format!("Failed to save '{name}': {e}")),
+    }
+}
+
+/// Saves a *copy* of the currently-open chip under `new_name`
+/// (`SaveChipMode::SaveAsOrRename`, "Save As" button), leaving its
+/// existing on-disk file (under its current name, if it has one)
+/// completely untouched. Since that current identity's `v.library` entry
+/// has been edited in place all session, once we fork away from it its
+/// in-memory copy no longer matches what's actually on disk under that
+/// name -- so it's reloaded fresh from its own file right after (see
+/// `load_single_chip_from_disk`), discarding whatever of this session's
+/// edits hadn't already been saved under *that* identity. The viewer
+/// then switches over to the new name.
+fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
+    let old_name = v.root_chip_name.clone();
+    let mut new_desc = v.library.get(&old_name).clone();
+    new_desc.name = new_name.to_string();
+
+    match Saver::save_chip(paths, &v.project_name, &new_desc) {
+        Ok(()) => {
+            v.library.add(new_desc);
+            register_chip_name_in_project(v, paths, None, new_name);
+
+            if !old_name.eq_ignore_ascii_case(new_name) {
+                match load_single_chip_from_disk(paths, &v.project_name, &old_name) {
+                    Ok(pristine) => {
+                        v.library.add(pristine);
+                    }
+                    Err(_) => {
+                        // No on-disk file for the old identity (it was
+                        // never actually saved under that name to begin
+                        // with) -- nothing to revert to, so just leave
+                        // its in-memory draft as it was.
+                    }
+                }
+            }
+
+            v.root_chip_name = new_name.to_string();
+            *status = Some(format!("Saved as '{new_name}'"));
+            v.rebuild_sim();
+        }
+        Err(e) => *status = Some(format!("Failed to save '{new_name}': {e}")),
+    }
+}
+
+/// Backs up (moves to the project's "Deleted Chips" folder -- see
+/// `Saver::delete_chip`'s `backup_in_deleted_folder`) whatever chip is
+/// currently saved under `new_name`, then does exactly what
+/// `save_chip_as` does. The chip's own existing file, if any under its
+/// *current* name, is left untouched either way -- only the chip being
+/// overwritten at the destination name is backed up.
+fn replace_chip_with_current(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
+    if let Err(e) = Saver::delete_chip(paths, &v.project_name, new_name, true) {
+        *status = Some(format!("Failed to back up existing '{new_name}': {e}"));
+        return;
+    }
+    v.library.remove(new_name);
+    save_chip_as(v, paths, status, new_name);
+}
+
+/// Actually renames the chip (`SaveChipMode::SaveAsOrRename`, "Rename"
+/// button): moves its on-disk file to `new_name` -- no copy left under
+/// the old name, the old file is deleted outright (no backup, since this
+/// is a rename rather than a delete) -- and updates the project's
+/// chip-name bookkeeping to match.
+fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
+    let old_name = v.root_chip_name.clone();
+    let mut new_desc = v.library.get(&old_name).clone();
+    new_desc.name = new_name.to_string();
+
+    match Saver::save_chip(paths, &v.project_name, &new_desc) {
+        Ok(()) => {
+            if let Err(e) = Saver::delete_chip(paths, &v.project_name, &old_name, false) {
+                eprintln!("warning: renamed '{old_name}' to '{new_name}' but failed to remove the old file: {e}");
+            }
+            v.library.remove(&old_name);
+            v.library.add(new_desc);
+            register_chip_name_in_project(v, paths, Some(&old_name), new_name);
+            v.root_chip_name = new_name.to_string();
+            *status = Some(format!("Renamed '{old_name}' to '{new_name}'"));
+            v.rebuild_sim();
+        }
+        Err(e) => *status = Some(format!("Failed to rename to '{new_name}': {e}")),
+    }
+}
+
+/// Applies the `Overlay::SaveChip` popup's Confirm action -- shared by
+/// its "Save"/"Replace" button (`EditorAction::SaveChipConfirm`) and
+/// pressing Enter directly for those same two (unambiguous) modes; see
+/// the key-handler's own guard for why `SaveAsOrRename` never reaches
+/// here via Enter (that mode's own two buttons call
+/// `confirm_save_chip_as`/`confirm_save_chip_rename` directly instead,
+/// since which of "keep both" or "actually rename" is meant can't be
+/// inferred, only chosen).
+fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+    let typed = v.overlay_text_input.trim().to_string();
+    if typed.is_empty() {
+        return;
+    }
+    match save_chip_mode(v, &typed) {
+        editor_ui::SaveChipMode::Save => save_current_chip(v, paths, status),
+        editor_ui::SaveChipMode::Replace => replace_chip_with_current(v, paths, status, &typed),
+        editor_ui::SaveChipMode::SaveAsOrRename => return,
+    }
+    v.overlay = Overlay::None;
+    v.overlay_text_input.clear();
+}
+
+fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+    let typed = v.overlay_text_input.trim().to_string();
+    if typed.is_empty() {
+        return;
+    }
+    save_chip_as(v, paths, status, &typed);
+    v.overlay = Overlay::None;
+    v.overlay_text_input.clear();
+}
+
+fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+    let typed = v.overlay_text_input.trim().to_string();
+    if typed.is_empty() {
+        return;
+    }
+    rename_current_chip(v, paths, status, &typed);
+    v.overlay = Overlay::None;
+    v.overlay_text_input.clear();
+}
+
+/// Re-reads a single chip's own save file from disk, without touching
+/// anything else in `v.library` -- used to revert one specific chip's
+/// in-memory entry back to "whatever's actually saved" (e.g. the chip
+/// left behind, untouched, by a Save-As/Replace under a new name; see
+/// `save_chip_as`), as opposed to blindly reloading the whole project.
+fn load_single_chip_from_disk(paths: &SavePaths, project_name: &str, chip_name: &str) -> std::io::Result<ChipDescription> {
+    let path = paths.chips_path(project_name).join(format!("{chip_name}.json"));
+    let json = std::fs::read_to_string(path)?;
+    logic_sim::json::parse_chip_description(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+}
+
+/// Actually switches the viewer over to `name`'s own definition -- i.e.
+/// "open this chip" -- if it's a custom chip in `v.library`. This used to
+/// be exactly what left-clicking a chip in the library sidebar did (via
+/// `EditorAction::SelectChip`); it's now reached only through that row's
+/// right-click "Open" popup, the search popup's `UseChip`, and this
+/// module's own `EditorAction::UseChip`, so a left click alone no longer
+/// jumps the viewer away from whatever chip is currently open. Builtins
+/// are refused (see `is_custom_chip`) -- their "Open" row is greyed out
+/// in the popup, so reaching this arm for one at all would mean the
+/// disabled-row guard in `context_menu::build_context_menu` was bypassed
+/// somehow.
+///
+/// Deliberately does *not* touch disk at all: `v.library` is the one
+/// source of truth for "the currently edited chip" for as long as the
+/// app is running (its in-memory copy *is* the temp/working copy --
+/// there's no separate "pristine on-disk" shadow kept around to fall
+/// back to), so navigating away from a chip you've been editing and back
+/// again just shows the same in-memory state you left it in. Persisting
+/// (or discarding) those edits is `Ctrl+S`'s job now -- see
+/// `confirm_save_chip_popup`. Also only re-fits the camera on an actual
+/// switch, never on an in-place edit of the chip already on screen
+/// (that's `rebuild_sim`'s job to *not* do -- see its own doc comment).
+fn open_chip_by_name(v: &mut ViewerState, status: &mut Option<String>, name: &str) {
+    let switching = name != v.root_chip_name;
+
+    if is_custom_chip(&v.library, name) {
+        v.root_chip_name = name.to_string();
+        reset_all_driven_inputs(&mut v.library);
+        v.rebuild_sim();
+        if switching {
+            v.camera_fitted = false;
+        }
+    } else if v.library.try_get(name).is_some() {
+        *status = Some(format!("Chip '{}' is a builtin component", name));
+    } else {
+        *status = Some(format!("Chip '{}' not found in library", name));
+    }
+}
+
+/// One right-clickable "thing" a context menu can be attached to, parsed
+/// back out of `ContextMenuState::target` (kept as a plain string by that
+/// module so it stays generic -- see its docs). `id`s below are always
+/// scoped to the *current root chip* (`v.root_chip_name`): a subchip's
+/// own `SubChipDescription::id`, or a boundary dev-pin's `PinDescription::id`.
+enum ContextTarget {
+    /// A placed subchip instance on the canvas.
+    Component(i32),
+    /// One of the *current root chip's own* boundary dev-pins -- never a
+    /// subchip's pin (the brief is explicit about that distinction).
+    DevPin { is_input: bool, id: i32 },
+    /// A row in the chip library sidebar, by chip name.
+    LibChip(String),
+}
+
+impl ContextTarget {
+    /// Inverse of however `handle_right_mouse_button` built the
+    /// `target` string in the first place -- kept next to that so the
+    /// two stay in sync.
+    fn parse(target: &str) -> Option<Self> {
+        if let Some(rest) = target.strip_prefix("component:") {
+            rest.parse().ok().map(ContextTarget::Component)
+        } else if let Some(rest) = target.strip_prefix("devpin:in:") {
+            rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: true, id })
+        } else if let Some(rest) = target.strip_prefix("devpin:out:") {
+            rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: false, id })
+        } else if let Some(rest) = target.strip_prefix("libchip:") {
+            Some(ContextTarget::LibChip(rest.to_string()))
+        } else {
+            None
+        }
+    }
+}
+
+/// Builds the row list for a right-click popup opened on a placed
+/// subchip of type `chip_type` -- shared by the canvas-component and (for
+/// "Open"'s enabled state) library-row cases so the two stay consistent.
+/// Every component gets "Label"; "Configure" is only offered for the
+/// handful of chip types that actually have configurable
+/// `internal_data` (see `NamingPurpose`/`KeySelectPurpose`'s docs for
+/// what each one edits); "Open"/"Delete" are canvas-only (a library row
+/// has no wires to cascade-delete and *is* the definition, not an
+/// instance of it, so there's nothing to "open" beyond switching to it).
+fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> Vec<ContextMenuItem> {
+    let mut items = vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(library, chip_name))];
+    items.push(ContextMenuItem::new("Label", "label"));
+    let chip_type = library.try_get(chip_name).map(|d| d.chip_type);
+    if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16)) {
+        items.push(ContextMenuItem::new("Configure", "configure"));
+    }
+    items.push(ContextMenuItem::new("Delete", "delete"));
+    items
+}
+
+/// Applies a click on the currently-open right-click popup (see
+/// `render::context_menu`) -- `target` is whatever `state.target` was set
+/// to when the popup was opened (parsed back via `ContextTarget::parse`),
+/// `action_id` is the clicked row's `ContextMenuItem::id`.
+fn apply_context_menu_action(v: &mut ViewerState, _paths: &SavePaths, status: &mut Option<String>, target: &str, action_id: &str) {
+    let Some(parsed) = ContextTarget::parse(target) else { return };
+    let root_chip_name = v.root_chip_name.clone();
+
+    match (action_id, parsed) {
+        ("open", ContextTarget::Component(id)) => {
+            let name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
+            if let Some(name) = name {
+                open_chip_by_name(v, status, &name);
+            }
+        }
+        ("open", ContextTarget::LibChip(name)) => open_chip_by_name(v, status, &name),
+
+        ("label", ContextTarget::Component(id)) => {
+            let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
+            v.overlay = Overlay::Naming;
+            v.overlay_text_input = current;
+            v.naming_purpose = NamingPurpose::LabelComponent(id);
+        }
+        ("label", ContextTarget::DevPin { is_input, id }) => {
+            let chip = v.library.get(&root_chip_name);
+            let pins = if is_input { &chip.input_pins } else { &chip.output_pins };
+            let current = pins.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
+            v.overlay = Overlay::Naming;
+            v.overlay_text_input = current;
+            v.naming_purpose = NamingPurpose::LabelDevPin { is_input, id };
+        }
+
+        ("configure", ContextTarget::Component(id)) => {
+            let sub_chip_name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
+            let chip_type = sub_chip_name.as_deref().and_then(|n| v.library.try_get(n)).map(|d| d.chip_type);
+            let internal_data = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.internal_data.clone()).unwrap_or_default();
+            match chip_type {
+                Some(ChipType::Pulse) => {
+                    v.overlay = Overlay::Naming;
+                    v.overlay_text_input = internal_data.first().copied().unwrap_or(0).to_string();
+                    v.naming_purpose = NamingPurpose::ConfigurePulseDuration(id);
+                }
+                Some(ChipType::Key) => {
+                    v.overlay = Overlay::KeySelect;
+                    v.overlay_key_choice = internal_data.first().map(|&code| code as u8 as char);
+                    v.key_select_purpose = KeySelectPurpose::ConfigureKeyChar(id);
+                }
+                Some(ChipType::Rom256x16) => {
+                    let mut data = internal_data;
+                    data.resize(editor_ui::ROM_WORD_COUNT, 0);
+                    v.overlay = Overlay::RomEditor;
+                    v.overlay_text_input = data[0].to_string();
+                    v.rom_editor = Some(RomEditorState { component_id: id, data, selected: 0 });
+                }
+                _ => {}
+            }
+        }
+
+        ("delete", ContextTarget::Component(id)) => delete_component(v, id),
+
+        _ => {}
+    }
+}
+
+/// Applies whatever's typed into `Overlay::Naming`'s text field, per
+/// `v.naming_purpose` -- shared by the popup's Confirm button
+/// (`EditorAction::ConfirmName`) and pressing Enter directly, so the two
+/// input paths can't drift apart. Always closes the popup and resets
+/// `naming_purpose` back to its default afterwards, success or not.
+fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<String>) {
+    let trimmed = v.overlay_text_input.trim().to_string();
+    let root_chip_name = v.root_chip_name.clone();
+
+    match v.naming_purpose {
+        NamingPurpose::RenameProject => {
+            if !trimmed.is_empty() {
+                v.project_name = trimmed;
+            }
+        }
+        NamingPurpose::LabelComponent(id) => {
+            if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
+                sub.label = if trimmed.is_empty() { None } else { Some(trimmed) };
+            }
+        }
+        NamingPurpose::LabelDevPin { is_input, id } => {
+            let chip = v.library.get_mut(&root_chip_name);
+            let pins = if is_input { &mut chip.input_pins } else { &mut chip.output_pins };
+            if let Some(pin) = pins.iter_mut().find(|p| p.id == id) {
+                if !trimmed.is_empty() {
+                    pin.name = trimmed;
+                }
+            }
+        }
+        NamingPurpose::ConfigurePulseDuration(id) => match trimmed.parse::<u32>() {
+            Ok(ticks) => {
+                if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
+                    // `Simulator::process_builtin_chip`'s `Pulse` arm indexes
+                    // `internal_state` at three fixed slots -- `[DURATION,
+                    // TICKS_REMAINING, INPUT_OLD]` (see its own local
+                    // consts) -- not just the duration alone. Changing the
+                    // configured length also resets any in-flight pulse
+                    // (`TICKS_REMAINING` back to 0) and forgets the last
+                    // sampled input edge (`INPUT_OLD` back to 0), which is
+                    // the only sane thing to do since the running state was
+                    // tied to the *old* duration anyway.
+                    sub.internal_data = Some(vec![ticks, 0, 0]);
+                }
+                v.rebuild_sim();
+            }
+            Err(_) => *status = Some("Pulse length must be a whole number of ticks".to_string()),
+        },
+    }
+
+    v.overlay = Overlay::None;
+    v.overlay_text_input.clear();
+    v.naming_purpose = NamingPurpose::default();
+}
+
+/// Parses a single ROM cell value, same rule as the old comma-list
+/// editor: a leading `0x`/`0X` means hex, otherwise decimal.
+fn parse_rom_word(text: &str) -> Option<u32> {
+    let text = text.trim();
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).ok()
+    } else {
+        text.parse::<u32>().ok()
+    }
+}
+
+/// Commits `v.overlay_text_input` into the currently-selected cell of
+/// the open ROM editor (`EditorAction::RomConfirmCell`), then advances
+/// selection to the next cell (wrapping) and loads *its* value into the
+/// text field -- lets the player type several values in a row without
+/// re-clicking between each one. A parse failure leaves the selection
+/// and text field untouched (so the player can just fix their typo)
+/// rather than silently discarding it.
+fn confirm_rom_cell(v: &mut ViewerState, status: &mut Option<String>) {
+    let Some(editor) = v.rom_editor.as_mut() else { return };
+    match parse_rom_word(&v.overlay_text_input) {
+        Some(value) => {
+            if let Some(cell) = editor.data.get_mut(editor.selected) {
+                *cell = value;
+            }
+            editor.selected = (editor.selected + 1) % editor_ui::ROM_WORD_COUNT;
+            v.overlay_text_input = editor.data[editor.selected].to_string();
+        }
+        None => *status = Some("ROM cell value must be a number (decimal or 0x hex)".to_string()),
+    }
+}
+
+/// Writes the ROM editor's whole draft buffer back onto the subchip
+/// (`EditorAction::RomApply`) and closes the popup. Any value still only
+/// sitting in the text field (typed but not yet committed via "Set"/Enter)
+/// is committed first, so clicking straight from typing to "Apply" isn't
+/// a silent no-op for that last cell.
+fn apply_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
+    confirm_rom_cell(v, status);
+    if let Some(editor) = v.rom_editor.take() {
+        let root_chip_name = v.root_chip_name.clone();
+        if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == editor.component_id) {
+            sub.internal_data = Some(editor.data);
+        }
+        v.rebuild_sim();
+    }
+    v.overlay = Overlay::None;
+    v.overlay_text_input.clear();
+}
+
+/// Applies whatever's chosen in `Overlay::KeySelect`, per
+/// `v.key_select_purpose` -- shared by the popup's Confirm button
+/// (`EditorAction::ConfirmKey`) and pressing Enter directly, mirroring
+/// `confirm_naming_popup`.
+fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<String>) {
+    if let Some(c) = v.overlay_key_choice {
+        match v.key_select_purpose {
+            KeySelectPurpose::Rebind => {
+                // No actual keybind system exists to rebind yet -- this
+                // just reports the choice back so the popup is usable
+                // and testable end-to-end ahead of that being wired up.
+                *status = Some(format!("Key '{c}' chosen (not yet wired to an action)"));
+            }
+            KeySelectPurpose::ConfigureKeyChar(id) => {
+                let root_chip_name = v.root_chip_name.clone();
+                if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
+                    sub.internal_data = Some(vec![c as u32]);
+                }
+                v.rebuild_sim();
+            }
+        }
+    }
+    v.overlay = Overlay::None;
+    v.key_select_purpose = KeySelectPurpose::default();
+}
+
+/// Deletes subchip `id` from the current root chip, plus every wire
+/// directly attached to it -- but, per the brief, only the "shortest
+/// possible section" of wiring: just the wire(s) whose source or target
+/// pin actually belongs to this subchip (via `scene::delete_wire`, which
+/// itself only cascades to wires *tapping onto* one of those, never
+/// anything further away). A wire fanning out from one of this
+/// component's *output* pins to some other, unrelated component is left
+/// completely alone at the far end -- only the segment that touched the
+/// deleted component goes.
+fn delete_component(v: &mut ViewerState, id: i32) {
+    let root_chip_name = v.root_chip_name.clone();
+    let chip = v.library.get_mut(&root_chip_name);
+
+    loop {
+        let next = chip.wires.iter().position(|w| w.source_pin_address.pin_owner_id == id || w.target_pin_address.pin_owner_id == id);
+        match next {
+            Some(idx) => {
+                logic_sim::render::scene::delete_wire(chip, idx);
+            }
+            None => break,
+        }
+    }
+
+    chip.sub_chips.retain(|s| s.id != id);
+    v.rebuild_sim();
+}
+
 /// Applies a click on one of the editor overlays. A free function (not an
 /// `App` method) so it can be called from inside a `match &mut self.screen`
 /// arm that's already holding `v`, while still touching the sibling
@@ -217,6 +825,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
         EditorAction::ClosePopup => {
             v.overlay = Overlay::None;
             v.overlay_text_input.clear();
+            v.rom_editor = None;
         }
         EditorAction::CyclePref(i) => cycle_pref(&mut v.prefs, i),
         EditorAction::ApplyPreferences => {
@@ -229,23 +838,11 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
             v.overlay = Overlay::None;
         }
         EditorAction::SelectChip(name) => {
-            let is_custom = v.library.iter()
-                .find(|d| d.name == name)
-                .map(|d| d.chip_type == ChipType::Custom)
-                .unwrap_or(false);
-            
-            if is_custom {
-                v.root_chip_name = name.clone();
-                reset_all_driven_inputs(&mut v.library);
-                v.rebuild_sim();
-            } else {
-                let exists = v.library.iter().any(|d| d.name == name);
-                if exists {
-                    *status = Some(format!("Chip '{}' is a builtin component", name));
-                } else {
-                    *status = Some(format!("Chip '{}' not found in library", name));
-                }
-            }
+            // Left click in the library only highlights the row now --
+            // it no longer opens the chip (see `open_chip_by_name`'s
+            // docs). Right-clicking the same row instead pops up a
+            // small "Open" menu that does the actual switch.
+            v.selected_library_chip = Some(name);
         }
         EditorAction::ToggleCollection(i) => {
             if let Some(c) = v.prefs.chip_collections.get_mut(i) {
@@ -253,33 +850,24 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
             }
         }
         EditorAction::UseChip(name) => {
-            if v.library.iter().any(|d| d.name == name) {
-                v.root_chip_name = name;
-                reset_all_driven_inputs(&mut v.library);
-                v.rebuild_sim();
-            } else {
-                *status = Some(format!("Chip '{name}' not found in library"));
-            }
+            open_chip_by_name(v, status, &name);
             v.overlay = Overlay::None;
             v.overlay_text_input.clear();
         }
-        EditorAction::ConfirmName => {
-            let trimmed = v.overlay_text_input.trim().to_string();
-            if !trimmed.is_empty() {
-                v.project_name = trimmed;
-            }
-            v.overlay = Overlay::None;
-        }
+        EditorAction::ConfirmName => confirm_naming_popup(v, status),
         EditorAction::ChooseKey(c) => v.overlay_key_choice = Some(c),
-        EditorAction::ConfirmKey => {
-            if let Some(c) = v.overlay_key_choice {
-                // No actual keybind system exists to rebind yet -- this
-                // just reports the choice back so the popup is usable
-                // and testable end-to-end ahead of that being wired up.
-                *status = Some(format!("Key '{c}' chosen (not yet wired to an action)"));
+        EditorAction::ConfirmKey => confirm_key_select_popup(v, status),
+        EditorAction::RomSelectCell(idx) => {
+            if let Some(editor) = v.rom_editor.as_mut() {
+                editor.selected = idx.min(editor_ui::ROM_WORD_COUNT - 1);
+                v.overlay_text_input = editor.data[editor.selected].to_string();
             }
-            v.overlay = Overlay::None;
         }
+        EditorAction::RomConfirmCell => confirm_rom_cell(v, status),
+        EditorAction::RomApply => apply_rom_editor(v, status),
+        EditorAction::SaveChipConfirm => confirm_save_chip_popup(v, paths, status),
+        EditorAction::SaveChipSaveAs => confirm_save_chip_as(v, paths, status),
+        EditorAction::SaveChipRename => confirm_save_chip_rename(v, paths, status),
     }
 }
 
@@ -400,7 +988,13 @@ impl App {
                     overlay: Overlay::None,
                     overlay_text_input: String::new(),
                     overlay_key_choice: None,
+                    naming_purpose: NamingPurpose::default(),
+                    key_select_purpose: KeySelectPurpose::default(),
+                    rom_editor: None,
                     last_overlay_buttons: Vec::new(),
+                    selected_library_chip: None,
+                    context_menu: None,
+                    last_context_menu_buttons: Vec::new(),
                 });
                 self.status = None;
                 self.set_window_title();
@@ -580,6 +1174,10 @@ impl ApplicationHandler for App {
                 self.handle_middle_mouse_button(btn_state);
             }
 
+            WindowEvent::MouseInput { state: btn_state, button: winit::event::MouseButton::Right, .. } => {
+                self.handle_right_mouse_button(btn_state);
+            }
+
             WindowEvent::CursorMoved { position, .. } => {
                 let cursor = Vec2::new(position.x as f32, position.y as f32);
                 self.mouse_pos = cursor;
@@ -632,6 +1230,21 @@ impl App {
                 }
             }
             Screen::Viewer(v) => {
+                // The context menu is always the top-most layer (see
+                // `render::context_menu`'s module docs), so it gets first
+                // refusal at every click -- a left click either picks one
+                // of its rows or (landing anywhere else) just closes it,
+                // either way swallowing the click rather than letting it
+                // reach the overlay/canvas underneath.
+                if btn_state == ElementState::Pressed && v.context_menu.is_some() {
+                    let hit = v.last_context_menu_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).map(|b| b.id.clone());
+                    let target = v.context_menu.take().map(|s| s.target);
+                    if let (Some(id), Some(target)) = (hit, target) {
+                        apply_context_menu_action(v, &self.paths, &mut self.status, &target, &id);
+                    }
+                    return;
+                }
+
                 if btn_state == ElementState::Pressed && v.overlay != Overlay::None {
                     let hit = v.last_overlay_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
                     if let Some(action) = hit {
@@ -657,12 +1270,116 @@ impl App {
         }
     }
 
+    /// Right-click handling: opens (or, if the click didn't land on
+    /// anything right-clickable, just closes) the generic context-menu
+    /// popup from `render::context_menu`. For now this is wired up for
+    /// two targets, both offering a single "Open" action:
+    ///  - a placed component on the canvas (opens *its* chip definition,
+    ///    same as double-clicking it used to in the original), and
+    ///  - a row in the (open) library sidebar (opens that chip -- left
+    ///    click there only highlights the row now, see
+    ///    `EditorAction::SelectChip`'s docs).
+    /// Easy to attach to more things later: building a `ContextMenuState`
+    /// with a different `target`/`items` and assigning it to
+    /// `v.context_menu` is the whole integration surface.
+    /// Right-click handling:
+    ///  - on a wire, deletes it immediately (no popup -- see
+    ///    `scene::hit_test_wire`/`delete_wire`'s docs for the "shortest
+    ///    possible section" semantics), taking priority over the popup
+    ///    path entirely;
+    ///  - on a placed component, a dev-pin of the current root chip, or a
+    ///    library row, opens the generic context-menu popup from
+    ///    `render::context_menu` with whichever rows apply (see
+    ///    `context_menu_items_for_component`);
+    ///  - anywhere else, just closes whatever popup was already open.
+    /// Hit-tests run in the same order things are actually drawn on top
+    /// of each other (library row > dev-pin > component > wire), so a
+    /// click that could plausibly land on more than one resolves to
+    /// whichever one the player can actually see.
+    fn handle_right_mouse_button(&mut self, btn_state: ElementState) {
+        if btn_state != ElementState::Pressed {
+            return;
+        }
+        let Screen::Viewer(v) = &mut self.screen else { return };
+
+        // Right-clicking always closes whatever popup was already open
+        // (matches normal desktop-app behaviour: a fresh right-click
+        // replaces the previous context menu rather than stacking).
+        v.context_menu = None;
+
+        // A right click while a *modal* overlay is open (anything but
+        // the library sidebar) has nothing sensible to attach to, so
+        // just leave the popup closed.
+        if v.overlay != Overlay::None && v.overlay != Overlay::Library {
+            return;
+        }
+
+        // 1) A row in the open library sidebar.
+        if v.overlay == Overlay::Library {
+            let hit_name = v.last_overlay_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
+                EditorAction::SelectChip(name) => Some(name.clone()),
+                _ => None,
+            });
+            if let Some(name) = hit_name {
+                let items = vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(&v.library, &name))];
+                v.context_menu = Some(ContextMenuState::new(format!("libchip:{name}"), self.mouse_pos, items));
+                return;
+            }
+            // Fall through: the sidebar is open but the click landed
+            // outside any of its rows (e.g. on the canvas behind it),
+            // so still try the canvas/dev-pin/wire hit-tests below.
+        }
+
+        let root_chip_name = v.root_chip_name.clone();
+        let world_pos = v.camera.screen_to_world(self.mouse_pos);
+
+        // 2) One of the current root chip's own boundary dev-pins.
+        {
+            let root_desc = v.library.get(&root_chip_name);
+            if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
+                let target = format!("devpin:{}:{}", if is_input { "in" } else { "out" }, pin_id);
+                v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, vec![ContextMenuItem::new("Label", "label")]));
+                return;
+            }
+        }
+
+        // 3) A placed component on the canvas.
+        {
+            let root_desc = v.library.get(&root_chip_name);
+            let placed = place_sub_chips(root_desc, &v.library);
+            if let Some(sub) = hit_test_sub_chip(&placed, world_pos) {
+                let id = sub.id;
+                let chip_name = sub.desc.name.clone();
+                let items = context_menu_items_for_component(&v.library, &chip_name);
+                v.context_menu = Some(ContextMenuState::new(format!("component:{id}"), self.mouse_pos, items));
+                return;
+            }
+        }
+
+        // 4) A wire -- deleted immediately, no popup (see this method's
+        // doc comment).
+        {
+            let root_desc = v.library.get(&root_chip_name);
+            // Fixed screen-pixel tolerance converted to world units, so
+            // the click target stays the same apparent size regardless
+            // of current zoom -- matches how `hit_test_input_dev_pin_bit`
+            // and friends are always called with world-space geometry
+            // sized for whatever the camera happens to be doing.
+            let max_dist = 6.0 / v.camera.zoom.max(0.0001);
+            if let Some(wire_idx) = hit_test_wire(root_desc, &v.library, world_pos, max_dist) {
+                let chip = v.library.get_mut(&root_chip_name);
+                delete_wire(chip, wire_idx);
+                v.rebuild_sim();
+            }
+        }
+    }
+
     /// Middle-click handling: drags/pans the camera, exactly like left-click
     /// used to. Split out from `handle_mouse_button` so left-click is free
-    /// to toggle input dev-pins instead (right-click is reserved for a
-    /// future action). Mirrors the same "swallow clicks while a modal
-    /// popup is open" gate `handle_mouse_button` applies, so panning can't
-    /// happen "through" an open popup either.
+    /// to toggle input dev-pins instead, and right-click free for
+    /// `handle_right_mouse_button`'s context-menu popup. Mirrors the same
+    /// "swallow clicks while a modal popup is open" gate `handle_mouse_button`
+    /// applies, so panning can't happen "through" an open popup either.
     fn handle_middle_mouse_button(&mut self, btn_state: ElementState) {
         if let Screen::Viewer(v) = &mut self.screen {
             if btn_state == ElementState::Pressed && v.overlay != Overlay::None && v.overlay != Overlay::Library {
@@ -728,22 +1445,35 @@ impl App {
                 }
             }
             Screen::Viewer(v) => match &event.logical_key {
-                // ---- Text entry for the search / naming overlays ----
-                Key::Named(NamedKey::Backspace) if matches!(v.overlay, Overlay::Search | Overlay::Naming) => {
+                // ---- Text entry for the search / naming / ROM-cell overlays ----
+                Key::Named(NamedKey::Backspace) if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::RomEditor | Overlay::SaveChip) => {
                     v.overlay_text_input.pop();
                 }
                 Key::Named(NamedKey::Enter) if v.overlay == Overlay::Naming => {
-                    let trimmed = v.overlay_text_input.trim().to_string();
-                    if !trimmed.is_empty() {
-                        v.project_name = trimmed;
-                    }
-                    v.overlay = Overlay::None;
+                    confirm_naming_popup(v, &mut self.status);
+                }
+                Key::Named(NamedKey::Enter) if v.overlay == Overlay::RomEditor => {
+                    confirm_rom_cell(v, &mut self.status);
                 }
                 Key::Named(NamedKey::Enter) if v.overlay == Overlay::KeySelect && v.overlay_key_choice.is_some() => {
-                    v.overlay = Overlay::None;
+                    confirm_key_select_popup(v, &mut self.status);
                 }
-                Key::Character(s) if matches!(v.overlay, Overlay::Search | Overlay::Naming) => {
+                // Enter only auto-confirms the *unambiguous* save-chip
+                // modes (a single "Save"/"Replace" action) -- when both
+                // "Save As" and "Rename" are on offer, that choice always
+                // needs an explicit click (see `save_chip_mode`'s docs).
+                Key::Named(NamedKey::Enter) if v.overlay == Overlay::SaveChip && save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename => {
+                    confirm_save_chip_popup(v, &self.paths, &mut self.status);
+                }
+                Key::Character(s) if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::SaveChip) => {
                     if v.overlay_text_input.chars().count() < 64 {
+                        v.overlay_text_input.push_str(s);
+                    }
+                }
+                // ROM cell values are short numbers -- a lower cap keeps a
+                // stray paste from overflowing the little text field.
+                Key::Character(s) if v.overlay == Overlay::RomEditor => {
+                    if v.overlay_text_input.chars().count() < 10 {
                         v.overlay_text_input.push_str(s);
                     }
                 }
@@ -761,17 +1491,13 @@ impl App {
                 Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
                 Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("g") => v.show_grid = !v.show_grid,
                 Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("p") => v.overlay = Overlay::Preferences,
-                Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("n") => {
-                    v.overlay = Overlay::Naming;
-                    v.overlay_text_input = v.project_name.clone();
-                }
-                Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("k") => {
-                    v.overlay = Overlay::KeySelect;
-                    v.overlay_key_choice = None;
-                }
-                Key::Character(s) if v.overlay == Overlay::None && s.as_str() == "/" => {
+                Key::Character(s) if (v.overlay == Overlay::None || v.overlay == Overlay::Library ) && self.modifiers.control_key() && s.eq_ignore_ascii_case("f") => {
                     v.overlay = Overlay::Search;
                     v.overlay_text_input.clear();
+                }
+                Key::Character(s) if (v.overlay == Overlay::None || v.overlay == Overlay::Library ) && self.modifiers.control_key() && s.eq_ignore_ascii_case("s") => {
+                    v.overlay = Overlay::SaveChip;
+                    v.overlay_text_input = v.root_chip_name.clone();
                 }
                 Key::Named(NamedKey::Tab) => {
                     v.overlay = if v.overlay == Overlay::Library { Overlay::None } else { Overlay::Library };
@@ -780,6 +1506,7 @@ impl App {
                     if v.overlay != Overlay::None {
                         v.overlay = Overlay::None;
                         v.overlay_text_input.clear();
+                        v.rom_editor = None;
                     } else {
                         self.return_to_menu();
                     }
@@ -794,14 +1521,27 @@ impl App {
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
         let (vw, vh) = self.viewport;
 
-        let scene = match &mut self.screen {
+        // Layers are drawn back-to-front, each as its own fully-submitted
+        // pass (see `Renderer::render`'s doc comment) -- so a later
+        // layer's triangles reliably paint over an earlier layer's text,
+        // not just its shapes, and the context menu (added last, if
+        // open) is genuinely the top-most thing on screen rather than
+        // merely "last in one shared vertex/label list".
+        //   0: world      -- grid + chip scene (menu screen: the menu itself)
+        //   1: ui_overlay -- library/search/preferences/naming/key-select
+        //   2: context_menu -- right-click popup, always top-most
+        let world_layer;
+        let mut ui_overlay_layer = SceneGeometry::default();
+        let mut context_menu_layer = SceneGeometry::default();
+
+        match &mut self.screen {
             Screen::Menu => {
                 let mut frame = menu_ui::build(&self.menu, vw, vh, &self.text_input, self.mouse_pos);
                 if let Some(msg) = &self.status {
                     frame.geometry.labels.push(menu_ui::status_label(vw, vh, msg));
                 }
                 self.last_menu_buttons = frame.buttons.clone();
-                frame.geometry
+                world_layer = frame.geometry;
             }
             Screen::Viewer(v) => {
                 let root_desc = v.library.get(&v.root_chip_name);
@@ -831,14 +1571,20 @@ impl App {
                 let mut scene = if v.show_grid { build_grid(&v.camera, theme::GRID_COL) } else { SceneGeometry::default() };
                 scene.triangles.extend(chip_scene.triangles);
                 scene.labels.extend(chip_scene.labels);
+                world_layer = scene;
 
                 // Overlays are laid out in screen-pixel space by
                 // `editor_ui` (see `pin_overlay_to_screen`'s doc comment)
                 // -- remap that into `v.camera`'s current world space so
                 // they stay pinned to the screen regardless of pan/zoom.
+                // Kept in its own layer (rather than appended onto
+                // `world_layer`) so its background triangles are
+                // guaranteed to be drawn -- and to composite -- *after*
+                // the whole chip scene, including chip text, has already
+                // been fully painted.
                 if v.overlay != Overlay::None {
                     let overlay_frame = match v.overlay {
-                        Overlay::Library => editor_ui::build_chip_library_panel(&v.prefs.chip_collections, Some(v.root_chip_name.as_str()), vw, vh, self.mouse_pos),
+                        Overlay::Library => editor_ui::build_chip_library_panel(&v.prefs.chip_collections, v.selected_library_chip.as_deref(), vw, vh, self.mouse_pos),
                         Overlay::Search => {
                             let mut names: Vec<String> = v.library.iter().map(|d| d.name.clone()).collect();
                             names.sort();
@@ -847,20 +1593,42 @@ impl App {
                         Overlay::Preferences => editor_ui::build_preferences_panel(&v.prefs, vw, vh, self.mouse_pos),
                         Overlay::Naming => {
                             let confirm_enabled = !v.overlay_text_input.trim().is_empty();
-                            editor_ui::build_simple_naming_popup("Rename project", &v.overlay_text_input, confirm_enabled, vw, vh, self.mouse_pos)
+                            let title = match v.naming_purpose {
+                                NamingPurpose::RenameProject => "Rename project",
+                                NamingPurpose::LabelComponent(_) => "Label component",
+                                NamingPurpose::LabelDevPin { .. } => "Label pin",
+                                NamingPurpose::ConfigurePulseDuration(_) => "Pulse length (ticks)",
+                            };
+                            editor_ui::build_simple_naming_popup(title, &v.overlay_text_input, confirm_enabled, vw, vh, self.mouse_pos)
                         }
                         Overlay::KeySelect => editor_ui::build_key_select_popup(v.overlay_key_choice, vw, vh, self.mouse_pos),
+                        Overlay::RomEditor => {
+                            let (data, selected) = v.rom_editor.as_ref().map(|e| (e.data.clone(), e.selected)).unwrap_or_else(|| (vec![0; editor_ui::ROM_WORD_COUNT], 0));
+                            editor_ui::build_rom_editor_popup(&data, selected, &v.overlay_text_input, vw, vh, self.mouse_pos)
+                        }
+                        Overlay::SaveChip => {
+                            let mode = save_chip_mode(v, &v.overlay_text_input);
+                            editor_ui::build_save_chip_popup(&v.root_chip_name, &v.overlay_text_input, mode, vw, vh, self.mouse_pos)
+                        }
                         Overlay::None => unreachable!(),
                     };
                     v.last_overlay_buttons = overlay_frame.buttons;
-                    let pinned = pin_overlay_to_screen(overlay_frame.geometry, &v.camera, vw, vh);
-                    scene.triangles.extend(pinned.triangles);
-                    scene.labels.extend(pinned.labels);
+                    ui_overlay_layer = pin_overlay_to_screen(overlay_frame.geometry, &v.camera, vw, vh);
                 } else {
                     v.last_overlay_buttons.clear();
                 }
 
-                scene
+                // Right-click popup: the top-most layer of all, drawn
+                // (and thus composited on top of) the world *and* the ui
+                // overlay layers above -- see `handle_right_mouse_button`
+                // for how `v.context_menu` gets populated.
+                if let Some(state) = &v.context_menu {
+                    let menu_frame = context_menu::build_context_menu(state, vw, vh, self.mouse_pos);
+                    v.last_context_menu_buttons = menu_frame.buttons;
+                    context_menu_layer = pin_overlay_to_screen(menu_frame.geometry, &v.camera, vw, vh);
+                } else {
+                    v.last_context_menu_buttons.clear();
+                }
             }
         };
 
@@ -870,7 +1638,8 @@ impl App {
         };
 
         if let Some(state) = self.state.as_mut() {
-            match state.renderer.render(&scene, &camera, theme::BACKGROUND_COL) {
+            let layers = [world_layer, ui_overlay_layer, context_menu_layer];
+            match state.renderer.render(&layers, &camera, theme::BACKGROUND_COL) {
                 Ok(()) => {}
                 Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                     let size = state.window.inner_size();

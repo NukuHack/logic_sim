@@ -34,7 +34,7 @@ pub fn to_world(screen: Vec2, vw: f32, vh: f32) -> Vec2 {
 }
 
 /// An axis-aligned rectangle in screen pixel space.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct UiRect {
     pub x: f32,
     pub y: f32,

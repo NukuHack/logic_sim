@@ -310,7 +310,7 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
             .map(|s| JsonSubChipDescription {
                 name: s.name.clone(),
                 id: s.id,
-                label: None,
+                label: s.label.clone(),
                 position: s.position,
                 pin_colour_info: Some(
                     s.pin_colour_info
@@ -356,7 +356,9 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
         displays: None,
     };
 
-    serde_json::to_string_pretty(&raw)
+    // original C# implementation used pretty printing, but we don't care about that, since json-is-json i decided to go with smaller size
+
+    serde_json::to_string(&raw)
 }
 
 /// Load every `*.json` chip file directly inside `chips_dir` into a
