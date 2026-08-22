@@ -2,32 +2,32 @@ use logic_sim::{load_chip_library_from_dir, register_all_builtins, ExternalInput
 use std::path::Path;
 
 fn fixture_dir() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Projects/ZHT90")
+	Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Projects/ZHT90")
 }
 
 #[test]
 fn all_builtins_have_unique_valid_names() {
-    let chips = logic_sim::create_all_builtins();
-    // 6 IO pins + key + key mods + 4 basic + 2 memory + 6 merge/split + 4 display + 6 bus + 1 buzzer = 31
-    assert_eq!(chips.len(), 31);
+	let chips = logic_sim::create_all_builtins();
+	// 6 IO pins + key + key mods + 4 basic + 2 memory + 6 merge/split + 4 display + 6 bus + 1 buzzer = 31
+	assert_eq!(chips.len(), 31);
 
-    let mut names = std::collections::HashSet::new();
-    for c in &chips {
-        assert!(names.insert(c.name.clone()), "duplicate builtin chip name: {}", c.name);
-    }
+	let mut names = std::collections::HashSet::new();
+	for c in &chips {
+		assert!(names.insert(c.name.clone()), "duplicate builtin chip name: {}", c.name);
+	}
 }
 
 #[test]
 fn nand_builtin_matches_original_pin_layout() {
-    let chips = logic_sim::create_all_builtins();
-    let nand = chips.iter().find(|c| c.name == "NAND").unwrap();
-    assert_eq!(nand.input_pins.len(), 2);
-    assert_eq!(nand.output_pins.len(), 1);
-    assert_eq!(nand.input_pins[0].name, "IN B");
-    assert_eq!(nand.input_pins[0].id, 0);
-    assert_eq!(nand.input_pins[1].name, "IN A");
-    assert_eq!(nand.input_pins[1].id, 1);
-    assert_eq!(nand.output_pins[0].id, 2);
+	let chips = logic_sim::create_all_builtins();
+	let nand = chips.iter().find(|c| c.name == "NAND").unwrap();
+	assert_eq!(nand.input_pins.len(), 2);
+	assert_eq!(nand.output_pins.len(), 1);
+	assert_eq!(nand.input_pins[0].name, "IN B");
+	assert_eq!(nand.input_pins[0].id, 0);
+	assert_eq!(nand.input_pins[1].name, "IN A");
+	assert_eq!(nand.input_pins[1].id, 1);
+	assert_eq!(nand.output_pins[0].id, 2);
 }
 
 /// This is the real end-to-end path: load a saved project's custom chips
@@ -36,66 +36,59 @@ fn nand_builtin_matches_original_pin_layout() {
 /// with zero hand-written stub chips.
 #[test]
 fn loaded_not_chip_simulates_correctly_using_real_builtins() {
-    let (mut library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).unwrap();
-    assert!(errors.is_empty());
+	let (mut library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).unwrap();
+	assert!(errors.is_empty());
 
-    register_all_builtins(&mut library);
-    assert!(library.try_get("NAND").is_some());
+	register_all_builtins(&mut library);
+	assert!(library.try_get("NAND").is_some());
 
-    let not_desc = library.get("NOT").clone();
-    let in_pin_id = not_desc.input_pins[0].id;
-    let out_pin_id = not_desc.output_pins[0].id;
+	let not_desc = library.get("NOT").clone();
+	let in_pin_id = not_desc.input_pins[0].id;
+	let out_pin_id = not_desc.output_pins[0].id;
 
-    let mut sim = Simulator::build(&not_desc, &library);
+	let mut sim = Simulator::build(&not_desc, &library);
 
-    for &input_val in &[0u32, 1] {
-        let inputs = vec![ExternalInput {
-            address: PinAddress::new(in_pin_id, in_pin_id),
-            state: input_val,
-        }];
-        for _ in 0..3 {
-            sim.run_simulation_step(&inputs);
-        }
+	for &input_val in &[0u32, 1] {
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
+		for _ in 0..3 {
+			sim.run_simulation_step(&inputs);
+		}
 
-        let out_pin = sim
-            .find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id))
-            .expect("output pin should resolve");
-        let out_state = sim.pin(out_pin).state & 1;
+		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
+		let out_state = sim.pin(out_pin).state & 1;
 
-        assert_eq!(out_state, 1 - input_val, "NOT({input_val}) should invert");
-    }
+		assert_eq!(out_state, 1 - input_val, "NOT({input_val}) should invert");
+	}
 }
 
 /// Same idea, but for a bigger real chip from the project: OR, built from
 /// NANDs (De Morgan's), to sanity check multi-subchip wiring via builtins.
 #[test]
 fn loaded_or_chip_simulates_correctly() {
-    let (mut library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).unwrap();
-    assert!(errors.is_empty());
-    register_all_builtins(&mut library);
+	let (mut library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).unwrap();
+	assert!(errors.is_empty());
+	register_all_builtins(&mut library);
 
-    let or_desc = library.get("OR").clone();
-    assert_eq!(or_desc.input_pins.len(), 2);
-    let a_id = or_desc.input_pins[0].id;
-    let b_id = or_desc.input_pins[1].id;
-    let out_id = or_desc.output_pins[0].id;
+	let or_desc = library.get("OR").clone();
+	assert_eq!(or_desc.input_pins.len(), 2);
+	let a_id = or_desc.input_pins[0].id;
+	let b_id = or_desc.input_pins[1].id;
+	let out_id = or_desc.output_pins[0].id;
 
-    let mut sim = Simulator::build(&or_desc, &library);
+	let mut sim = Simulator::build(&or_desc, &library);
 
-    for &a in &[0u32, 1] {
-        for &b in &[0u32, 1] {
-            let inputs = vec![
-                ExternalInput { address: PinAddress::new(a_id, a_id), state: a },
-                ExternalInput { address: PinAddress::new(b_id, b_id), state: b },
-            ];
-            for _ in 0..4 {
-                sim.run_simulation_step(&inputs);
-            }
-            let out_pin = sim
-                .find_pin(sim.root(), PinAddress::new(out_id, out_id))
-                .unwrap();
-            let out_state = sim.pin(out_pin).state & 1;
-            assert_eq!(out_state, a | b, "OR({a},{b}) should be {}", a | b);
-        }
-    }
+	for &a in &[0u32, 1] {
+		for &b in &[0u32, 1] {
+			let inputs = vec![
+				ExternalInput { address: PinAddress::new(a_id, a_id), state: a },
+				ExternalInput { address: PinAddress::new(b_id, b_id), state: b },
+			];
+			for _ in 0..4 {
+				sim.run_simulation_step(&inputs);
+			}
+			let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_id, out_id)).unwrap();
+			let out_state = sim.pin(out_pin).state & 1;
+			assert_eq!(out_state, a | b, "OR({a},{b}) should be {}", a | b);
+		}
+	}
 }

@@ -12,42 +12,42 @@ use crate::json::ProjectDescription;
 use crate::ChipLibrary;
 
 pub struct Project {
-    pub description: ProjectDescription,
-    pub chip_library: ChipLibrary,
+	pub description: ProjectDescription,
+	pub chip_library: ChipLibrary,
 }
 
 impl Project {
-    pub fn new(description: ProjectDescription, chip_library: ChipLibrary) -> Self {
-        Self { description, chip_library }
-    }
+	pub fn new(description: ProjectDescription, chip_library: ChipLibrary) -> Self {
+		Self { description, chip_library }
+	}
 
-    /// Adds (or replaces) a custom chip in this project's in-memory library
-    /// and, if it wasn't already listed, appends it to `AllCustomChipNames`.
-    /// Does not touch disk -- pair with `Saver::save_chip` /
-    /// `Saver::save_project_description` to persist the change.
-    pub fn add_or_update_custom_chip(&mut self, desc: ChipDescription) {
-        let already_known = self.description.all_custom_chip_names.iter().any(|n| n.eq_ignore_ascii_case(&desc.name));
-        if !already_known {
-            self.description.all_custom_chip_names.push(desc.name.clone());
-        }
-        self.chip_library.add(desc);
-    }
+	/// Adds (or replaces) a custom chip in this project's in-memory library
+	/// and, if it wasn't already listed, appends it to `AllCustomChipNames`.
+	/// Does not touch disk -- pair with `Saver::save_chip` /
+	/// `Saver::save_project_description` to persist the change.
+	pub fn add_or_update_custom_chip(&mut self, desc: ChipDescription) {
+		let already_known = self.description.all_custom_chip_names.iter().any(|n| n.eq_ignore_ascii_case(&desc.name));
+		if !already_known {
+			self.description.all_custom_chip_names.push(desc.name.clone());
+		}
+		self.chip_library.add(desc);
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::description::ChipType;
+	use super::*;
+	use crate::description::ChipType;
 
-    #[test]
-    fn add_or_update_custom_chip_registers_new_chip_name_once() {
-        let mut project = Project::new(ProjectDescription::default(), ChipLibrary::new());
+	#[test]
+	fn add_or_update_custom_chip_registers_new_chip_name_once() {
+		let mut project = Project::new(ProjectDescription::default(), ChipLibrary::new());
 
-        let chip = ChipDescription::new("MY GATE", ChipType::Custom);
-        project.add_or_update_custom_chip(chip.clone());
-        project.add_or_update_custom_chip(chip);
+		let chip = ChipDescription::new("MY GATE", ChipType::Custom);
+		project.add_or_update_custom_chip(chip.clone());
+		project.add_or_update_custom_chip(chip);
 
-        assert_eq!(project.description.all_custom_chip_names, vec!["MY GATE".to_string()]);
-        assert!(project.chip_library.try_get("my gate").is_some());
-    }
+		assert_eq!(project.description.all_custom_chip_names, vec!["MY GATE".to_string()]);
+		assert!(project.chip_library.try_get("my gate").is_some());
+	}
 }

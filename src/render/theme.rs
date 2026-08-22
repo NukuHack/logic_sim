@@ -7,11 +7,11 @@ use crate::{description::Color, pin_state::LogicState};
 pub type Rgba = [f32; 4];
 
 const fn rgb(r: f32, g: f32, b: f32) -> Rgba {
-    [r, g, b, 1.0]
+	[r, g, b, 1.0]
 }
 #[allow(dead_code)] // kept for reference / future support
 const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Rgba {
-    [r, g, b, a]
+	[r, g, b, a]
 }
 
 /// 8-entry "lit" (logic-high) state colour palette, index chosen
@@ -20,14 +20,14 @@ const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Rgba {
 /// a separate hand-tuned table -- it's derived from this one via `dim`, so
 /// there's a single source of truth per palette index.
 pub const COLORS: [Rgba; 8] = [
-    rgb(0.95, 0.3, 0.31), // Red
-    rgb(0.92, 0.44, 0.12), // Orange
-    rgb(0.98, 0.76, 0.26), // Yellow
-    rgb(0.25, 0.66, 0.31), // Green
-    rgb(0.2, 0.5, 1.0), // Blue
-    rgb(0.6, 0.4, 0.98), // Purple
-    rgb(0.84, 0.33, 0.9), // Pink
-    rgb(0.9, 0.9, 0.9), // White
+	rgb(0.95, 0.3, 0.31),  // Red
+	rgb(0.92, 0.44, 0.12), // Orange
+	rgb(0.98, 0.76, 0.26), // Yellow
+	rgb(0.25, 0.66, 0.31), // Green
+	rgb(0.2, 0.5, 1.0),    // Blue
+	rgb(0.6, 0.4, 0.98),   // Purple
+	rgb(0.84, 0.33, 0.9),  // Pink
+	rgb(0.9, 0.9, 0.9),    // White
 ];
 
 /// Colour for a pin/wire carrying a multi-bit value where individual state
@@ -46,7 +46,7 @@ const LOW_STATE_BRIGHTNESS: f32 = 0.3;
 /// derive a pin/wire's logic-low colour from its logic-high colour instead
 /// of maintaining a separate low-colour lookup table.
 pub fn dim(c: Rgba) -> Rgba {
-    [c[0] * LOW_STATE_BRIGHTNESS, c[1] * LOW_STATE_BRIGHTNESS, c[2] * LOW_STATE_BRIGHTNESS, c[3]]
+	[c[0] * LOW_STATE_BRIGHTNESS, c[1] * LOW_STATE_BRIGHTNESS, c[2] * LOW_STATE_BRIGHTNESS, c[3]]
 }
 
 pub const PIN_COL: Rgba = [0.0, 0.0, 0.0, 1.0];
@@ -73,7 +73,7 @@ pub const HOVER_LABEL_COL: Rgba = rgb(0.95, 0.95, 0.95);
 /// Perceptual (Rec. 709) luminance of an RGBA colour, ignoring alpha.
 /// Mirrors `ColHelper.Luminance`.
 pub fn luminance(c: Rgba) -> f32 {
-    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+	0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
 }
 
 /// Black or white text colour that reads legibly against `bg`, mirroring
@@ -83,11 +83,11 @@ pub fn luminance(c: Rgba) -> f32 {
 /// nuance is skipped here in favour of a plain black/white pick, which stays
 /// legible on every body colour.
 pub fn text_colour_for_background(bg: Rgba) -> Rgba {
-    if luminance(bg) > 0.57 {
-        [0.0, 0.0, 0.0, 1.0]
-    } else {
-        [1.0, 1.0, 1.0, 1.0]
-    }
+	if luminance(bg) > 0.57 {
+		[0.0, 0.0, 0.0, 1.0]
+	} else {
+		[1.0, 1.0, 1.0, 1.0]
+	}
 }
 
 /// Colour for one of the 8 state-palette indices in a given logic state,
@@ -99,55 +99,55 @@ pub fn text_colour_for_background(bg: Rgba) -> Rgba {
 /// darker variant of the same palette index's `High` colour (via `dim`),
 /// not a separately hand-tuned colour.
 pub fn state_colour(state: LogicState, color: Color) -> Rgba {
-    if state == LogicState::Disconnected {
-        return STATE_DISCONNECTED_COL;
-    }
-    let high = color.to_rgba();
-    if state == LogicState::High {
-        high
-    } else {
-        dim(high)
-    }
+	if state == LogicState::Disconnected {
+		return STATE_DISCONNECTED_COL;
+	}
+	let high = color.to_rgba();
+	if state == LogicState::High {
+		high
+	} else {
+		dim(high)
+	}
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+	use super::*;
 
-    #[test]
-    fn state_colour_picks_high_or_dimmed_low() {
-        assert_eq!(state_colour(LogicState::High, Color::default()), COLORS[0]);
-        assert_eq!(state_colour(LogicState::Low, Color::default()), dim(COLORS[0]));
-    }
+	#[test]
+	fn state_colour_picks_high_or_dimmed_low() {
+		assert_eq!(state_colour(LogicState::High, Color::default()), COLORS[0]);
+		assert_eq!(state_colour(LogicState::Low, Color::default()), dim(COLORS[0]));
+	}
 
-    #[test]
-    fn state_colour_disconnected_is_always_black_regardless_of_index() {
-        assert_eq!(state_colour(LogicState::Disconnected, Color::from_int(0)), STATE_DISCONNECTED_COL);
-        assert_eq!(state_colour(LogicState::Disconnected, Color::from_int(3)), STATE_DISCONNECTED_COL);
-    }
+	#[test]
+	fn state_colour_disconnected_is_always_black_regardless_of_index() {
+		assert_eq!(state_colour(LogicState::Disconnected, Color::from_int(0)), STATE_DISCONNECTED_COL);
+		assert_eq!(state_colour(LogicState::Disconnected, Color::from_int(3)), STATE_DISCONNECTED_COL);
+	}
 
-    #[test]
-    fn state_colour_clamps_out_of_range_index() {
-        assert_eq!(state_colour(LogicState::High, Color::White), COLORS[7]);
-    }
+	#[test]
+	fn state_colour_clamps_out_of_range_index() {
+		assert_eq!(state_colour(LogicState::High, Color::White), COLORS[7]);
+	}
 
-    #[test]
-    fn dim_darkens_but_preserves_hue_ratio_and_alpha() {
-        let c = [0.8, 0.4, 0.2, 1.0];
-        let d = dim(c);
-        assert!(d[0] < c[0] && d[1] < c[1] && d[2] < c[2]);
-        assert_eq!(d[3], c[3]);
-        // Hue ratio preserved (uniform scale factor across channels).
-        assert!((d[0] / c[0] - d[1] / c[1]).abs() < 1e-6);
-    }
+	#[test]
+	fn dim_darkens_but_preserves_hue_ratio_and_alpha() {
+		let c = [0.8, 0.4, 0.2, 1.0];
+		let d = dim(c);
+		assert!(d[0] < c[0] && d[1] < c[1] && d[2] < c[2]);
+		assert_eq!(d[3], c[3]);
+		// Hue ratio preserved (uniform scale factor across channels).
+		assert!((d[0] / c[0] - d[1] / c[1]).abs() < 1e-6);
+	}
 
-    #[test]
-    fn text_colour_is_black_on_light_background() {
-        assert_eq!(text_colour_for_background([1.0, 1.0, 1.0, 1.0]), [0.0, 0.0, 0.0, 1.0]);
-    }
+	#[test]
+	fn text_colour_is_black_on_light_background() {
+		assert_eq!(text_colour_for_background([1.0, 1.0, 1.0, 1.0]), [0.0, 0.0, 0.0, 1.0]);
+	}
 
-    #[test]
-    fn text_colour_is_white_on_dark_background() {
-        assert_eq!(text_colour_for_background([0.05, 0.05, 0.05, 1.0]), [1.0, 1.0, 1.0, 1.0]);
-    }
+	#[test]
+	fn text_colour_is_white_on_dark_background() {
+		assert_eq!(text_colour_for_background([0.05, 0.05, 0.05, 1.0]), [1.0, 1.0, 1.0, 1.0]);
+	}
 }

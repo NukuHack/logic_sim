@@ -31,5 +31,6 @@ pub use context_menu::{build_context_menu, ContextMenuButton, ContextMenuFrame, 
 pub use editor_ui::{EditorAction, EditorButton, EditorFrame};
 pub use menu_ui::{MenuFrame, UiAction, UiButton, UiRect};
 pub use scene::{
-    bounding_box, build_grid, build_scene, delete_wire, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, PinStateLookup, PlacedSubChip, SceneGeometry, SceneVertex, TextLabel,
+	bounding_box, build_grid, build_scene, delete_wire, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, PinStateLookup,
+	PlacedSubChip, SceneGeometry, SceneVertex, TextLabel,
 };
