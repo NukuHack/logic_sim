@@ -371,7 +371,7 @@ mod tests {
         // screen is y-down).
         let vw = 1280.0;
         let vh = 800.0;
-        let cam = crate::render::camera::Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport_width: vw, viewport_height: vh };
+        let cam = crate::render::camera::Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport: Vec2::new(vw, vh) };
 
         let screen = Vec2::new(300.0, 150.0);
         let world = to_world(screen, vw, vh);

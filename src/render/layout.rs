@@ -55,8 +55,8 @@ pub fn pin_height_from_bit_count(bit_count: PinBitCount) -> f32 {
 pub fn pin_radius_for_bit_count(bit_count: PinBitCount) -> f32 {
     match bit_count {
         PinBitCount::Bit1 => PIN_RADIUS,
-        PinBitCount::Bit4 => PIN_RADIUS * 1.7,
-        PinBitCount::Bit8 => PIN_RADIUS * 2.5,
+        PinBitCount::Bit4 => PIN_RADIUS * 2.0,
+        PinBitCount::Bit8 => PIN_RADIUS * 2.0,
     }
 }
 
@@ -83,10 +83,10 @@ pub fn pin_visual_shape_size(bit_count: PinBitCount) -> Vec2 {
     let r = pin_radius_for_bit_count(bit_count);
     let body_width = match bit_count {
         PinBitCount::Bit1 => 0.0, // unused -- Bit1 draws a plain circle, not a pill.
-        PinBitCount::Bit4 => r * 0.6,
-        PinBitCount::Bit8 => r,
+        PinBitCount::Bit4 => r * 2.0,
+        PinBitCount::Bit8 => r * 4.0,
     };
-    Vec2::new(r, body_width + r)
+    Vec2::new(body_width + r * 2.0, r * 2.0)
 }
 
 /// Grid-height (in units of `GRID_SIZE`) reserved for one pin along a
@@ -244,9 +244,11 @@ pub fn dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
 pub const INPUT_BIT_CIRCLE_RADIUS: f32 = PIN_RADIUS * 2.0;
 
 /// Side length of the square clickable cell drawn for each individual
-/// bit of a multi-bit input (4-bit, 8-bit, ...). Equal to
-/// `INPUT_BIT_CIRCLE_RADIUS`, per that constant's docs.
-pub const INPUT_BIT_CELL_SIZE: f32 = INPUT_BIT_CIRCLE_RADIUS;
+/// bit of a multi-bit input (4-bit, 8-bit, ...). Twice
+/// `INPUT_BIT_CIRCLE_RADIUS` (i.e. the circle's diameter), so a 1-bit
+/// input's own circle -- drawn at that same radius -- fits entirely
+/// inside its cell rather than overflowing it.
+pub const INPUT_BIT_CELL_SIZE: f32 = INPUT_BIT_CIRCLE_RADIUS * 2.0;
 
 /// Grid arrangement (columns, rows) of per-bit clickable cells for an
 /// *input* dev-pin's body, based on its bit width -- unlike an ordinary
@@ -286,9 +288,7 @@ pub fn input_bit_cell_offsets(bit_count: PinBitCount) -> Vec<Vec2> {
         for col in 0..cols {
             let x = -total.x / 2.0 + INPUT_BIT_CELL_SIZE * (col as f32 + 0.5);
             let y = total.y / 2.0 - INPUT_BIT_CELL_SIZE * (row as f32 + 0.5);
-            // X, y = position, the offset of "PIN_HEIGHT_4BIT" is to make it not instersect with the pin itself
-            let offset = Vec2::new(x - PIN_HEIGHT_4BIT, y);
-            offsets.push(offset);
+            offsets.push(Vec2::new(x, y));
         }
     }
     offsets

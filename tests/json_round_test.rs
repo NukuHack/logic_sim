@@ -426,6 +426,7 @@ fn serializes_chip_with_pins() {
         bit_count: PinBitCount::Bit1,
         colour: Color::Red,
         value_display_mode: ValueDisplayMode::Decimal,
+        driven_state: 0,
     });
     
     desc.input_pins.push(PinDescription {
@@ -435,6 +436,7 @@ fn serializes_chip_with_pins() {
         bit_count: PinBitCount::Bit4,
         colour: Color::Yellow,
         value_display_mode: ValueDisplayMode::Hex,
+        driven_state: 0,
     });
     
     desc.output_pins.push(PinDescription {
@@ -444,6 +446,7 @@ fn serializes_chip_with_pins() {
         bit_count: PinBitCount::Bit8,
         colour: Color::Green,
         value_display_mode: ValueDisplayMode::SignedDecimal,
+        driven_state: 0,
     });
     
     let json = serialize_chip_description(&desc).unwrap();
@@ -613,6 +616,7 @@ fn roundtrip_chip_with_all_features() {
         bit_count: PinBitCount::Bit1,
         colour: Color::Red,
         value_display_mode: ValueDisplayMode::Decimal,
+        driven_state: 0,
     });
     original.input_pins.push(PinDescription {
         name: "IN4".to_string(),
@@ -621,6 +625,7 @@ fn roundtrip_chip_with_all_features() {
         bit_count: PinBitCount::Bit4,
         colour: Color::Orange,
         value_display_mode: ValueDisplayMode::Hex,
+        driven_state: 0,
     });
     
     // Output pins
@@ -631,6 +636,7 @@ fn roundtrip_chip_with_all_features() {
         bit_count: PinBitCount::Bit8,
         colour: Color::Green,
         value_display_mode: ValueDisplayMode::SignedDecimal,
+        driven_state: 0,
     });
     
     // Subchips
@@ -789,6 +795,7 @@ fn roundtrip_chip_with_all_enum_variants() {
             bit_count: PinBitCount::Bit1,
             colour: color,
             value_display_mode: ValueDisplayMode::None,
+            driven_state: 0,
         });
     }
     
@@ -802,6 +809,7 @@ fn roundtrip_chip_with_all_enum_variants() {
             bit_count: PinBitCount::Bit1,
             colour: Color::Red,
             value_display_mode: mode,
+            driven_state: 0,
         });
     }
     

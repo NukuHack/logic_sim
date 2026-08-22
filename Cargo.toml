@@ -25,14 +25,6 @@ name = "logic_sim"
 path = "src/lib.rs"
 
 [[bin]]
-name = "demo"
-path = "src/bin/demo.rs"
-
-[[bin]]
-name = "viewer"
-path = "src/bin/viewer.rs"
-
-[[bin]]
 name = "app"
 path = "src/bin/app.rs"
 

@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn screen_to_world_round_trips_through_world_to_screen() {
-        let cam = Camera::new(1920.0, 1080.0);
+        let cam = Camera::new(Vec2::new(1920.0, 1080.0));
         let world = Vec2::new(3.5, -2.25);
         let screen = cam.world_to_screen(world);
         let back = cam.screen_to_world(screen);
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn viewport_centre_maps_to_camera_position() {
-        let mut cam = Camera::new(800.0, 600.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 600.0));
         cam.position = Vec2::new(10.0, -5.0);
         let centre_world = cam.screen_to_world(Vec2::new(400.0, 300.0));
         assert!((centre_world.x - 10.0).abs() < 1e-4);
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn zoom_at_keeps_world_point_under_cursor_fixed() {
-        let mut cam = Camera::new(800.0, 600.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 600.0));
         let anchor = Vec2::new(200.0, 150.0);
         let world_before = cam.screen_to_world(anchor);
         cam.zoom_at(anchor, 2.0);
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn zoom_is_clamped_to_valid_range() {
-        let mut cam = Camera::new(800.0, 600.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 600.0));
         cam.zoom_at(Vec2::new(400.0, 300.0), 0.0001);
         assert_eq!(cam.zoom, Camera::MIN_ZOOM);
         cam.zoom_at(Vec2::new(400.0, 300.0), 1_000_000.0);
@@ -153,29 +153,29 @@ mod tests {
 
     #[test]
     fn pan_moves_position_by_world_delta() {
-        let mut cam = Camera::new(800.0, 600.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 600.0));
         cam.pan(Vec2::new(1.0, 2.0));
         assert_eq!(cam.position, Vec2::new(1.0, 2.0));
     }
 
     #[test]
     fn fit_to_bounds_centres_and_zooms_to_show_whole_box() {
-        let mut cam = Camera::new(800.0, 400.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 400.0));
         cam.fit_to_bounds(Vec2::new(-2.0, -1.0), Vec2::new(2.0, 1.0), 0.0);
         assert_eq!(cam.position, Vec2::ZERO);
         // Both corners of the box should now land inside the viewport.
         let top_left = cam.world_to_screen(Vec2::new(-2.0, 1.0));
         let bottom_right = cam.world_to_screen(Vec2::new(2.0, -1.0));
         assert!(top_left.x >= -0.5 && top_left.x <= cam.viewport.x + 0.5);
-        assert!(bottom_right.x >= -0.5 && bottom_right.x <= cam.viewport.y + 0.5);
+        assert!(bottom_right.x >= -0.5 && bottom_right.x <= cam.viewport.x + 0.5);
     }
 
     #[test]
     fn fit_to_bounds_with_padding_zooms_out_further() {
-        let mut cam_tight = Camera::new(800.0, 400.0);
+        let mut cam_tight = Camera::new(Vec2::new(800.0, 400.0));
         cam_tight.fit_to_bounds(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0), 0.0);
 
-        let mut cam_padded = Camera::new(800.0, 400.0);
+        let mut cam_padded = Camera::new(Vec2::new(800.0, 400.0));
         cam_padded.fit_to_bounds(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0), 0.2);
 
         assert!(cam_padded.zoom < cam_tight.zoom);
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn fit_to_bounds_does_not_produce_nan_for_degenerate_box() {
-        let mut cam = Camera::new(800.0, 400.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 400.0));
         cam.fit_to_bounds(Vec2::ZERO, Vec2::ZERO, 0.1);
         assert!(cam.zoom.is_finite());
         assert!(cam.zoom > 0.0);

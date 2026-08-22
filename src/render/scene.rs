@@ -702,11 +702,13 @@ fn draw_pins(geo: &mut SceneGeometry, chip: &ChipDescription, placed: &[PlacedSu
     // so they read as visually distinct from a regular subchip pin's
     // plain circle. Mirrors `layout::dev_pin_body_size`'s docs.
     for pin in &chip.input_pins {
-        draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), true);
+        // Inputs draw *only* the clickable bit-grid body (a single circle
+        // for 1-bit, a grid of cells for wider pins) -- not the ordinary
+        // rounded-rect "pill" dev-pin body that non-clickable (output)
+        // dev-pins use. See `draw_input_dev_pin_body`'s docs.
         if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, true)) {
             hovered = Some((pin.position, pin.name.clone()));
         }
-        // the clickable part
         draw_input_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin.id, pin_state);
     }
     for pin in &chip.output_pins {
@@ -775,31 +777,33 @@ fn draw_components(geo: &mut SceneGeometry, placed: &[PlacedSubChip], pin_state:
             .flatten()
             .map(|code| (code as u8 as char).to_string());
 
-        if let Some(letter) = key_letter {
-            geo.labels.push(TextLabel {
-                pos: sub.centre,
-                text: letter,
-                colour: theme::text_colour_for_background(body_colour),
-                font_size: theme::FONT_SIZE_CHIP_NAME,
-                width: sub.size.x,
-            });
-        } else if sub.desc.name_location != NameLocation::Hidden {
-            let name_pos = match sub.desc.name_location {
-                NameLocation::Top => Vec2::new(
-                    sub.centre.x,
-                    sub.centre.y + sub.size.y / 2.0 - theme::FONT_SIZE_CHIP_NAME / 2.0 - layout::GRID_SIZE / 2.0,
-                ),
-                _ => sub.centre,
-            };
-            geo.labels.push(TextLabel {
-                pos: name_pos,
-                text: sub.desc.name.clone(),
-                colour: theme::text_colour_for_background(body_colour),
-                font_size: theme::FONT_SIZE_CHIP_NAME,
-                width: sub.size.x,
-            });
-        }
         let is_hovered = !pin_already_hovered && hover_world_pos.is_some_and(|p| point_in_rect(p, sub.centre, sub.size));
+        if is_hovered {
+            if let Some(letter) = key_letter {
+                geo.labels.push(TextLabel {
+                    pos: sub.centre,
+                    text: letter,
+                    colour: theme::text_colour_for_background(body_colour),
+                    font_size: theme::FONT_SIZE_CHIP_NAME,
+                    width: sub.size.x,
+                });
+            } else if sub.desc.name_location != NameLocation::Hidden {
+                let name_pos = match sub.desc.name_location {
+                    NameLocation::Top => Vec2::new(
+                        sub.centre.x,
+                        sub.centre.y + sub.size.y / 2.0 - theme::FONT_SIZE_CHIP_NAME / 2.0 - layout::GRID_SIZE / 2.0,
+                    ),
+                    _ => sub.centre,
+                };
+                geo.labels.push(TextLabel {
+                    pos: name_pos,
+                    text: sub.desc.name.clone(),
+                    colour: theme::text_colour_for_background(body_colour),
+                    font_size: theme::FONT_SIZE_CHIP_NAME,
+                    width: sub.size.x,
+                });
+            }
+        }
         if let Some(label) = &sub.label {
             if is_hovered {
                 let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
@@ -2113,7 +2117,7 @@ pin_colour_info: Vec::new(),
         // 800x400 viewport, zoom=100 -> screen_half_width=4, screen_half_height=2
         // world units, comfortably inside the `skip == 1` (< 8) band and
         // small enough to keep test line-counts easy to reason about.
-        let mut cam = Camera::new(800.0, 400.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 400.0));
         cam.zoom = 100.0;
         cam
     }
@@ -2138,8 +2142,8 @@ pin_colour_info: Vec::new(),
         let geo = build_grid(&cam, theme::GRID_COL);
         let (min, max) = bounding_box(&geo).unwrap();
 
-        let screen_half_width = cam.viewport_width / (2.0 * cam.zoom);
-        let screen_half_height = cam.viewport_height / (2.0 * cam.zoom);
+        let screen_half_width = cam.viewport.x / (2.0 * cam.zoom);
+        let screen_half_height = cam.viewport.y / (2.0 * cam.zoom);
 
         // The grid must extend at least as far as the visible viewport in
         // every direction (it's allowed to overshoot slightly -- the
@@ -2171,8 +2175,8 @@ pin_colour_info: Vec::new(),
 
         // Mirror build_grid's own bounds math to get the exact expected
         // line counts independently of its internals.
-        let screen_half_width = cam.viewport_width / (2.0 * cam.zoom);
-        let screen_half_height = cam.viewport_height / (2.0 * cam.zoom);
+        let screen_half_width = cam.viewport.x / (2.0 * cam.zoom);
+        let screen_half_height = cam.viewport.y / (2.0 * cam.zoom);
         let to_grid = |v: f32| -> f32 { ((v / layout::GRID_SIZE) as i32) as f32 * layout::GRID_SIZE };
         let left = to_grid(-screen_half_width) - layout::GRID_SIZE;
         let right = to_grid(screen_half_width) + layout::GRID_SIZE;
@@ -2207,7 +2211,7 @@ pin_colour_info: Vec::new(),
         // symptom. Kept mild enough (zoom=2) that grid lines are still
         // spaced further apart (skip*GRID_SIZE = 2.0 units) than the
         // widened thickness, so this isn't just measuring an overlap blob.
-        let mut cam = Camera::new(800.0, 400.0);
+        let mut cam = Camera::new(Vec2::new(800.0, 400.0));
         cam.zoom = 2.0;
         let geo = build_grid(&cam, theme::GRID_COL);
 
