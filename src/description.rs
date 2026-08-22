@@ -431,6 +431,33 @@ impl WireDescription {
 			points: Vec::new(),
 		}
 	}
+
+	/// A wire whose *source* end taps onto an existing wire's segment
+	/// (`WireConnectionType::ToWireSource`) instead of attaching to a
+	/// pin directly -- used when a wire is placed by starting the drag
+	/// from another wire's line rather than a pin. `source_pin_address`
+	/// must still be the tapped wire's own real originating pin (needed
+	/// for colour/bit-count/simulation-state lookups -- see
+	/// `render::scene::draw_wires`'s doc comment), not an address
+	/// describing the tap point itself.
+	pub fn new_tapped_source(
+		source_pin_address: PinAddress,
+		target_pin_address: PinAddress,
+		connected_wire_index: i32,
+		connected_wire_segment_index: i32,
+		tap_point: Vec2,
+	) -> Self {
+		Self {
+			source_pin_address,
+			target_pin_address,
+			connection_type: WireConnectionType::ToWireSource,
+			connected_wire_index,
+			connected_wire_segment_index,
+			cached_source_point: tap_point,
+			cached_target_point: Vec2::default(),
+			points: Vec::new(),
+		}
+	}
 }
 
 /// Full description of a chip: either a built-in primitive (Nand, Clock, ...)
@@ -538,5 +565,36 @@ impl ChipLibrary {
 	/// state shouldn't outlive the simulation run it was set in.
 	pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ChipDescription> {
 		self.by_name.values_mut()
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn new_wire_attaches_both_ends_directly_to_pins() {
+		let wire = WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0));
+		assert_eq!(wire.connection_type, WireConnectionType::ToPins);
+		assert_eq!(wire.connected_wire_index, -1);
+		assert_eq!(wire.connected_wire_segment_index, -1);
+		assert!(wire.points.is_empty());
+	}
+
+	#[test]
+	fn new_tapped_source_records_the_tap_and_keeps_the_real_source_address() {
+		let tapped_source = PinAddress::new(1, 0);
+		let target = PinAddress::new(3, 1);
+		let tap_point = Vec2::new(2.5, 1.5);
+
+		let wire = WireDescription::new_tapped_source(tapped_source, target, 0, 1, tap_point);
+
+		assert_eq!(wire.connection_type, WireConnectionType::ToWireSource);
+		assert_eq!(wire.source_pin_address, tapped_source);
+		assert_eq!(wire.target_pin_address, target);
+		assert_eq!(wire.connected_wire_index, 0);
+		assert_eq!(wire.connected_wire_segment_index, 1);
+		assert_eq!(wire.cached_source_point, tap_point);
+		assert!(wire.points.is_empty());
 	}
 }

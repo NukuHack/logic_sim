@@ -9,17 +9,21 @@ use logic_sim::render::camera::Camera;
 use logic_sim::render::context_menu::{self, ContextMenuButton, ContextMenuItem, ContextMenuState};
 use logic_sim::render::editor_ui::{self, EditorAction, EditorButton};
 use logic_sim::render::gpu::Renderer;
+use logic_sim::render::layout;
 use logic_sim::render::menu_ui::{self, UiAction};
 use logic_sim::render::scene::{
-	bounding_box, build_grid, build_scene, delete_wire, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, SceneGeometry,
-	SimulatorPinState,
+	bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire,
+	place_sub_chips, AllLow, SceneGeometry, SimulatorPinState,
 };
 use logic_sim::render::theme;
 use logic_sim::sim::key_mods_bits;
 use logic_sim::sim::Simulator;
 use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
-use logic_sim::{default_chip_collections, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, SavePaths, Saver};
+use logic_sim::{
+	default_chip_collections, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, SavePaths, Saver,
+	WireDescription,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -117,6 +121,63 @@ fn encode_modifiers(mods: ModifiersState) -> u32 {
 	bits
 }
 
+/// One endpoint of an in-progress wire placement (`ViewerState::pending_wire`),
+/// fixed at the moment the wire is started -- either a real pin (a
+/// subchip's own, or one of the current chip's own boundary dev-pins) or
+/// a tap point along an existing wire's line.
+#[derive(Debug, Clone, Copy)]
+enum PendingWireEnd {
+	Pin {
+		owner_id: i32,
+		pin_id: i32,
+		is_source: bool,
+		position: Vec2,
+	},
+	/// Tapping onto a wire always plays the *source* role for the new
+	/// branch wire (see `try_start_pending_wire`'s doc comment) -- the
+	/// tapped wire's own real source pin, needed to build the eventual
+	/// `WireDescription::new_tapped_source`, travels along here rather
+	/// than being re-looked-up at completion time.
+	WireTap {
+		wire_index: usize,
+		segment_index: i32,
+		point: Vec2,
+		source_pin_address: PinAddress,
+	},
+}
+
+impl PendingWireEnd {
+	fn is_source(&self) -> bool {
+		match self {
+			PendingWireEnd::Pin { is_source, .. } => *is_source,
+			PendingWireEnd::WireTap { .. } => true,
+		}
+	}
+
+	fn position(&self) -> Vec2 {
+		match self {
+			PendingWireEnd::Pin { position, .. } => *position,
+			PendingWireEnd::WireTap { point, .. } => *point,
+		}
+	}
+}
+
+/// State for an in-progress wire placement: the endpoint it started
+/// from, plus any bend ("turn") points the player has since clicked on
+/// empty canvas space, in click order -- becomes the finished
+/// `WireDescription::points` once the wire is completed at a second,
+/// opposite-role endpoint (reversed first if that second endpoint turns
+/// out to be the wire's real *source*, since `points` always runs
+/// source-to-target). `None` on `ViewerState` whenever no wire is being
+/// placed.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+struct PendingWire {
+	start: PendingWireEnd,
+	bend_points: Vec<Vec2>,
+	bit_count: PinBitCount,
+}
+
 /// State specific to viewing/simulating one open project's chip, split out
 /// so `App` can hold either this or the menu depending on `Screen`.
 struct ViewerState {
@@ -166,6 +227,13 @@ struct ViewerState {
 	/// Hit-boxes from the context menu's *last drawn* frame -- same
 	/// immediate-mode pattern as `last_overlay_buttons`.
 	last_context_menu_buttons: Vec<ContextMenuButton>,
+
+	/// The wire currently being placed by clicking one endpoint then
+	/// another, if any -- see `PendingWire`'s docs. Cleared (`None`)
+	/// whenever the root chip changes, since a pending endpoint's
+	/// `wire_index`/subchip id would otherwise silently refer to
+	/// whatever now happens to sit at that index in the new chip.
+	pending_wire: Option<PendingWire>,
 }
 
 impl ViewerState {
@@ -218,6 +286,144 @@ fn toggle_driven_input_bit(library: &mut ChipLibrary, root_chip_name: &str, pin_
 		let mut bits = logic_sim::pin_state::bit_states(last_state);
 		bits ^= 1 << bit_index;
 		logic_sim::pin_state::set(&mut pin.driven_state, bits, logic_sim::pin_state::tristate_flags(last_state));
+	}
+}
+
+/// Fixed screen-pixel tolerance for landing a click on a wire, converted
+/// to world units -- same value/reasoning as the one `handle_right_mouse_button`
+/// already uses for wire deletion, so a tap-to-place click feels exactly
+/// as forgiving as a click-to-delete one at any zoom level.
+fn wire_click_tolerance(camera: &Camera) -> f32 {
+	6.0 / camera.zoom.max(0.0001)
+}
+
+/// Attempts to start a new wire placement from whatever's under
+/// `world_pos`: a subchip's own pin, one of the current chip's own
+/// boundary *output* dev-pins, or a tap point along an existing wire's
+/// line. Returns whether a placement was actually started (i.e. whether
+/// the click should be treated as consumed).
+fn try_start_pending_wire(v: &mut ViewerState, world_pos: Vec2) -> bool {
+	let root_desc = v.library.get(&v.root_chip_name);
+	let placed = place_sub_chips(root_desc, &v.library);
+
+	if let Some(hit) = hit_test_any_pin(root_desc, &placed, world_pos) {
+		v.pending_wire = Some(PendingWire {
+			start: PendingWireEnd::Pin { owner_id: hit.owner_id, pin_id: hit.pin_id, is_source: hit.is_wire_source(), position: hit.position },
+			bend_points: Vec::new(),
+			bit_count: hit.bit_count,
+		});
+		return true;
+	}
+
+	let max_dist = wire_click_tolerance(&v.camera);
+	if let Some(tap) = closest_wire_hit(root_desc, &v.library, world_pos, max_dist) {
+		let source_pin_address = root_desc.wires[tap.wire_index].source_pin_address;
+		v.pending_wire = Some(PendingWire {
+			start: PendingWireEnd::WireTap { wire_index: tap.wire_index, segment_index: tap.segment_index, point: tap.point, source_pin_address },
+			bend_points: Vec::new(),
+			bit_count: tap.bit_count,
+		});
+		return true;
+	}
+
+	false
+}
+
+/// Advances an in-progress wire placement (`v.pending_wire`, assumed
+/// `Some`) with a click at `world_pos`:
+///  - landing on a pin of the *opposite* role (see `PinHit::is_wire_source`/
+///    `PendingWireEnd::is_source`) completes the wire, connecting through
+///    any bend points collected so far;
+///  - landing on a pin of the *same* role (e.g. input-to-input,
+///    output-to-output) is rejected with a status message, leaving the
+///    placement active so the player can just try a different pin;
+///  - landing on an existing wire or a component body is ignored outright
+///    (deliberately *not* a "turn" -- see this method's caller's doc
+///    comment on the empty-space branch below);
+///  - anywhere else (empty canvas) adds a bend ("turn") point there and
+///    leaves the placement active.
+fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
+	let root_chip_name = v.root_chip_name.clone();
+	let root_desc = v.library.get(&root_chip_name);
+	let placed = place_sub_chips(root_desc, &v.library);
+
+	if let Some(hit) = hit_test_any_pin(root_desc, &placed, world_pos) {
+		let pending = v.pending_wire.as_ref().expect("caller only calls this with a pending wire");
+		/*		// optional : if you want to only connect same bitcount wires
+			   if pending.bit_count != hit.bit_count {
+				   *status = Some("Can't connect different bitcounts".to_string());
+				   return;
+			   }
+		*/
+		if pending.start.is_source() == hit.is_wire_source() {
+			*status = Some(if hit.is_wire_source() {
+				"Can't connect an output to an output".to_string()
+			} else {
+				"Can't connect an input to an input".to_string()
+			});
+			return;
+		}
+
+		let pending = v.pending_wire.take().expect("checked above");
+		let end_pin_address = PinAddress::new(hit.owner_id, hit.pin_id);
+
+		let mut wire = if pending.start.is_source() {
+			match pending.start {
+				PendingWireEnd::Pin { owner_id, pin_id, .. } => WireDescription::new(PinAddress::new(owner_id, pin_id), end_pin_address),
+				PendingWireEnd::WireTap { wire_index, segment_index, point, source_pin_address } => {
+					WireDescription::new_tapped_source(source_pin_address, end_pin_address, wire_index as i32, segment_index, point)
+				}
+			}
+		} else {
+			// The clicked pin is the real source; the wire always started from a plain pin in this
+			// branch (a wire tap is always treated as the source -- see `PendingWireEnd::is_source`).
+			let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else {
+				unreachable!("a wire tap is always the source end, so this branch never sees one")
+			};
+			WireDescription::new(end_pin_address, PinAddress::new(owner_id, pin_id))
+		};
+
+		wire.points = pending.bend_points;
+		if !pending.start.is_source() {
+			wire.points.reverse();
+		}
+
+		v.library.get_mut(&root_chip_name).wires.push(wire);
+		v.rebuild_sim();
+		*status = None;
+		return;
+	}
+
+	let max_dist = wire_click_tolerance(&v.camera);
+	let on_wire = hit_test_wire(root_desc, &v.library, world_pos, max_dist).is_some();
+	let on_component = hit_test_sub_chip(&placed, world_pos).is_some();
+	if on_wire || on_component {
+		// Neither a pin nor empty space -- ignored outright (not a "turn"), so the placement just
+		// stays exactly as it was and the player can click somewhere more useful instead.
+		return;
+	}
+
+	let pending = v.pending_wire.as_mut().expect("caller only calls this with a pending wire");
+	pending.bend_points.push(world_pos);
+}
+
+/// Draws the in-progress wire preview: a line from its start endpoint,
+/// through any turn points placed so far, to the cursor's current world
+/// position -- so the player can see what they're about to connect
+/// before actually clicking the second endpoint. Purely cosmetic (never
+/// touches `chip.wires`), drawn in `theme::PIN_HIGHLIGHT_COL` so it
+/// reads clearly against both wires and pins.
+fn draw_pending_wire_preview(geo: &mut SceneGeometry, pending: &PendingWire, cursor_world_pos: Vec2) {
+	let mut path = Vec::with_capacity(pending.bend_points.len() + 2);
+	path.push(pending.start.position());
+	path.extend_from_slice(&pending.bend_points);
+	path.push(cursor_world_pos);
+	geo.add_polyline(&path, layout::WIRE_THICKNESS, theme::PIN_HIGHLIGHT_COL);
+
+	// Small markers at each already-placed turn point, so a bend the player just
+	// clicked in stays visible even where the preview line passes straight through it.
+	for &turn in &pending.bend_points {
+		geo.add_circle(turn, layout::WIRE_THICKNESS * 1.5, theme::PIN_HIGHLIGHT_COL, 12);
 	}
 }
 
@@ -541,6 +747,7 @@ fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<St
 	reset_all_driven_inputs(&mut v.library);
 	v.rebuild_sim();
 	v.camera_fitted = false;
+	v.pending_wire = None;
 	*status = Some(format!("New chip '{name}'"));
 }
 
@@ -578,6 +785,7 @@ fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 		v.rebuild_sim();
 		if switching {
 			v.camera_fitted = false;
+			v.pending_wire = None;
 		}
 	} else if v.library.try_get(name).is_some() {
 		*status = Some(format!("Chip '{}' is a builtin component", name));
@@ -1028,6 +1236,7 @@ impl App {
 					selected_library_chip: None,
 					context_menu: None,
 					last_context_menu_buttons: Vec::new(),
+					pending_wire: None,
 				});
 				self.status = None;
 				self.set_window_title();
@@ -1299,8 +1508,21 @@ impl App {
 				}
 
 				if btn_state == ElementState::Pressed {
-					let root_desc = v.library.get(&v.root_chip_name);
 					let world_pos = v.camera.screen_to_world(self.mouse_pos);
+
+					// A wire already being placed claims every click ahead of anything else below --
+					// including the input-pin toggle, so clicking a switch's pin finishes/bends the
+					// wire instead of flipping it (see `try_continue_pending_wire`'s doc comment).
+					if v.pending_wire.is_some() {
+						try_continue_pending_wire(v, world_pos, &mut self.status);
+						return;
+					}
+
+					if try_start_pending_wire(v, world_pos) {
+						return;
+					}
+
+					let root_desc = v.library.get(&v.root_chip_name);
 					if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
 						let root_chip_name = v.root_chip_name.clone();
 						toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
@@ -1346,6 +1568,9 @@ impl App {
 		// (matches normal desktop-app behaviour: a fresh right-click
 		// replaces the previous context menu rather than stacking).
 		v.context_menu = None;
+		// Also the standard "cancel" gesture for an in-progress wire
+		// placement, same as Escape (see the keyboard handler).
+		v.pending_wire = None;
 
 		// A right click while a *modal* overlay is open (anything but
 		// the library sidebar) has nothing sensible to attach to, so
@@ -1559,6 +1784,8 @@ impl App {
 						v.overlay = Overlay::None;
 						v.overlay_text_input.clear();
 						v.rom_editor = None;
+					} else if v.pending_wire.is_some() {
+						v.pending_wire = None;
 					} else {
 						self.return_to_menu();
 					}
@@ -1625,6 +1852,9 @@ impl App {
 				let mut scene = if v.show_grid { build_grid(&v.camera, theme::GRID_COL) } else { SceneGeometry::default() };
 				scene.triangles.extend(chip_scene.triangles);
 				scene.labels.extend(chip_scene.labels);
+				if let Some(pending) = &v.pending_wire {
+					draw_pending_wire_preview(&mut scene, pending, hover_world_pos.expect("just set above"));
+				}
 				world_layer = scene;
 
 				// Overlays are laid out in screen-pixel space by `editor_ui` -- remap that into

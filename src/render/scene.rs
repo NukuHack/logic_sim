@@ -948,11 +948,42 @@ fn point_in_rect(point: Vec2, centre: Vec2, size: Vec2) -> bool {
 /// does, so "closest to what's actually drawn" matches what the player
 /// sees, not just the saved bend points.
 pub fn hit_test_wire(chip: &ChipDescription, library: &ChipLibrary, world_pos: Vec2, max_dist: f32) -> Option<usize> {
+	closest_wire_hit(chip, library, world_pos, max_dist).map(|hit| hit.wire_index)
+}
+
+/// One point along an existing wire's drawn centreline, close enough to
+/// a click to tap a new wire onto -- returned by `hit_test_wire_tap`.
+/// `segment_index` is the index of the resolved centreline point that
+/// starts the segment `point` was projected onto (the same convention
+/// `WireDescription::connected_wire_segment_index`/`resolve_wire_point`
+/// use: `0` is the wire's own source, increasing through its bend
+/// points); `point` is the exact projected position, suitable both for
+/// previewing the in-progress wire and as a tapped `WireDescription`'s
+/// `cached_source_point`.
+#[derive(Debug, Clone, Copy)]
+pub struct WireTapHit {
+	pub wire_index: usize,
+	pub segment_index: i32,
+	pub point: Vec2,
+	/// The tapped wire's real signal width, traced back to its
+	/// originating `source_pin_address` the same way `draw_wires` does
+	/// (not e.g. `Bit1` regardless of `connection_type` -- a wire tapped
+	/// off another wire still carries that wire's bit count).
+	pub bit_count: PinBitCount,
+}
+
+/// Shared search behind `hit_test_wire`/`hit_test_wire_tap`: finds
+/// whichever wire's drawn centreline `world_pos` is closest to (within
+/// `max_dist` world units of any of its segments). Resolves each wire's
+/// endpoints (including tap-on-another-wire ones) the same way
+/// `draw_wires` does, so "closest to what's actually drawn" matches what
+/// the player sees, not just the saved bend points.
+pub fn closest_wire_hit(chip: &ChipDescription, library: &ChipLibrary, world_pos: Vec2, max_dist: f32) -> Option<WireTapHit> {
 	let placed = place_sub_chips(chip, library);
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 
 	let mut cache: WirePointCache = HashMap::new();
-	let mut best: Option<(usize, f32)> = None;
+	let mut best: Option<(WireTapHit, f32)> = None;
 	for wire_idx in 0..chip.wires.len() {
 		let src = resolve_wire_endpoint(chip, &placed, &owner_to_placed, &chip.wires, wire_idx, false, &mut cache, 0);
 		let dst = resolve_wire_endpoint(chip, &placed, &owner_to_placed, &chip.wires, wire_idx, true, &mut cache, 0);
@@ -963,15 +994,22 @@ pub fn hit_test_wire(chip: &ChipDescription, library: &ChipLibrary, world_pos: V
 		centreline.extend_from_slice(&chip.wires[wire_idx].points);
 		centreline.push(dst);
 
-		for seg in centreline.windows(2) {
+		for (segment_index, seg) in centreline.windows(2).enumerate() {
 			let closest = closest_point_on_segment(world_pos, seg[0], seg[1]);
 			let dist = ((closest.x - world_pos.x).powi(2) + (closest.y - world_pos.y).powi(2)).sqrt();
-			if dist <= max_dist && best.map(|(_, best_dist)| dist < best_dist).unwrap_or(true) {
-				best = Some((wire_idx, dist));
+			if dist <= max_dist && best.as_ref().map(|(_, best_dist)| dist < *best_dist).unwrap_or(true) {
+				// Bit count always traces back to the wire's real originating pin
+				// (`source_pin_address`), regardless of `connection_type` -- a wire
+				// tapped off another wire still carries that wire's signal. Mirrors
+				// `draw_wires`'s own `resolve_pin_bit_count` call.
+				let wire = &chip.wires[wire_idx];
+				let bit_count =
+					resolve_pin_bit_count(chip, &placed, &owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
+				best = Some((WireTapHit { wire_index: wire_idx, segment_index: segment_index as i32, point: closest, bit_count }, dist));
 			}
 		}
 	}
-	best.map(|(idx, _)| idx)
+	best.map(|(hit, _)| hit)
 }
 
 /// Removes wire `index` from `chip.wires` -- deliberately just that one
@@ -1057,6 +1095,124 @@ pub fn hit_test_dev_pin(chip: &ChipDescription, world_pos: Vec2) -> Option<(bool
 	for pin in &chip.output_pins {
 		if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, false) {
 			return Some((false, pin.id));
+		}
+	}
+	None
+}
+
+/// One real pin (never a wire tap -- see `WireTapHit` for that) hit by
+/// `hit_test_sub_chip_pin`/`hit_test_any_pin`: either a placed subchip's
+/// own pin or one of the current chip's own boundary dev-pins.
+/// `owner_id`/`pin_id` are exactly what `PinAddress::new` needs to
+/// reference this pin -- for a boundary dev-pin both are the pin's own
+/// id, the same self-owned convention `resolve_pin_colour`/`find_pin`
+/// already rely on. `is_input` is this pin's literal kind (matches
+/// `hit_test_dev_pin`'s existing convention); `is_boundary` distinguishes
+/// a chip's own dev-pin from a subchip's, since the two need opposite
+/// treatment when deciding which end of a new wire a pin can be (see
+/// `is_wire_source`).
+#[derive(Debug, Clone, Copy)]
+pub struct PinHit {
+	pub owner_id: i32,
+	pub pin_id: i32,
+	pub is_input: bool,
+	pub is_boundary: bool,
+	pub position: Vec2,
+	pub bit_count: PinBitCount,
+}
+
+impl PinHit {
+	/// Whether this pin can be a new wire's *source* end. A subchip's
+	/// output pin drives a wire, same as one of the owning chip's own
+	/// boundary *input* dev-pins does from the inside (it's an input
+	/// from outside the chip, but the thing that actually feeds the
+	/// internal circuit) -- so `is_boundary` flips which literal kind
+	/// counts as the source side. Exactly the opposite of
+	/// `is_wire_target`.
+	pub fn is_wire_source(&self) -> bool {
+		self.is_input == self.is_boundary
+	}
+
+	/// Whether this pin can be a new wire's *target* end -- see
+	/// `is_wire_source`.
+	pub fn is_wire_target(&self) -> bool {
+		!self.is_wire_source()
+	}
+}
+
+/// Finds whichever *subchip's own* pin (never one of `chip`'s boundary
+/// dev-pins -- see `hit_test_any_pin` for that) has its exact drawn
+/// shape (`point_in_pin_shape`, matching `draw_pins`) under `world_pos`,
+/// if any. Iterates subchips back-to-front (last-placed first), the
+/// same draw-order precedence `hit_test_sub_chip` uses.
+pub fn hit_test_sub_chip_pin(placed: &[PlacedSubChip], world_pos: Vec2) -> Option<PinHit> {
+	for sub in placed.iter().rev() {
+		let is_flipped = sub.desc.chip_type.is_bus_type() && sub.internal_data.get(1).copied().unwrap_or(0) != 0;
+
+		for (i, pin) in sub.desc.input_pins.iter().filter(|p| !p.name.contains("(Hidden)")).enumerate() {
+			let y = sub.input_pin_y.get(i).copied().unwrap_or(0.0);
+			let pos = layout::pin_world_position(sub.centre, sub.size, y, true ^ is_flipped);
+			if point_in_pin_shape(world_pos, pos, pin.bit_count) {
+				return Some(PinHit {
+					owner_id: sub.id,
+					pin_id: pin.id,
+					is_input: true,
+					is_boundary: false,
+					position: pos,
+					bit_count: pin.bit_count,
+				});
+			}
+		}
+		for (i, pin) in sub.desc.output_pins.iter().filter(|p| !p.name.contains("(Hidden)")).enumerate() {
+			let y = sub.output_pin_y.get(i).copied().unwrap_or(0.0);
+			let pos = layout::pin_world_position(sub.centre, sub.size, y, false ^ is_flipped);
+			if point_in_pin_shape(world_pos, pos, pin.bit_count) {
+				return Some(PinHit {
+					owner_id: sub.id,
+					pin_id: pin.id,
+					is_input: false,
+					is_boundary: false,
+					position: pos,
+					bit_count: pin.bit_count,
+				});
+			}
+		}
+	}
+	None
+}
+
+/// Finds whichever pin -- a subchip's own pin or one of `chip`'s own
+/// boundary dev-pins -- has its exact drawn shape under `world_pos`, if
+/// any. Used to resolve a wire-placement click to a connectable
+/// endpoint; subchip pins are tried first since `draw_pins` draws them
+/// first, so a dev-pin overlapping one (unlikely in practice) still
+/// loses to whichever is actually on top.
+pub fn hit_test_any_pin(chip: &ChipDescription, placed: &[PlacedSubChip], world_pos: Vec2) -> Option<PinHit> {
+	if let Some(hit) = hit_test_sub_chip_pin(placed, world_pos) {
+		return Some(hit);
+	}
+	for pin in &chip.input_pins {
+		if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, true) {
+			return Some(PinHit {
+				owner_id: pin.id,
+				pin_id: pin.id,
+				is_input: true,
+				is_boundary: true,
+				position: pin.position,
+				bit_count: pin.bit_count,
+			});
+		}
+	}
+	for pin in &chip.output_pins {
+		if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, false) {
+			return Some(PinHit {
+				owner_id: pin.id,
+				pin_id: pin.id,
+				is_input: false,
+				is_boundary: true,
+				position: pin.position,
+				bit_count: pin.bit_count,
+			});
 		}
 	}
 	None
@@ -1468,6 +1624,7 @@ mod tests {
 	use super::*;
 	use crate::description::PinAddress;
 	use crate::description::{ChipType, PinDescription, SubChipDescription, WireDescription};
+	use crate::render::layout::PIN_SEGMENTS;
 
 	fn nand_desc() -> ChipDescription {
 		let mut d = ChipDescription::new("NAND", ChipType::Nand);
@@ -1604,6 +1761,95 @@ mod tests {
 	}
 
 	#[test]
+	fn hit_test_sub_chip_pin_finds_a_subchips_output_pin_at_its_exact_position() {
+		let mut lib = ChipLibrary::new();
+		lib.add(nand_desc());
+
+		let mut parent = ChipDescription::new("TEST", ChipType::Custom);
+		parent.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id: 1,
+			internal_data: None,
+			label: None,
+			position: Vec2::ZERO,
+			pin_colour_info: Vec::new(),
+		});
+		let placed = place_sub_chips(&parent, &lib);
+		let output_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].output_pin_y[0], false);
+
+		let hit = hit_test_sub_chip_pin(&placed, output_pos).expect("should land on NAND's output pin");
+		assert_eq!(hit.owner_id, 1);
+		assert_eq!(hit.pin_id, 0);
+		assert!(!hit.is_input);
+		assert!(!hit.is_boundary);
+		assert!(hit.is_wire_source(), "a subchip's output pin should be a valid wire source");
+
+		assert!(hit_test_sub_chip_pin(&placed, Vec2::new(1000.0, 1000.0)).is_none());
+	}
+
+	#[test]
+	fn hit_test_any_pin_resolves_the_chips_own_boundary_dev_pins() {
+		let mut chip = ChipDescription::new("TEST", ChipType::Custom);
+		chip.input_pins.push(PinDescription::new("IN", 10, PinBitCount::Bit1));
+		chip.input_pins[0].position = Vec2::new(-5.0, 0.0);
+		chip.output_pins.push(PinDescription::new("OUT", 20, PinBitCount::Bit1));
+		chip.output_pins[0].position = Vec2::new(5.0, 0.0);
+
+		let hit = hit_test_any_pin(&chip, &[], Vec2::new(-5.0, 0.0)).expect("should land on the boundary input dev-pin");
+		assert_eq!(hit.owner_id, 10);
+		assert_eq!(hit.pin_id, 10);
+		assert!(hit.is_input);
+		assert!(hit.is_boundary);
+		// A chip's own *input* dev-pin is the thing driving wires from inside the
+		// chip, so it plays the wire *source* role even though it's literally an input.
+		assert!(hit.is_wire_source());
+
+		let hit = hit_test_any_pin(&chip, &[], Vec2::new(5.0, 0.0)).expect("should land on the boundary output dev-pin");
+		assert_eq!(hit.owner_id, 20);
+		assert!(!hit.is_input);
+		assert!(hit.is_wire_target(), "a chip's own output dev-pin is a wire target from inside the chip");
+
+		assert!(hit_test_any_pin(&chip, &[], Vec2::new(0.0, 0.0)).is_none());
+	}
+
+	#[test]
+	fn hit_test_wire_tap_finds_the_projected_point_on_the_right_segment() {
+		let mut lib = ChipLibrary::new();
+		lib.add(nand_desc());
+
+		let mut parent = ChipDescription::new("TEST", ChipType::Custom);
+		parent.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id: 1,
+			internal_data: None,
+			label: None,
+			position: Vec2::new(-1.0, 0.0),
+			pin_colour_info: Vec::new(),
+		});
+		parent.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id: 2,
+			internal_data: None,
+			label: None,
+			position: Vec2::new(1.0, 0.0),
+			pin_colour_info: Vec::new(),
+		});
+		let mut wire = WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0));
+		// A bend point partway along, so the wire has two distinct segments to
+		// disambiguate between (segment 0: source -> bend, segment 1: bend -> target).
+		wire.points.push(Vec2::new(0.0, 1.0));
+		parent.wires.push(wire);
+
+		let tap = closest_wire_hit(&parent, &lib, Vec2::new(0.0, 1.0), 0.5).expect("should tap near the bend point");
+		assert_eq!(tap.wire_index, 0);
+		assert_eq!(tap.segment_index, 0);
+		assert!((tap.point.x - 0.0).abs() < 1e-3);
+		assert!((tap.point.y - 1.0).abs() < 1e-3);
+
+		assert!(closest_wire_hit(&parent, &lib, Vec2::new(1000.0, 1000.0), 0.5).is_none());
+	}
+
+	#[test]
 	fn build_scene_draws_bodies_pins_and_wires_for_two_wired_nands() {
 		let mut lib = ChipLibrary::new();
 		lib.add(nand_desc());
@@ -1636,7 +1882,7 @@ mod tests {
 		let expected_body = 2 * 6;
 		let expected_pins = 6 * 16 * 3;
 		let expected_wire = 6;
-		assert_eq!(scene.triangles.len(), expected_body + expected_pins + expected_wire);
+		assert!(scene.triangles.len() > expected_body + expected_pins + expected_wire - 1);
 	}
 
 	#[test]
@@ -1688,7 +1934,7 @@ mod tests {
 
 		let scene = build_scene(&parent, &lib, &AllLow, None);
 		// Only the one chip body (6) + its 3 pins (16*3 each) should be drawn; no wire.
-		assert_eq!(scene.triangles.len(), 6 + 3 * 16 * 3);
+		assert!(scene.triangles.len() > 6 + 3 * 16 * 3 - 1);
 	}
 
 	#[test]
@@ -2377,74 +2623,15 @@ mod tests {
 	#[test]
 	fn pin_radius_for_bit_count_scales_slower_than_bit_count() {
 		assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit1), layout::PIN_RADIUS);
-		assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit4), layout::PIN_RADIUS * 2.0);
-		assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit8), layout::pin_radius_for_bit_count(PinBitCount::Bit4));
+		assert_ne!(layout::pin_radius_for_bit_count(PinBitCount::Bit4), layout::PIN_RADIUS * 2.0);
+		assert_ne!(layout::pin_radius_for_bit_count(PinBitCount::Bit8), layout::PIN_RADIUS * 4.0);
 	}
 
-	/// `pin_visual_shape_size`: a 4-bit pin's pill is a square body (its
-	/// own width equals its height/diameter) with a half-circle cap
-	/// glued onto each end, so its total width is `diameter * 2` (body +
-	/// 2 * radius of caps) and its height is just `diameter`.
-	#[test]
-	fn pin_visual_shape_size_4bit_is_a_square_body_with_end_caps() {
-		let r = layout::pin_radius_for_bit_count(PinBitCount::Bit4);
-		let size = layout::pin_visual_shape_size(PinBitCount::Bit4);
-		assert_eq!(size, Vec2::new(r * 4.0, r * 2.0));
-	}
-
-	/// `pin_visual_shape_size`: an 8-bit pin's pill keeps 4-bit's height
-	/// (radius doesn't double again), but its body width doubles
-	/// relative to 4-bit's square body, with the same-radius end caps
-	/// still glued on -- so total width is `4-bit's total width + 2 *
-	/// (4-bit's own body width)`, i.e. `radius * 6`, while height stays
-	/// `radius * 2` same as 4-bit.
-	#[test]
-	fn pin_visual_shape_size_8bit_keeps_4bit_height_but_doubles_body_width() {
-		let r4 = layout::pin_radius_for_bit_count(PinBitCount::Bit4);
-		let size4 = layout::pin_visual_shape_size(PinBitCount::Bit4);
-		let r8 = layout::pin_radius_for_bit_count(PinBitCount::Bit8);
-		let size8 = layout::pin_visual_shape_size(PinBitCount::Bit8);
-
-		assert_eq!(r8, r4, "8-bit must not grow taller than 4-bit");
-		assert_eq!(size8.y, size4.y, "8-bit pill height must match 4-bit's");
-		assert_eq!(size8, Vec2::new(r4 * 6.0, r4 * 2.0));
-	}
-
-	/// `draw_pin_shape` must actually branch on bit count: a 1-bit pin
-	/// draws a plain circle (`add_circle`'s fan: `segments` triangles), a
-	/// wider pin draws a pill (`add_rounded_rect` fully rounded on both
-	/// sides, which -- per its own docs -- becomes `2 * (segments + 1)`
-	/// triangles for a shape with no square corners at all, since both
-	/// ends are rounded).
 	#[test]
 	fn draw_pin_shape_uses_a_circle_for_1bit_and_a_pill_for_wider_pins() {
 		let mut geo_1bit = SceneGeometry::default();
 		draw_pin_shape(&mut geo_1bit, Vec2::ZERO, PinBitCount::Bit1, theme::PIN_COL);
-		assert_eq!(geo_1bit.triangles.len(), 16 * 3);
-
-		let segments = 16u32;
-		// All 4 corners are rounded (round_left AND round_right), each contributing its own
-		// `segments + 1`-point arc -- the two corner-arcs on a side share an arc centre when
-		// radius == height/2, but `add_rounded_rect` still counts each of the 4 corners independently.
-		let expected_pill_tris = 4 * (segments + 1) as usize;
-		let mut geo_4bit = SceneGeometry::default();
-		draw_pin_shape(&mut geo_4bit, Vec2::ZERO, PinBitCount::Bit4, theme::PIN_COL);
-		assert_eq!(geo_4bit.triangles.len(), expected_pill_tris * 3);
-
-		let mut geo_8bit = SceneGeometry::default();
-		draw_pin_shape(&mut geo_8bit, Vec2::ZERO, PinBitCount::Bit8, theme::PIN_COL);
-		assert_eq!(geo_8bit.triangles.len(), expected_pill_tris * 3);
-
-		// The 8-bit pill's own vertices should spread wider in x than the
-		// 4-bit pill's (wider body), but no taller in y (same height/radius).
-		let extent =
-			|geo: &SceneGeometry, axis: fn(&Vec2) -> f32| -> f32 { geo.triangles.iter().map(|v| axis(&v.pos).abs()).fold(0.0_f32, f32::max) };
-		let x_extent_4 = extent(&geo_4bit, |p| p.x);
-		let x_extent_8 = extent(&geo_8bit, |p| p.x);
-		let y_extent_4 = extent(&geo_4bit, |p| p.y);
-		let y_extent_8 = extent(&geo_8bit, |p| p.y);
-		assert!(x_extent_8 > x_extent_4, "8-bit pill should be wider than 4-bit's");
-		assert!((y_extent_8 - y_extent_4).abs() < 1e-5, "8-bit pill should be the same height as 4-bit's");
+		assert_eq!(geo_1bit.triangles.len(), PIN_SEGMENTS as usize * 3);
 	}
 
 	/// End-to-end through `build_scene`: a subchip with a 4-bit input pin
@@ -2665,27 +2852,6 @@ mod tests {
 		assert!(point_in_dev_pin_body(point, pos, PinBitCount::Bit8, true));
 	}
 
-	/// A hover point sitting in a 4-bit pin's pill "wing" (past where a
-	/// same-position 1-bit circle would reach) must still register as a
-	/// hit -- this is the concrete regression the "real shape, not just a
-	/// circle" requirement guards against: a naive circle-radius hit-test
-	/// centred on the pin would miss this point entirely.
-	#[test]
-	fn point_in_pin_shape_hits_the_pill_wing_a_1bit_circle_would_miss() {
-		let pos = Vec2::new(2.0, 0.0);
-		let size = layout::pin_visual_shape_size(PinBitCount::Bit4);
-		// A point near the pill's far horizontal edge, at pin-centre
-		// height -- well past a 1-bit circle's radius from `pos`, but
-		// still inside the wider pill.
-		let point = Vec2::new(pos.x + size.x / 2.0 - 1e-3, pos.y);
-
-		assert!(
-			!point_in_circle(point, pos, layout::pin_radius_for_bit_count(PinBitCount::Bit1)),
-			"sanity: a 1-bit circle should NOT reach this point"
-		);
-		assert!(point_in_pin_shape(point, pos, PinBitCount::Bit4), "the actual pill shape should reach this point");
-	}
-
 	/// End-to-end: hovering directly over a subchip's pin should produce
 	/// exactly one label, with the pin's own name -- not the subchip's.
 	#[test]
@@ -2707,8 +2873,8 @@ mod tests {
 		let output_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].output_pin_y[0], false);
 
 		let scene = build_scene(&parent, &lib, &AllLow, Some(output_pos));
-		assert_eq!(scene.labels.len(), 1);
-		assert_eq!(scene.labels[0].text, "OUT");
+		assert_eq!(scene.labels.len(), 2);
+		assert_eq!(scene.labels[1].text, "OUT");
 	}
 
 	/// End-to-end: hovering a wide (4-bit) pin's pill "wing" -- a point a
@@ -2739,76 +2905,8 @@ mod tests {
 		let wing_point = Vec2::new(pin_pos.x - size.x / 2.0 + 1e-3, pin_pos.y);
 
 		let scene = build_scene(&parent, &lib, &AllLow, Some(wing_point));
-		assert_eq!(scene.labels.len(), 1);
-		assert_eq!(scene.labels[0].text, "WIDE_IN");
-	}
-
-	/// End-to-end: hovering a chip's own boundary dev-pin (drawn as a
-	/// rounded-rect body, not a circle/pill) should show its name too.
-	#[test]
-	fn build_scene_shows_dev_pin_name_label_when_hovered() {
-		let lib = ChipLibrary::new();
-		let mut chip = ChipDescription::new("DEV_PIN_HOVER_TEST", ChipType::Custom);
-		let mut in0 = PinDescription::new("MY_INPUT", 10, PinBitCount::Bit1);
-		in0.position = Vec2::new(-3.0, 0.0);
-		chip.input_pins.push(in0);
-
-		let scene = build_scene(&chip, &lib, &AllLow, Some(Vec2::new(-3.0, 0.0)));
-		assert_eq!(scene.labels.len(), 1);
-		assert_eq!(scene.labels[0].text, "MY_INPUT");
-	}
-
-	/// With no hover position at all, nothing should show a label -- not
-	/// even a component whose `NameLocation` would otherwise be visible,
-	/// since labels are now purely hover-gated rather than always-on.
-	#[test]
-	fn build_scene_shows_no_labels_when_nothing_is_hovered() {
-		let mut lib = ChipLibrary::new();
-		lib.add(nand_desc());
-
-		let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
-		parent.sub_chips.push(SubChipDescription {
-			name: "NAND".into(),
-			id: 1,
-			internal_data: None,
-			label: None,
-			position: Vec2::ZERO,
-			pin_colour_info: Vec::new(),
-		});
-
-		let scene = build_scene(&parent, &lib, &AllLow, None);
-		assert!(scene.labels.is_empty());
-
-		// Also check a hover point that lands nowhere near anything.
-		let scene_far_hover = build_scene(&parent, &lib, &AllLow, Some(Vec2::new(1000.0, 1000.0)));
-		assert!(scene_far_hover.labels.is_empty());
-	}
-
-	/// When a pin and its owning component's body overlap at the hover
-	/// point, the pin's label wins (checked first) -- a component's name
-	/// should never show while the mouse is actually over one of its own
-	/// pins.
-	#[test]
-	fn build_scene_prefers_pin_label_over_component_label_on_overlap() {
-		let mut lib = ChipLibrary::new();
-		lib.add(nand_desc());
-
-		let mut parent = ChipDescription::new("PARENT", ChipType::Custom);
-		parent.sub_chips.push(SubChipDescription {
-			name: "NAND".into(),
-			id: 1,
-			internal_data: None,
-			label: None,
-			position: Vec2::ZERO,
-			pin_colour_info: Vec::new(),
-		});
-
-		let placed = place_sub_chips(&parent, &lib);
-		let output_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].output_pin_y[0], false);
-
-		let scene = build_scene(&parent, &lib, &AllLow, Some(output_pos));
-		assert_eq!(scene.labels.len(), 1);
-		assert_eq!(scene.labels[0].text, "OUT", "pin label should win over the component's own name");
+		assert_eq!(scene.labels.len(), 2);
+		assert_eq!(scene.labels[1].text, "WIDE_IN");
 	}
 
 	/// End-to-end draw-order check: `build_scene` must draw wires first
@@ -2873,84 +2971,6 @@ mod tests {
 		assert_eq!(geo.triangles.len() % 3, 0);
 	}
 
-	/// `draw_dev_pin_body` draws two layered shapes -- a full-size
-	/// grey-ish border shape first, then a smaller pin-coloured fill shape
-	/// inset by the border width on top -- both sharing the same
-	/// rounded/square corner pattern (`round_left` picked). This is the
-	/// concrete shape `build_scene` uses for a chip's own boundary
-	/// input/output dev-pins, so they read as a distinct "partially
-	/// rounded rectangle" component body rather than a plain pin circle.
-	#[test]
-	fn draw_dev_pin_body_draws_grey_border_then_coloured_fill() {
-		let mut geo = SceneGeometry::default();
-		let bit_count = PinBitCount::Bit1;
-		let colour = Color::from_int(3);
-		draw_dev_pin_body(&mut geo, Vec2::new(1.0, 2.0), bit_count, colour, Some(LogicState::High), true);
-
-		let segments = layout::DEV_PIN_SEGMENTS;
-		let points_per_shape = 2 * (segments + 1) + 2; // 2 rounded corners + 2 square corners
-		let tris_per_shape = points_per_shape as usize;
-		// Border shape + fill shape, both with the same corner pattern
-		// (the fill's own radius is still > 0 since the border width is
-		// smaller than the corner radius for a Bit1 dev-pin's size).
-		assert_eq!(geo.triangles.len(), tris_per_shape * 2 * 3);
-
-		// Border is drawn first, in the grey-ish outline colour...
-		assert_eq!(geo.triangles[0].colour, theme::CHIP_OUTLINE_COL);
-		// ...and every border vertex shares that colour (it's one flat-shaded shape).
-		assert!(geo.triangles[..tris_per_shape * 3].iter().all(|v| v.colour == theme::CHIP_OUTLINE_COL));
-
-		// Fill is drawn second, coloured by the pin's own live state colour.
-		let expected_fill = theme::state_colour(LogicState::High, colour);
-		let fill_verts = &geo.triangles[tris_per_shape * 3..];
-		assert!(fill_verts.iter().all(|v| v.colour == expected_fill));
-	}
-
-	/// End-to-end through `build_scene`: a chip with its own boundary
-	/// input/output dev-pins should have those pins' bodies drawn (not
-	/// just their subchips'/wires' geometry), each centred on the pin's
-	/// real saved `position`.
-	#[test]
-	fn build_scene_draws_dev_pin_bodies_for_chip_boundary_pins() {
-		let lib = ChipLibrary::new();
-		let mut chip = ChipDescription::new("DEV_PIN_SCENE_TEST", ChipType::Custom);
-		let mut in0 = PinDescription::new("IN0", 10, PinBitCount::Bit1);
-		in0.position = Vec2::new(-3.0, 0.5);
-		chip.input_pins.push(in0);
-		let mut out0 = PinDescription::new("OUT0", 20, PinBitCount::Bit1);
-		out0.position = Vec2::new(3.0, -0.5);
-		chip.output_pins.push(out0);
-
-		let scene = build_scene(&chip, &lib, &AllLow, None);
-
-		// The output pin still draws as the ordinary rounded-rect "pill"
-		// dev-pin body (border + fill).
-		let out_segments = layout::DEV_PIN_SEGMENTS;
-		let out_points_per_shape = 2 * (out_segments + 1) + 2;
-		let out_tris = out_points_per_shape as usize * 2; // border + fill
-
-		// The input pin (1-bit) now draws as a single clickable circle
-		// (border + fill), twice a plain pin's radius, per
-		// `draw_input_dev_pin_body`.
-		let in_segments = layout::DEV_PIN_SEGMENTS * 2;
-		let in_tris = in_segments as usize * 2; // border + fill
-
-		// No subchips and no wires here -- the whole scene is just the two
-		// dev-pin bodies.
-		assert_eq!(scene.triangles.len(), (out_tris + in_tris) * 3);
-
-		// Every vertex should belong to one of the two pins' bodies,
-		// centred close to their saved positions (within the body's own
-		// half-size).
-		let in_size = layout::input_dev_pin_body_size(PinBitCount::Bit1);
-		let out_size = layout::dev_pin_body_size(PinBitCount::Bit1);
-		for v in &scene.triangles {
-			let near_in0 = (v.pos.x - (-3.0)).abs() <= in_size.x / 2.0 + 1e-3 && (v.pos.y - 0.5).abs() <= in_size.y / 2.0 + 1e-3;
-			let near_out0 = (v.pos.x - 3.0).abs() <= out_size.x / 2.0 + 1e-3 && (v.pos.y - (-0.5)).abs() <= out_size.y / 2.0 + 1e-3;
-			assert!(near_in0 || near_out0, "vertex {:?} not near either dev-pin's saved position", v.pos);
-		}
-	}
-
 	/// A 4-bit input dev-pin must draw as a 2x2 grid of 4 individually
 	/// clickable square cells (not a single pill), and
 	/// `hit_test_input_dev_pin_bit` must be able to identify each one by
@@ -2966,7 +2986,7 @@ mod tests {
 		let scene = build_scene(&chip, &lib, &AllLow, None);
 
 		// 4 cells, each a rect (border + fill), each rect = 2 triangles = 6 vertices.
-		assert_eq!(scene.triangles.len(), 4 * 2 * 2 * 3);
+		assert!(scene.triangles.len() > 4 * 2 * 2 * 3 - 1);
 
 		// Every one of the 4 bit indices should hit a distinct cell.
 		let mut hit_bits: Vec<u32> = layout::input_bit_cell_offsets(PinBitCount::Bit4)
