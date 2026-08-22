@@ -415,6 +415,20 @@ impl ProjectDescription {
 	pub fn is_starred(&self, chip_name: &str, is_collection: bool) -> bool {
 		self.starred_list.iter().any(|item| item.is_collection == is_collection && item.name.eq_ignore_ascii_case(chip_name))
 	}
+
+	/// Mirrors the `StarredList`-editing half of `Project.SetStarred` (the
+	/// rest of that method -- `chipLibrary`-driven "collapse the collection
+	/// this chip's in" bookkeeping -- has no counterpart here since this
+	/// port's library panel doesn't auto-collapse collections). Adding an
+	/// already-starred name, or removing one that isn't starred, is a no-op
+	/// either way.
+	pub fn set_starred(&mut self, name: &str, starred: bool, is_collection: bool) {
+		if !starred {
+			self.starred_list.retain(|item| !(item.is_collection == is_collection && item.name.eq_ignore_ascii_case(name)));
+		} else if !self.is_starred(name, is_collection) {
+			self.starred_list.push(StarredItem::new(name, is_collection));
+		}
+	}
 }
 
 pub fn parse_project_description(json: &str) -> serde_json::Result<ProjectDescription> {

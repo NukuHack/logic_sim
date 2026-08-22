@@ -4,16 +4,16 @@
 //! you picked. It drives `MainMenu` from real mouse/keyboard events via `render::menu_ui`, and reuses
 //! the same load/build/render sequence `viewer.rs` uses once a project is opened. Needs a real GPU.
 
-use logic_sim::json::ProjectDescription;
+use logic_sim::json::{ChipCollection, ProjectDescription};
 use logic_sim::render::camera::Camera;
 use logic_sim::render::context_menu::{self, ContextMenuButton, ContextMenuItem, ContextMenuState};
-use logic_sim::render::editor_ui::{self, EditorAction, EditorButton};
+use logic_sim::render::editor_ui::{self, EditorAction, EditorButton, LibrarySelection};
 use logic_sim::render::gpu::Renderer;
 use logic_sim::render::layout;
 use logic_sim::render::menu_ui::{self, UiAction};
 use logic_sim::render::scene::{
-	bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire,
-	place_sub_chips, AllLow, SceneGeometry, SimulatorPinState,
+	bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, SceneGeometry,
+	SimulatorPinState,
 };
 use logic_sim::render::theme;
 use logic_sim::sim::key_mods_bits;
@@ -21,7 +21,7 @@ use logic_sim::sim::Simulator;
 use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use logic_sim::{
-	default_chip_collections, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, SavePaths, Saver,
+	default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, SavePaths, Saver,
 	WireDescription,
 };
 use std::path::PathBuf;
@@ -212,11 +212,32 @@ struct ViewerState {
 	/// immediate-mode pattern as `App::last_menu_buttons`.
 	last_overlay_buttons: Vec<EditorButton>,
 
-	/// Chip name last left-clicked in the library sidebar, purely for
-	/// highlighting -- unlike `root_chip_name`, selecting a row here no
-	/// longer switches the viewer to it (see `EditorAction::SelectChip`);
-	/// that now only happens via the row's right-click "Open" popup.
-	selected_library_chip: Option<String>,
+	/// Which row of the real `Overlay::Library` panel is currently
+	/// selected -- see `editor_ui::LibrarySelection`'s docs.
+	library_selection: LibrarySelection,
+	/// Whether the library's inline "new collection" name field is open.
+	library_creating_collection: bool,
+	/// Whether the library's inline "rename collection" name field is
+	/// open (for whichever collection `library_selection` points at).
+	library_renaming_collection: bool,
+	/// Whether the library's inline chip-delete confirmation is open.
+	library_confirming_chip_delete: bool,
+	/// Whether the library's inline collection-delete confirmation is
+	/// open.
+	library_confirming_collection_delete: bool,
+	/// Precomputed message shown by whichever of the above two
+	/// confirmations is open -- see `chip_delete_confirm_message`.
+	library_delete_message: String,
+	/// Name of the starred collection whose flyout is currently open in
+	/// the bottom bar (`editor_ui::build_starred_collection_popup`), if
+	/// any.
+	bottom_bar_open_collection: Option<String>,
+	/// Hit-boxes from the bottom bar's *last drawn* frame -- same
+	/// immediate-mode pattern as `last_overlay_buttons`.
+	last_bottom_bar_buttons: Vec<EditorButton>,
+	/// Hit-boxes from the bottom bar's starred-collection flyout's *last
+	/// drawn* frame, if one is open.
+	last_bottom_bar_popup_buttons: Vec<EditorButton>,
 
 	/// The right-click popup currently open (over a canvas component or
 	/// a library row), if any -- see `render::context_menu`. Always
@@ -489,6 +510,183 @@ fn reset_all_driven_inputs(library: &mut ChipLibrary) {
 /// act on one even if somehow invoked anyway.
 fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
 	library.try_get(name).map(|d| d.chip_type == ChipType::Custom).unwrap_or(false)
+}
+
+/// Mandatory catch-all collection every project's library falls back to
+/// -- mirrors `ChipLibraryMenu`'s `defaultOtherChipsCollectionName`.
+const DEFAULT_LIBRARY_COLLECTION_NAME: &str = "OTHER";
+
+/// Ensures `prefs.chip_collections` has an `OTHER` collection and that
+/// every chip in `library` belongs to *some* collection, adding any
+/// stragglers to `OTHER` -- mirrors the collection-syncing half of
+/// `ChipLibraryMenu.OnMenuOpened`. Called whenever the library overlay
+/// is opened, so newly-created/loaded chips that were never explicitly
+/// filed always still show up somewhere in the panel.
+fn sync_library_collections(prefs: &mut ProjectDescription, library: &ChipLibrary) {
+	if !prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
+		prefs.chip_collections.push(ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
+	}
+	let already_collected: std::collections::HashSet<String> =
+		prefs.chip_collections.iter().flat_map(|c| c.chips.iter().map(|n| n.to_ascii_lowercase())).collect();
+	let default_index =
+		prefs.chip_collections.iter().position(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
+
+	let mut stray_names: Vec<String> =
+		library.iter().map(|d| d.name.clone()).filter(|n| !already_collected.contains(&n.to_ascii_lowercase())).collect();
+	stray_names.sort();
+	prefs.chip_collections[default_index].chips.extend(stray_names);
+}
+
+/// Resets whichever inline popup (new/rename collection, delete
+/// confirmation) is open in the library panel, without leaving the
+/// library itself -- mirrors `ChipLibraryMenu.ResetPopupState`.
+fn reset_library_popup_state(v: &mut ViewerState) {
+	v.library_creating_collection = false;
+	v.library_renaming_collection = false;
+	v.library_confirming_chip_delete = false;
+	v.library_confirming_collection_delete = false;
+	v.library_delete_message.clear();
+	v.overlay_text_input.clear();
+}
+
+/// Names of every custom chip in `library` that directly contains
+/// `chip_name` as one of its own sub-chips -- a name-only simplification
+/// of `ChipLibrary.GetDirectParentChips`, enough to build a delete
+/// warning without needing the full chip-dependency graph this port
+/// doesn't otherwise build.
+fn direct_parent_chip_names(library: &ChipLibrary, chip_name: &str) -> Vec<String> {
+	library.iter().filter(|d| d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(chip_name))).map(|d| d.name.clone()).collect()
+}
+
+/// Builds the chip-library DELETE confirmation message -- mirrors
+/// `ChipLibraryMenu.CreateDeleteConfirmationMessage`, simplified to a
+/// single wrapped paragraph (no coloured-by-severity variant, since
+/// `editor_ui`'s confirmation panel doesn't distinguish one).
+fn chip_delete_confirm_message(v: &ViewerState, chip_name: &str) -> String {
+	let mut parents = direct_parent_chip_names(&v.library, chip_name);
+	let used_in_current = v.library.get(&v.root_chip_name).sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(chip_name));
+	if used_in_current {
+		parents.retain(|p| !p.eq_ignore_ascii_case(&v.root_chip_name));
+	}
+
+	let mut message = if used_in_current {
+		"Are you sure you want to delete the chip you are CURRENTLY EDITING? ".to_string()
+	} else {
+		"Are you sure you want to delete this chip? ".to_string()
+	};
+
+	let mut uses: Vec<String> = Vec::new();
+	if used_in_current {
+		uses.push("the current chip".to_string());
+	}
+	uses.extend(parents.iter().map(|p| format!("\"{p}\"")));
+
+	match uses.len() {
+		0 => message.push_str("It is not used anywhere."),
+		1 => message.push_str(&format!("It is used by {}.", uses[0])),
+		2 => message.push_str(&format!("It is used by {} and {}.", uses[0], uses[1])),
+		n => message.push_str(&format!("It is used by {} and {} others.", uses[0], n - 1)),
+	}
+
+	message
+}
+
+/// Actually deletes chip `name` -- from disk (via `Saver::delete_chip`,
+/// backed up into the project's `Deleted Chips/` folder), from every
+/// collection that lists it, and from the starred list -- then drops it
+/// from `v.library` and clears the library selection. Mirrors the
+/// `isConfirmingChipDeletion` branch of `ChipLibraryMenu`'s DELETE
+/// button.
+fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
+	if let Err(e) = Saver::delete_chip(paths, &v.project_name, name, true) {
+		*status = Some(format!("Failed to delete chip '{name}': {e}"));
+		return;
+	}
+	for collection in &mut v.prefs.chip_collections {
+		collection.chips.retain(|c| !c.eq_ignore_ascii_case(name));
+	}
+	v.prefs.set_starred(name, false, false);
+	v.prefs.all_custom_chip_names.retain(|c| !c.eq_ignore_ascii_case(name));
+	v.library.remove(name);
+	v.library_selection = LibrarySelection::None;
+}
+
+/// Deletes the collection at `index` -- moves its chips into `OTHER`
+/// (creating it first if somehow missing), drops its starred entry (if
+/// any), then removes it from `prefs.chip_collections`. Mirrors
+/// `ChipLibraryMenu.DeleteSelectedCollection`.
+fn delete_collection(prefs: &mut ProjectDescription, index: usize) {
+	if !prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
+		prefs.chip_collections.push(ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
+	}
+	let Some(collection) = prefs.chip_collections.get(index) else { return };
+	let name = collection.name.clone();
+	let chips = collection.chips.clone();
+
+	if let Some(default_collection) = prefs
+		.chip_collections
+		.iter_mut()
+		.find(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME) && !c.name.eq_ignore_ascii_case(&name))
+	{
+		default_collection.chips.extend(chips);
+	}
+
+	prefs.set_starred(&name, false, true);
+	prefs.chip_collections.remove(index);
+}
+
+/// Moves whatever's selected in the library panel one step within its
+/// own list (`force_jump = false`, mirrors the original's combined
+/// UP/DOWN buttons -- steps if it can, otherwise falls back to a jump),
+/// or straight into the previous/next collection outright
+/// (`force_jump = true`, mirrors the separate JUMP UP/DOWN buttons).
+/// Only chip rows support jumping; collections and starred rows just
+/// reorder within their own list either way.
+fn move_selected_library_row(v: &mut ViewerState, down: bool, force_jump: bool) {
+	match v.library_selection {
+		LibrarySelection::Chip(ci, chi) => {
+			let len = v.prefs.chip_collections.get(ci).map(|c| c.chips.len()).unwrap_or(0);
+			let can_step = if down { chi + 1 < len } else { chi > 0 };
+			if can_step && !force_jump {
+				let new_idx = if down { chi + 1 } else { chi - 1 };
+				if let Some(c) = v.prefs.chip_collections.get_mut(ci) {
+					c.chips.swap(chi, new_idx);
+				}
+				v.library_selection = LibrarySelection::Chip(ci, new_idx);
+				return;
+			}
+			let target_ci = if down { Some(ci + 1) } else { ci.checked_sub(1) };
+			let Some(target_ci) = target_ci else { return };
+			if target_ci >= v.prefs.chip_collections.len() {
+				return;
+			}
+			let Some(name) = v.prefs.chip_collections.get_mut(ci).map(|c| c.chips.remove(chi)) else { return };
+			let target = &mut v.prefs.chip_collections[target_ci];
+			target.is_toggled_open = true;
+			let new_idx = if down { 0 } else { target.chips.len() };
+			target.chips.insert(new_idx, name);
+			v.library_selection = LibrarySelection::Chip(target_ci, new_idx);
+		}
+		LibrarySelection::Collection(ci) => {
+			let len = v.prefs.chip_collections.len();
+			let can_step = if down { ci + 1 < len } else { ci > 0 };
+			if can_step {
+				let new_idx = if down { ci + 1 } else { ci - 1 };
+				v.prefs.chip_collections.swap(ci, new_idx);
+				v.library_selection = LibrarySelection::Collection(new_idx);
+			}
+		}
+		LibrarySelection::Starred(i) => {
+			let len = v.prefs.starred_list.len();
+			let can_step = if down { i + 1 < len } else { i > 0 };
+			if can_step {
+				let new_idx = if down { i + 1 } else { i - 1 };
+				v.prefs.starred_list.swap(i, new_idx);
+				v.library_selection = LibrarySelection::Starred(new_idx);
+			}
+		}
+		LibrarySelection::None => {}
+	}
 }
 
 /// Determines which buttons `Overlay::SaveChip` should show for the
@@ -863,7 +1061,25 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 				open_chip_by_name(v, paths, status, &name);
 			}
 		}
-		("open", ContextTarget::LibChip(name)) => open_chip_by_name(v, paths, status, &name),
+		("open", ContextTarget::LibChip(name)) => {
+			open_chip_by_name(v, paths, status, &name);
+			v.overlay = Overlay::None;
+			reset_library_popup_state(v);
+			v.library_selection = LibrarySelection::None;
+		}
+		("delete", ContextTarget::LibChip(name)) => {
+			v.library_delete_message = chip_delete_confirm_message(v, &name);
+			v.library_confirming_chip_delete = true;
+			// Right-click delete has no row selected yet (only a name), so
+			// stash it as a `Chip` selection the confirmation can read back
+			// from -- find where it actually lives in the collections list.
+			for (ci, c) in v.prefs.chip_collections.iter().enumerate() {
+				if let Some(chi) = c.chips.iter().position(|n| n.eq_ignore_ascii_case(&name)) {
+					v.library_selection = LibrarySelection::Chip(ci, chi);
+					break;
+				}
+			}
+		}
 
 		("label", ContextTarget::Component(id)) => {
 			let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
@@ -1085,16 +1301,116 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			}
 			v.overlay = Overlay::None;
 		}
-		EditorAction::SelectChip(name) => {
-			// Left click in the library only highlights the row now -- it no longer opens the chip.
-			// Right-clicking the same row instead pops up a small "Open" menu that does the actual switch.
-			v.selected_library_chip = Some(name);
-		}
-		EditorAction::ToggleCollection(i) => {
+		EditorAction::SelectCollection(i) => {
+			v.library_selection = LibrarySelection::Collection(i);
 			if let Some(c) = v.prefs.chip_collections.get_mut(i) {
 				c.is_toggled_open = !c.is_toggled_open;
 			}
 		}
+		EditorAction::SelectChipRow { collection, chip } => {
+			v.library_selection = LibrarySelection::Chip(collection, chip);
+		}
+		EditorAction::SelectStarredRow(i) => {
+			v.library_selection = LibrarySelection::Starred(i);
+		}
+		EditorAction::ToggleStarred { name, is_collection } => {
+			let now_starred = !v.prefs.is_starred(&name, is_collection);
+			v.prefs.set_starred(&name, now_starred, is_collection);
+		}
+		EditorAction::MoveSelectedStep(down) => move_selected_library_row(v, down, false),
+		EditorAction::MoveSelectedJump(down) => move_selected_library_row(v, down, true),
+		EditorAction::OpenSelectedChip(name) => {
+			open_chip_by_name(v, paths, status, &name);
+			v.overlay = Overlay::None;
+			reset_library_popup_state(v);
+			v.library_selection = LibrarySelection::None;
+			v.bottom_bar_open_collection = None;
+		}
+		EditorAction::RequestDeleteChip(name) => {
+			v.library_delete_message = chip_delete_confirm_message(v, &name);
+			v.library_confirming_chip_delete = true;
+		}
+		EditorAction::BeginNewCollection => {
+			v.library_creating_collection = true;
+			v.library_renaming_collection = false;
+			v.overlay_text_input.clear();
+		}
+		EditorAction::BeginRenameCollection => {
+			if let LibrarySelection::Collection(i) = v.library_selection {
+				if let Some(c) = v.prefs.chip_collections.get(i) {
+					v.overlay_text_input = c.name.clone();
+					v.library_renaming_collection = true;
+					v.library_creating_collection = false;
+				}
+			}
+		}
+		EditorAction::RequestDeleteCollection => {
+			if let LibrarySelection::Collection(i) = v.library_selection {
+				if v.prefs.chip_collections.get(i).is_some_and(|c| c.chips.is_empty()) {
+					delete_collection(&mut v.prefs, i);
+					v.library_selection = LibrarySelection::None;
+				} else {
+					v.library_delete_message = "Are you sure you want to delete this collection? Its chips will be moved to \"OTHER\".".to_string();
+					v.library_confirming_collection_delete = true;
+				}
+			}
+		}
+		EditorAction::ConfirmCollectionName => {
+			let new_name = v.overlay_text_input.trim().to_string();
+			if !new_name.is_empty() {
+				if v.library_creating_collection {
+					v.prefs.chip_collections.push(ChipCollection::new(&new_name, Vec::<String>::new()));
+					v.library_selection = LibrarySelection::Collection(v.prefs.chip_collections.len() - 1);
+				} else if v.library_renaming_collection {
+					if let LibrarySelection::Collection(i) = v.library_selection {
+						if let Some(c) = v.prefs.chip_collections.get_mut(i) {
+							let old_name = c.name.clone();
+							c.name = new_name.clone();
+							for item in &mut v.prefs.starred_list {
+								if item.is_collection && item.name.eq_ignore_ascii_case(&old_name) {
+									item.name = new_name.clone();
+								}
+							}
+						}
+					}
+				}
+			}
+			reset_library_popup_state(v);
+		}
+		EditorAction::CancelLibraryPopup => reset_library_popup_state(v),
+		EditorAction::ConfirmDelete => {
+			if v.library_confirming_chip_delete {
+				let name = match v.library_selection {
+					LibrarySelection::Chip(ci, chi) => v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).cloned(),
+					LibrarySelection::Starred(i) => v.prefs.starred_list.get(i).filter(|it| !it.is_collection).map(|it| it.name.clone()),
+					_ => None,
+				};
+				if let Some(name) = name {
+					delete_chip_from_library(v, paths, status, &name);
+				}
+			} else if v.library_confirming_collection_delete {
+				if let LibrarySelection::Collection(i) = v.library_selection {
+					delete_collection(&mut v.prefs, i);
+				}
+				v.library_selection = LibrarySelection::None;
+			}
+			reset_library_popup_state(v);
+		}
+		EditorAction::ExitLibrary => {
+			let mut desc = v.prefs.clone();
+			if let Err(e) = Saver::save_project_description(paths, &mut desc) {
+				*status = Some(format!("Failed to save chip library: {e}"));
+			} else {
+				v.prefs = desc;
+			}
+			v.overlay = Overlay::None;
+			reset_library_popup_state(v);
+			v.library_selection = LibrarySelection::None;
+		}
+		EditorAction::ToggleStarredCollectionPopup(name) => {
+			v.bottom_bar_open_collection = if v.bottom_bar_open_collection.as_deref() == Some(name.as_str()) { None } else { Some(name) };
+		}
+		EditorAction::CloseStarredCollectionPopup => v.bottom_bar_open_collection = None,
 		EditorAction::UseChip(name) => {
 			open_chip_by_name(v, paths, status, &name);
 			v.overlay = Overlay::None;
@@ -1214,6 +1530,9 @@ impl App {
 				if prefs.chip_collections.is_empty() {
 					prefs.chip_collections = default_chip_collections();
 				}
+				if prefs.starred_list.is_empty() {
+					prefs.starred_list = default_starred_list();
+				}
 
 				self.screen = Screen::Viewer(ViewerState {
 					project_name: name.to_string(),
@@ -1233,7 +1552,15 @@ impl App {
 					key_select_purpose: KeySelectPurpose::default(),
 					rom_editor: None,
 					last_overlay_buttons: Vec::new(),
-					selected_library_chip: None,
+					library_selection: LibrarySelection::None,
+					library_creating_collection: false,
+					library_renaming_collection: false,
+					library_confirming_chip_delete: false,
+					library_confirming_collection_delete: false,
+					library_delete_message: String::new(),
+					bottom_bar_open_collection: None,
+					last_bottom_bar_buttons: Vec::new(),
+					last_bottom_bar_popup_buttons: Vec::new(),
 					context_menu: None,
 					last_context_menu_buttons: Vec::new(),
 					pending_wire: None,
@@ -1498,34 +1825,71 @@ impl App {
 					let hit = v.last_overlay_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
 					if let Some(action) = hit {
 						apply_editor_action(v, &self.paths, &mut self.status, action);
-						return;
 					}
-					if v.overlay != Overlay::Library {
-						// Modal popup: swallow the click instead of
-						// letting it fall through to the canvas below.
-						return;
-					}
+					// Every overlay -- including the library now -- is a
+					// full-screen modal, so a click that missed every
+					// button still belongs to it, not the canvas below.
+					return;
 				}
 
 				if btn_state == ElementState::Pressed {
-					let world_pos = v.camera.screen_to_world(self.mouse_pos);
+					// handle UI
+					{
+						// The bottom bar's starred-collection flyout, if one's
+						// open, gets first refusal -- same "top layer first"
+						// priority the context menu and overlays get above.
+						if v.bottom_bar_open_collection.is_some() {
+							let hit = v
+								.last_bottom_bar_popup_buttons
+								.iter()
+								.find(|b| b.enabled && b.rect.contains(self.mouse_pos))
+								.map(|b| b.action.clone());
+							if let Some(action) = hit {
+								apply_editor_action(v, &self.paths, &mut self.status, action);
+								v.bottom_bar_open_collection = None;
+								return;
+							}
+						}
 
-					// A wire already being placed claims every click ahead of anything else below --
-					// including the input-pin toggle, so clicking a switch's pin finishes/bends the
-					// wire instead of flipping it (see `try_continue_pending_wire`'s doc comment).
-					if v.pending_wire.is_some() {
-						try_continue_pending_wire(v, world_pos, &mut self.status);
-						return;
+						let bar_hit =
+							v.last_bottom_bar_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
+						if let Some(action) = bar_hit {
+							apply_editor_action(v, &self.paths, &mut self.status, action);
+							return;
+						}
+						// Missed the bar and (if it was open) its flyout: a
+						// click anywhere else closes the flyout, same as the
+						// original's "click outside" dismissal.
+						v.bottom_bar_open_collection = None;
+
+						let root_desc = v.library.get(&v.root_chip_name);
+						let world_pos = v.camera.screen_to_world(self.mouse_pos);
+						if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
+							let root_chip_name = v.root_chip_name.clone();
+							toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+						}
 					}
+					// Handle canvas
+					{
+						let world_pos = v.camera.screen_to_world(self.mouse_pos);
 
-					if try_start_pending_wire(v, world_pos) {
-						return;
-					}
+						// A wire already being placed claims every click ahead of anything else below --
+						// including the input-pin toggle, so clicking a switch's pin finishes/bends the
+						// wire instead of flipping it (see `try_continue_pending_wire`'s doc comment).
+						if v.pending_wire.is_some() {
+							try_continue_pending_wire(v, world_pos, &mut self.status);
+							return;
+						}
 
-					let root_desc = v.library.get(&v.root_chip_name);
-					if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
-						let root_chip_name = v.root_chip_name.clone();
-						toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+						if try_start_pending_wire(v, world_pos) {
+							return;
+						}
+
+						let root_desc = v.library.get(&v.root_chip_name);
+						if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
+							let root_chip_name = v.root_chip_name.clone();
+							toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+						}
 					}
 				}
 			}
@@ -1579,20 +1943,23 @@ impl App {
 			return;
 		}
 
-		// 1) A row in the open library sidebar.
+		// 1) A chip row in the open library panel -- pop up its
+		// Open/Delete menu. The library is a full-screen modal (like
+		// every other overlay), so a click that misses every row still
+		// belongs to the library, not the canvas behind it.
 		if v.overlay == Overlay::Library {
-			let hit_name = v.last_overlay_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
-				EditorAction::SelectChip(name) => Some(name.clone()),
+			let hit = v.last_overlay_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
+				EditorAction::SelectChipRow { collection, chip } => {
+					v.prefs.chip_collections.get(*collection).and_then(|c| c.chips.get(*chip)).cloned()
+				}
 				_ => None,
 			});
-			if let Some(name) = hit_name {
-				let items = vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(&v.library, &name))];
+			if let Some(name) = hit {
+				let custom = is_custom_chip(&v.library, &name);
+				let items = vec![ContextMenuItem::new_enabled("Open", "open", custom), ContextMenuItem::new_enabled("Delete", "delete", custom)];
 				v.context_menu = Some(ContextMenuState::new(format!("libchip:{name}"), self.mouse_pos, items));
-				return;
 			}
-			// Fall through: the sidebar is open but the click landed
-			// outside any of its rows (e.g. on the canvas behind it),
-			// so still try the canvas/dev-pin/wire hit-tests below.
+			return;
 		}
 
 		let root_chip_name = v.root_chip_name.clone();
@@ -1644,7 +2011,7 @@ impl App {
 	/// applies, so panning can't happen "through" an open popup either.
 	fn handle_middle_mouse_button(&mut self, btn_state: ElementState) {
 		if let Screen::Viewer(v) = &mut self.screen {
-			if btn_state == ElementState::Pressed && v.overlay != Overlay::None && v.overlay != Overlay::Library {
+			if btn_state == ElementState::Pressed && v.overlay != Overlay::None {
 				return;
 			}
 			v.dragging = btn_state == ElementState::Pressed;
@@ -1707,12 +2074,16 @@ impl App {
 			Screen::Viewer(v) => match &event.logical_key {
 				// ---- Text entry for the search / naming / ROM-cell overlays ----
 				Key::Named(NamedKey::Backspace)
-					if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::RomEditor | Overlay::SaveChip) =>
+					if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::RomEditor | Overlay::SaveChip)
+						|| (v.overlay == Overlay::Library && (v.library_creating_collection || v.library_renaming_collection)) =>
 				{
 					v.overlay_text_input.pop();
 				}
 				Key::Named(NamedKey::Enter) if v.overlay == Overlay::Naming => {
 					confirm_naming_popup(v, &mut self.status);
+				}
+				Key::Named(NamedKey::Enter) if v.overlay == Overlay::Library && (v.library_creating_collection || v.library_renaming_collection) => {
+					apply_editor_action(v, &self.paths, &mut self.status, EditorAction::ConfirmCollectionName);
 				}
 				Key::Named(NamedKey::Enter) if v.overlay == Overlay::RomEditor => {
 					confirm_rom_cell(v, &mut self.status);
@@ -1727,7 +2098,10 @@ impl App {
 				{
 					confirm_save_chip_popup(v, &self.paths, &mut self.status);
 				}
-				Key::Character(s) if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::SaveChip) => {
+				Key::Character(s)
+					if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::SaveChip)
+						|| (v.overlay == Overlay::Library && (v.library_creating_collection || v.library_renaming_collection)) =>
+				{
 					if v.overlay_text_input.chars().count() < 64 {
 						v.overlay_text_input.push_str(s);
 					}
@@ -1777,15 +2151,37 @@ impl App {
 					start_new_chip(v, &self.paths, &mut self.status);
 				}
 				Key::Named(NamedKey::Tab) => {
-					v.overlay = if v.overlay == Overlay::Library { Overlay::None } else { Overlay::Library };
+					if v.overlay == Overlay::Library {
+						let mut desc = v.prefs.clone();
+						if Saver::save_project_description(&self.paths, &mut desc).is_ok() {
+							v.prefs = desc;
+						}
+						v.overlay = Overlay::None;
+						reset_library_popup_state(v);
+						v.library_selection = LibrarySelection::None;
+					} else if v.overlay == Overlay::None {
+						sync_library_collections(&mut v.prefs, &v.library);
+						v.overlay = Overlay::Library;
+					}
 				}
 				Key::Named(NamedKey::Escape) => {
-					if v.overlay != Overlay::None {
+					if v.overlay == Overlay::Library
+						&& (v.library_creating_collection
+							|| v.library_renaming_collection
+							|| v.library_confirming_chip_delete
+							|| v.library_confirming_collection_delete)
+					{
+						reset_library_popup_state(v);
+					} else if v.overlay != Overlay::None {
 						v.overlay = Overlay::None;
 						v.overlay_text_input.clear();
 						v.rom_editor = None;
+						reset_library_popup_state(v);
+						v.library_selection = LibrarySelection::None;
 					} else if v.pending_wire.is_some() {
 						v.pending_wire = None;
+					} else if v.bottom_bar_open_collection.is_some() {
+						v.bottom_bar_open_collection = None;
 					} else {
 						self.return_to_menu();
 					}
@@ -1857,13 +2253,76 @@ impl App {
 				}
 				world_layer = scene;
 
+				// Bottom bar of starred chips/collections is always drawn (mirrors `BottomBarUI`
+				// always being visible), its buttons just disabled while a modal overlay is open --
+				// see `EditorAction::ToggleStarredCollectionPopup`'s docs for what its "MENU" button
+				// equivalent deliberately doesn't do here.
+				let bar_enabled = v.overlay == Overlay::None;
+				let bar_frame = editor_ui::build_starred_bottom_bar(
+					&v.prefs.starred_list,
+					v.bottom_bar_open_collection.as_deref(),
+					bar_enabled,
+					vw,
+					vh,
+					self.mouse_pos,
+				);
+				v.last_bottom_bar_buttons = bar_frame.buttons;
+				let mut bar_geometry = bar_frame.geometry;
+
+				if bar_enabled {
+					if let Some(open_name) = v.bottom_bar_open_collection.clone() {
+						if let Some(collection) = v.prefs.chip_collections.iter().find(|c| c.name.eq_ignore_ascii_case(&open_name)) {
+							let anchor_x = v
+								.last_bottom_bar_buttons
+								.iter()
+								.find(|b| matches!(&b.action, EditorAction::ToggleStarredCollectionPopup(n) if n.eq_ignore_ascii_case(&open_name)))
+								.map(|b| b.rect.x)
+								.unwrap_or(8.0);
+							let popup_frame = editor_ui::build_starred_collection_popup(collection, anchor_x, true, vw, vh, self.mouse_pos);
+							v.last_bottom_bar_popup_buttons = popup_frame.buttons;
+							bar_geometry.triangles.extend(popup_frame.geometry.triangles);
+							bar_geometry.labels.extend(popup_frame.geometry.labels);
+						} else {
+							v.last_bottom_bar_popup_buttons.clear();
+						}
+					} else {
+						v.last_bottom_bar_popup_buttons.clear();
+					}
+				} else {
+					v.last_bottom_bar_popup_buttons.clear();
+				}
+
+				ui_overlay_layer = pin_overlay_to_screen(bar_geometry, &v.camera, vw, vh);
+
 				// Overlays are laid out in screen-pixel space by `editor_ui` -- remap that into
 				// `v.camera`'s current world space so they stay pinned to the screen regardless of
-				// pan/zoom. Kept in its own layer so its background is drawn after the whole chip scene.
+				// pan/zoom. Appended onto the bottom bar's own layer (rather than replacing it) so
+				// a modal overlay still composites on top of the bar drawn beneath it.
 				if v.overlay != Overlay::None {
 					let overlay_frame = match v.overlay {
 						Overlay::Library => {
-							editor_ui::build_chip_library_panel(&v.prefs.chip_collections, v.selected_library_chip.as_deref(), vw, vh, self.mouse_pos)
+							let selected_chip_is_custom = match v.library_selection {
+								LibrarySelection::Chip(ci, chi) => {
+									v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).is_some_and(|n| is_custom_chip(&v.library, n))
+								}
+								LibrarySelection::Starred(i) => {
+									v.prefs.starred_list.get(i).filter(|it| !it.is_collection).is_some_and(|it| is_custom_chip(&v.library, &it.name))
+								}
+								_ => false,
+							};
+							let state = editor_ui::ChipLibraryState {
+								collections: &v.prefs.chip_collections,
+								starred_list: &v.prefs.starred_list,
+								selection: v.library_selection,
+								selected_chip_is_custom,
+								creating_collection: v.library_creating_collection,
+								renaming_collection: v.library_renaming_collection,
+								name_field_text: &v.overlay_text_input,
+								confirming_chip_delete: v.library_confirming_chip_delete,
+								confirming_collection_delete: v.library_confirming_collection_delete,
+								delete_confirm_message: &v.library_delete_message,
+							};
+							editor_ui::build_chip_library_panel(&state, vw, vh, self.mouse_pos)
 						}
 						Overlay::Search => {
 							let mut names: Vec<String> = v.library.iter().map(|d| d.name.clone()).collect();
@@ -1897,7 +2356,9 @@ impl App {
 						Overlay::None => unreachable!(),
 					};
 					v.last_overlay_buttons = overlay_frame.buttons;
-					ui_overlay_layer = pin_overlay_to_screen(overlay_frame.geometry, &v.camera, vw, vh);
+					let pinned_overlay = pin_overlay_to_screen(overlay_frame.geometry, &v.camera, vw, vh);
+					ui_overlay_layer.triangles.extend(pinned_overlay.triangles);
+					ui_overlay_layer.labels.extend(pinned_overlay.labels);
 				} else {
 					v.last_overlay_buttons.clear();
 				}
