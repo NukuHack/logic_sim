@@ -2,13 +2,21 @@
 //! type (NAND, Clock, RAM, displays, bus, merge/split, I/O pins, ...).
 //!
 //! Ported from DLS.Game.BuiltinChipCreator. Unlike the original, this drops
-//! everything related to editor rendering/layout (size, colour, grid
-//! snapping, name display location) since the simulation core has no use
-//! for it -- only pin names, IDs, and bit-widths matter for building and
-//! running the simulation graph. If a UI layer is added later, that visual
-//! metadata can be reintroduced alongside it without touching this module.
+//! most things related to editor rendering/layout (colour, grid snapping,
+//! name display location) since the simulation core has no use for it --
+//! only pin names, IDs, and bit-widths matter for building and running the
+//! simulation graph. The one exception is `size`: the display chips
+//! (7-segment/RGB/dot/LED) need their body sized to fit their fixed-aspect
+//! visualisation (see `render::scene`'s `draw_display_*` functions), so
+//! their sizes are computed here exactly as `BuiltinChipCreator` does, via
+//! the same `layout::min_chip_height_for_pins` this port's renderer already
+//! uses for custom chips. Every other builtin chip leaves `size` as its
+//! default `Vec2::default()` (zero), which `render::scene::place_sub_chips`
+//! treats as "not saved" and falls back to computing a size from pins alone.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, NameLocation, PinBitCount, PinDescription};
+use crate::render::layout;
+use crate::structs::Vec2;
 
 /// Build every builtin chip description and register them all in `library`.
 /// Mirrors `BuiltinChipCreator.CreateAllBuiltinChipDescriptions`, followed by
@@ -162,40 +170,68 @@ fn get_pin_name(pin_index: i32, pin_count: i32, is_input: bool) -> String {
 }
 
 fn create_display_7seg() -> ChipDescription {
-	builtin_hidden_name(
-		ChipType::SevenSegmentDisplay,
-		vec![pin1("A", 0), pin1("B", 1), pin1("C", 2), pin1("D", 3), pin1("E", 4), pin1("F", 5), pin1("G", 6), pin1("COL", 7)],
-		vec![],
-	)
+	let inputs = vec![pin1("A", 0), pin1("B", 1), pin1("C", 2), pin1("D", 3), pin1("E", 4), pin1("F", 5), pin1("G", 6), pin1("COL", 7)];
+	// Mirrors `BuiltinChipCreator.CreateDisplay7Seg`: height fits the 8
+	// 1-bit input pins, width is a fixed 10 grid units.
+	let height = layout::min_chip_height_for_pins(&input_bit_counts(&inputs), &[]);
+	let mut desc = builtin_hidden_name(ChipType::SevenSegmentDisplay, inputs, vec![]);
+	desc.size = Vec2::new(layout::GRID_SIZE * 10.0, height);
+	desc
 }
 
 fn create_display_rgb() -> ChipDescription {
-	builtin_hidden_name(
-		ChipType::DisplayRgb,
-		vec![
-			pin("ADDRESS", 0, PinBitCount::Bit8),
-			pin("RED", 1, PinBitCount::Bit4),
-			pin("GREEN", 2, PinBitCount::Bit4),
-			pin("BLUE", 3, PinBitCount::Bit4),
-			pin1("RESET", 4),
-			pin1("WRITE", 5),
-			pin1("REFRESH", 6),
-			pin1("CLOCK", 7),
-		],
-		vec![pin("R OUT", 8, PinBitCount::Bit4), pin("G OUT", 9, PinBitCount::Bit4), pin("B OUT", 10, PinBitCount::Bit4)],
-	)
+	let inputs = vec![
+		pin("ADDRESS", 0, PinBitCount::Bit8),
+		pin("RED", 1, PinBitCount::Bit4),
+		pin("GREEN", 2, PinBitCount::Bit4),
+		pin("BLUE", 3, PinBitCount::Bit4),
+		pin1("RESET", 4),
+		pin1("WRITE", 5),
+		pin1("REFRESH", 6),
+		pin1("CLOCK", 7),
+	];
+	let outputs = vec![pin("R OUT", 8, PinBitCount::Bit4), pin("G OUT", 9, PinBitCount::Bit4), pin("B OUT", 10, PinBitCount::Bit4)];
+	// Mirrors `BuiltinChipCreator.CreateDisplayRGB`: a fixed 21x21 grid
+	// square, independent of the pin layout (the 16x16 pixel grid needs
+	// more room than the pins alone would require).
+	let mut desc = builtin_hidden_name(ChipType::DisplayRgb, inputs, outputs);
+	let side = layout::GRID_SIZE * 21.0;
+	desc.size = Vec2::new(side, side);
+	desc
 }
 
 fn create_display_dot() -> ChipDescription {
-	builtin_hidden_name(
-		ChipType::DisplayDot,
-		vec![pin("ADDRESS", 0, PinBitCount::Bit8), pin1("PIXEL IN", 1), pin1("RESET", 2), pin1("WRITE", 3), pin1("REFRESH", 4), pin1("CLOCK", 5)],
-		vec![pin1("PIXEL OUT", 6)],
-	)
+	let inputs =
+		vec![pin("ADDRESS", 0, PinBitCount::Bit8), pin1("PIXEL IN", 1), pin1("RESET", 2), pin1("WRITE", 3), pin1("REFRESH", 4), pin1("CLOCK", 5)];
+	let outputs = vec![pin1("PIXEL OUT", 6)];
+	// Mirrors `BuiltinChipCreator.CreateDisplayDot`: a square sized to fit
+	// the pins (unlike RGB's fixed 21x21 -- the dot display has fewer
+	// pins, so `MinChipHeightForPins` alone already gives it enough room).
+	let height = layout::min_chip_height_for_pins(&input_bit_counts(&inputs), &output_bit_counts(&outputs));
+	let mut desc = builtin_hidden_name(ChipType::DisplayDot, inputs, outputs);
+	desc.size = Vec2::new(height, height);
+	desc
 }
 
 fn create_display_led() -> ChipDescription {
-	builtin_hidden_name(ChipType::DisplayLed, vec![pin1("IN", 0)], vec![])
+	let inputs = vec![pin1("IN", 0)];
+	// Mirrors `BuiltinChipCreator.CreateDisplayLED`: a square sized to fit
+	// its single 1-bit input pin.
+	let height = layout::min_chip_height_for_pins(&input_bit_counts(&inputs), &[]);
+	let mut desc = builtin_hidden_name(ChipType::DisplayLed, inputs, vec![]);
+	desc.size = Vec2::new(height, height);
+	desc
+}
+
+/// `PinDescription::bit_count` for each pin in `pins`, in order -- the
+/// shape `layout::min_chip_height_for_pins` wants. A tiny local helper
+/// since these builtin display chips are the only place in this module
+/// that needs to feed pins into the layout module.
+fn input_bit_counts(pins: &[PinDescription]) -> Vec<PinBitCount> {
+	pins.iter().map(|p| p.bit_count).collect()
+}
+fn output_bit_counts(pins: &[PinDescription]) -> Vec<PinBitCount> {
+	pins.iter().map(|p| p.bit_count).collect()
 }
 
 /// (Not really a "chip", but convenient to treat it as one -- these back

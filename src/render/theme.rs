@@ -59,6 +59,12 @@ pub const GRID_COL: Rgba = rgb(49.0 / 255.0, 49.0 / 255.0, 51.0 / 255.0);
 pub const CHIP_BODY_COL: Rgba = rgb(0.55, 0.55, 0.58);
 pub const CHIP_OUTLINE_COL: Rgba = rgb(0.15, 0.15, 0.16);
 
+/// Colours for a 7-segment display's segments: `[Off, On, Highlight]` for
+/// palette A (the `COL` pin low), followed by the same 3 for palette B
+/// (`COL` pin high). Mirrors `ThemeDLS.SevenSegCols` exactly.
+pub const SEVEN_SEG_COLS: [Rgba; 6] =
+	[rgb(0.1, 0.09, 0.09), rgb(1.0, 0.32, 0.28), rgb(0.19, 0.15, 0.15), rgb(0.09, 0.09, 0.1), rgb(0.0, 0.61, 1.0), rgb(0.15, 0.15, 0.19)];
+
 /// World-space font size (grid units) used for a subchip's name label.
 /// Mirrors `DrawSettings.FontSizeChipName`.
 pub const FONT_SIZE_CHIP_NAME: f32 = 0.2;

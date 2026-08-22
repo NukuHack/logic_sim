@@ -171,6 +171,17 @@ impl Simulator {
 		&self.pins[idx.0]
 	}
 
+	/// Find a direct subchip of `chip` by its saved instance id. Used by
+	/// the renderer to fetch a display subchip's `internal_state` (e.g.
+	/// the pixel/segment data behind a 7-segment/RGB/dot display) given
+	/// only the `PlacedSubChip::id` it already has on hand. Mirrors the
+	/// lookup half of `SimChip.GetSimPinFromAddress`, but for the owning
+	/// chip itself rather than one of its pins.
+	pub fn find_sub_chip(&self, chip: ChipIdx, id: i32) -> Option<ChipIdx> {
+		let c = &self.chips[chip.0];
+		c.sub_chips.iter().copied().find(|&sub| self.chips[sub.0].id == id)
+	}
+
 	/// Find a pin anywhere within `chip` (its own dev-pins, or a direct
 	/// subchip's pins) by address. Mirrors SimChip.GetSimPinFromAddress.
 	pub fn find_pin(&self, chip: ChipIdx, address: PinAddress) -> Option<PinIdx> {
@@ -762,10 +773,7 @@ fn connect(chip_idx: ChipIdx, source: PinAddress, target: PinAddress, pins: &mut
 				}
 			}
 		}
-		if let Some(p) = c.input_pins.iter().chain(c.output_pins.iter()).find(|&&p| pins[p.0].id == addr.pin_owner_id).copied() {
-			return Some(p);
-		}
-		None
+		c.input_pins.iter().chain(c.output_pins.iter()).find(|&&p| pins[p.0].id == addr.pin_owner_id).copied()
 	};
 
 	let (Some(source_pin), Some(target_pin)) = (find(source, pins, chips), find(target, pins, chips)) else {

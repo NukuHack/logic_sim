@@ -29,7 +29,22 @@ impl Camera {
 	pub const MAX_ZOOM: f32 = 4096.0;
 
 	pub fn new(viewport: Vec2) -> Self {
-		Self { position: Vec2::ZERO, zoom: 1.0, viewport }
+		Self { position: Vec2::ZERO, zoom: 1.0, viewport: Self::sanitize_viewport(viewport) }
+	}
+
+	/// Clamps a viewport size to a sane minimum (1x1) so `screen_to_world`/
+	/// `world_to_screen`/`view_proj_matrix` never divide by zero. A `0`
+	/// (or negative/NaN) viewport can genuinely happen for a frame or two
+	/// on some platforms -- e.g. the window's real size can arrive via a
+	/// `Resized` event *after* the very first frame is drawn -- and
+	/// dividing by it produces `Infinity`/`NaN` world-space geometry that
+	/// gets sent straight to the GPU, which some drivers handle very
+	/// badly (up to and including a hard crash) rather than just
+	/// misrendering the one bad frame.
+	fn sanitize_viewport(viewport: Vec2) -> Vec2 {
+		let x = if viewport.x.is_finite() { viewport.x.max(1.0) } else { 1.0 };
+		let y = if viewport.y.is_finite() { viewport.y.max(1.0) } else { 1.0 };
+		Vec2::new(x, y)
 	}
 
 	pub fn pan(&mut self, delta_world: Vec2) {
@@ -48,7 +63,7 @@ impl Camera {
 	}
 
 	pub fn resize_viewport(&mut self, width: f32, height: f32) {
-		self.viewport = Vec2::new(width, height);
+		self.viewport = Self::sanitize_viewport(Vec2::new(width, height));
 	}
 
 	/// Fit the camera so the world-space box `[min, max]` is fully visible,

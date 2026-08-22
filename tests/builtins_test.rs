@@ -1,3 +1,4 @@
+use logic_sim::render::layout;
 use logic_sim::{load_chip_library_from_dir, register_all_builtins, ExternalInput, PinAddress, Simulator};
 use std::path::Path;
 
@@ -91,4 +92,41 @@ fn loaded_or_chip_simulates_correctly() {
 			assert_eq!(out_state, a | b, "OR({a},{b}) should be {}", a | b);
 		}
 	}
+}
+
+/// The display builtins (7-segment/RGB/dot/LED) must save a real,
+/// non-zero `size` -- unlike every other builtin, whose `size` is left at
+/// the zero default and derived from pins+name by
+/// `render::scene::place_sub_chips`'s fallback path (see `builtins.rs`'s
+/// module doc). Without an explicit size here, `place_sub_chips` would
+/// fall back to that pins-only heuristic and size these chips far too
+/// small for their fixed-aspect segment/pixel-grid visualisation (see
+/// `render::scene::draw_display_seven_segment`/`draw_display_pixel_grid`).
+#[test]
+fn display_builtins_have_explicit_nonzero_sizes() {
+	let chips = logic_sim::create_all_builtins();
+	let get = |name: &str| chips.iter().find(|c| c.name == name).unwrap();
+
+	let seven_seg = get("7-SEGMENT");
+	assert_eq!(seven_seg.size, logic_sim::Vec2::new(layout::GRID_SIZE * 10.0, seven_seg.size.y));
+	assert!(seven_seg.size.y > 0.0);
+
+	let rgb = get("RGB DISPLAY");
+	assert_eq!(rgb.size, logic_sim::Vec2::new(layout::GRID_SIZE * 21.0, layout::GRID_SIZE * 21.0));
+
+	let dot = get("DOT DISPLAY");
+	assert!(dot.size.x > 0.0 && dot.size.x == dot.size.y, "dot display should be square");
+
+	let led = get("LED");
+	assert!(led.size.x > 0.0 && led.size.x == led.size.y, "LED display should be square");
+}
+
+/// Every non-display builtin (spot-checked via NAND) keeps the default
+/// zero size, relying on `place_sub_chips`'s pins-based fallback -- only
+/// the display chips need an explicit size.
+#[test]
+fn non_display_builtins_keep_default_zero_size() {
+	let chips = logic_sim::create_all_builtins();
+	let nand = chips.iter().find(|c| c.name == "NAND").unwrap();
+	assert_eq!(nand.size, logic_sim::Vec2::default());
 }
