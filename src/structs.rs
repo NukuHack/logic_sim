@@ -24,6 +24,14 @@ impl Vec2 {
     pub fn add(self, other: Vec2) -> Vec2 {
         Vec2::new(self.x + other.x, self.y + other.y)
     }
+
+    pub fn to_tuple(self) -> (f32, f32) {
+        (self.x, self.y)
+    }
+
+    pub fn to_arr(self) -> [f32; 2] {
+        [self.x, self.y]
+    }
 }
 
 impl Add for Vec2 {

@@ -14,8 +14,9 @@ pub struct Camera {
     /// World units visible per screen pixel is `1 / zoom`; larger zoom =
     /// more zoomed in.
     pub zoom: f32,
-    pub viewport_width: f32,
-    pub viewport_height: f32,
+    /// x = width
+    /// y = heigth
+    pub viewport: Vec2,
 }
 
 impl Camera {
@@ -27,8 +28,8 @@ impl Camera {
     // enough to make small chips readable.
     pub const MAX_ZOOM: f32 = 4096.0;
 
-    pub fn new(viewport_width: f32, viewport_height: f32) -> Self {
-        Self { position: Vec2::ZERO, zoom: 1.0, viewport_width, viewport_height }
+    pub fn new(viewport: Vec2) -> Self {
+        Self { position: Vec2::ZERO, zoom: 1.0, viewport }
     }
 
     pub fn pan(&mut self, delta_world: Vec2) {
@@ -47,8 +48,7 @@ impl Camera {
     }
 
     pub fn resize_viewport(&mut self, width: f32, height: f32) {
-        self.viewport_width = width;
-        self.viewport_height = height;
+        self.viewport = Vec2::new(width, height);
     }
 
     /// Fit the camera so the world-space box `[min, max]` is fully visible,
@@ -65,28 +65,28 @@ impl Camera {
         self.position = Vec2::new((min.x + max.x) / 2.0, (min.y + max.y) / 2.0);
 
         let pad = 1.0 + padding_fraction.max(0.0) * 2.0;
-        let zoom_x = self.viewport_width / (width * pad);
-        let zoom_y = self.viewport_height / (height * pad);
+        let zoom_x = self.viewport.x / (width * pad);
+        let zoom_y = self.viewport.y / (height * pad);
         self.zoom = zoom_x.min(zoom_y).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
     }
 
     /// Convert a screen-space pixel coordinate (origin top-left, +y down)
     /// into world space.
     pub fn screen_to_world(&self, screen: Vec2) -> Vec2 {
-        let ndc_x = (screen.x / self.viewport_width) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (screen.y / self.viewport_height) * 2.0;
-        let half_w = self.viewport_width / (2.0 * self.zoom);
-        let half_h = self.viewport_height / (2.0 * self.zoom);
+        let ndc_x = (screen.x / self.viewport.x) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen.y / self.viewport.y) * 2.0;
+        let half_w = self.viewport.x / (2.0 * self.zoom);
+        let half_h = self.viewport.y / (2.0 * self.zoom);
         Vec2::new(self.position.x + ndc_x * half_w, self.position.y + ndc_y * half_h)
     }
 
     pub fn world_to_screen(&self, world: Vec2) -> Vec2 {
-        let half_w = self.viewport_width / (2.0 * self.zoom);
-        let half_h = self.viewport_height / (2.0 * self.zoom);
+        let half_w = self.viewport.x / (2.0 * self.zoom);
+        let half_h = self.viewport.y / (2.0 * self.zoom);
         let ndc_x = (world.x - self.position.x) / half_w;
         let ndc_y = (world.y - self.position.y) / half_h;
-        let screen_x = (ndc_x + 1.0) * 0.5 * self.viewport_width;
-        let screen_y = (1.0 - ndc_y) * 0.5 * self.viewport_height;
+        let screen_x = (ndc_x + 1.0) * 0.5 * self.viewport.x;
+        let screen_y = (1.0 - ndc_y) * 0.5 * self.viewport.y;
         Vec2::new(screen_x, screen_y)
     }
 
@@ -94,8 +94,8 @@ impl Camera {
     /// to wgpu clip space (x,y in [-1, 1], origin at `self.position`).
     /// Matches the layout expected by a `mat4x4<f32>` uniform in WGSL.
     pub fn view_proj_matrix(&self) -> [[f32; 4]; 4] {
-        let half_w = self.viewport_width / (2.0 * self.zoom);
-        let half_h = self.viewport_height / (2.0 * self.zoom);
+        let half_w = self.viewport.x / (2.0 * self.zoom);
+        let half_h = self.viewport.y / (2.0 * self.zoom);
         let sx = 1.0 / half_w;
         let sy = 1.0 / half_h;
         [
@@ -166,8 +166,8 @@ mod tests {
         // Both corners of the box should now land inside the viewport.
         let top_left = cam.world_to_screen(Vec2::new(-2.0, 1.0));
         let bottom_right = cam.world_to_screen(Vec2::new(2.0, -1.0));
-        assert!(top_left.x >= -0.5 && top_left.x <= cam.viewport_width + 0.5);
-        assert!(bottom_right.x >= -0.5 && bottom_right.x <= cam.viewport_width + 0.5);
+        assert!(top_left.x >= -0.5 && top_left.x <= cam.viewport.x + 0.5);
+        assert!(bottom_right.x >= -0.5 && bottom_right.x <= cam.viewport.y + 0.5);
     }
 
     #[test]

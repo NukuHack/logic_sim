@@ -1236,8 +1236,8 @@ pub fn build_grid(camera: &Camera, colour: Rgba) -> SceneGeometry {
     // original's `cam.orthographicSize` (half-height) and
     // `orthographicSize * aspect` (half-width); this camera already folds
     // aspect ratio into `viewport_width`/`viewport_height` directly.
-    let screen_half_width = camera.viewport_width / (2.0 * camera.zoom);
-    let screen_half_height = camera.viewport_height / (2.0 * camera.zoom);
+    let screen_half_width = camera.viewport.x / (2.0 * camera.zoom);
+    let screen_half_height = camera.viewport.y / (2.0 * camera.zoom);
     let world_centre = camera.position;
 
     // Mirrors the original's local `ToGrid`: truncate (not round) down

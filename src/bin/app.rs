@@ -502,6 +502,72 @@ fn load_single_chip_from_disk(paths: &SavePaths, project_name: &str, chip_name: 
     logic_sim::json::parse_chip_description(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// Discards whatever unsaved edits this session made to whichever chip
+/// is currently open (`v.root_chip_name`), by reloading its pristine
+/// on-disk copy back over its `v.library` entry (same "reload from disk"
+/// move `save_chip_as` already does for the identity it forks away
+/// from -- see `load_single_chip_from_disk`). Called by `open_chip_by_name`
+/// right before it actually switches away to a different chip. If the
+/// chip has no file on disk yet (a brand new, never-saved chip), there's
+/// nothing to revert to, so its in-memory draft is left exactly as it
+/// was -- it simply isn't reachable again once you navigate away, same
+/// as it already wasn't reachable after an app restart.
+fn discard_unsaved_changes(v: &mut ViewerState, paths: &SavePaths) {
+    let leaving = v.root_chip_name.clone();
+    if !is_custom_chip(&v.library, &leaving) {
+        return;
+    }
+    if let Ok(pristine) = load_single_chip_from_disk(paths, &v.project_name, &leaving) {
+        v.library.add(pristine);
+    }
+}
+
+/// Picks a fresh, not-yet-used (case-insensitively) name for a
+/// brand-new chip, starting from "New Chip" and falling back to
+/// "New Chip 2", "New Chip 3", ... the first suffix that isn't already
+/// taken in `library` -- so hitting Ctrl+N repeatedly never collides
+/// with an earlier still-unsaved draft (or a saved chip that happens to
+/// already be named "New Chip").
+fn unique_new_chip_name(library: &ChipLibrary) -> String {
+    if library.try_get("New Chip").is_none() {
+        return "New Chip".to_string();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("New Chip {n}");
+        if library.try_get(&candidate).is_none() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Ctrl+N: starts a brand-new, blank custom chip (no pins, no subchips,
+/// no wires -- see `ChipDescription::new`) and switches the viewer over
+/// to it, exactly as if it were an existing chip being opened. First
+/// discards any unsaved edits on whichever chip is currently open, the
+/// same as any other switch (see `discard_unsaved_changes`), so Ctrl+N
+/// can't be used to accidentally lose track of that.
+///
+/// The new chip lives only in `v.library` until it's actually saved --
+/// it isn't added to the project's `all_custom_chip_names`/library
+/// sidebar (that's `register_chip_name_in_project`'s job, run from the
+/// save flow) until then, so an uncommitted "New Chip" draft won't
+/// clutter the sidebar or survive a switch away from it without being
+/// saved first.
+fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+    discard_unsaved_changes(v, paths);
+
+    let name = unique_new_chip_name(&v.library);
+    v.library.add(ChipDescription::new(&name, ChipType::Custom));
+
+    v.root_chip_name = name.clone();
+    reset_all_driven_inputs(&mut v.library);
+    v.rebuild_sim();
+    v.camera_fitted = false;
+    *status = Some(format!("New chip '{name}'"));
+}
+
 /// Actually switches the viewer over to `name`'s own definition -- i.e.
 /// "open this chip" -- if it's a custom chip in `v.library`. This used to
 /// be exactly what left-clicking a chip in the library sidebar did (via
@@ -514,20 +580,23 @@ fn load_single_chip_from_disk(paths: &SavePaths, project_name: &str, chip_name: 
 /// disabled-row guard in `context_menu::build_context_menu` was bypassed
 /// somehow.
 ///
-/// Deliberately does *not* touch disk at all: `v.library` is the one
-/// source of truth for "the currently edited chip" for as long as the
-/// app is running (its in-memory copy *is* the temp/working copy --
-/// there's no separate "pristine on-disk" shadow kept around to fall
-/// back to), so navigating away from a chip you've been editing and back
-/// again just shows the same in-memory state you left it in. Persisting
-/// (or discarding) those edits is `Ctrl+S`'s job now -- see
-/// `confirm_save_chip_popup`. Also only re-fits the camera on an actual
-/// switch, never on an in-place edit of the chip already on screen
-/// (that's `rebuild_sim`'s job to *not* do -- see its own doc comment).
-fn open_chip_by_name(v: &mut ViewerState, status: &mut Option<String>, name: &str) {
+/// On an actual switch (`name` differs from the chip currently open),
+/// first discards any unsaved edits to the chip being left via
+/// `discard_unsaved_changes` -- so `v.library`'s in-memory copy of it
+/// reverts to whatever's actually on disk, and navigating back to it
+/// later shows that saved state rather than the draft you were mid-edit
+/// on. Persisting those edits instead is `Ctrl+S`'s job (see
+/// `confirm_save_chip_popup`) and must happen *before* switching away.
+/// Also only re-fits the camera on an actual switch, never on an
+/// in-place edit of the chip already on screen (that's `rebuild_sim`'s
+/// job to *not* do -- see its own doc comment).
+fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
     let switching = name != v.root_chip_name;
 
     if is_custom_chip(&v.library, name) {
+        if switching {
+            discard_unsaved_changes(v, paths);
+        }
         v.root_chip_name = name.to_string();
         reset_all_driven_inputs(&mut v.library);
         v.rebuild_sim();
@@ -599,7 +668,7 @@ fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> V
 /// `render::context_menu`) -- `target` is whatever `state.target` was set
 /// to when the popup was opened (parsed back via `ContextTarget::parse`),
 /// `action_id` is the clicked row's `ContextMenuItem::id`.
-fn apply_context_menu_action(v: &mut ViewerState, _paths: &SavePaths, status: &mut Option<String>, target: &str, action_id: &str) {
+fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, target: &str, action_id: &str) {
     let Some(parsed) = ContextTarget::parse(target) else { return };
     let root_chip_name = v.root_chip_name.clone();
 
@@ -607,10 +676,10 @@ fn apply_context_menu_action(v: &mut ViewerState, _paths: &SavePaths, status: &m
         ("open", ContextTarget::Component(id)) => {
             let name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
             if let Some(name) = name {
-                open_chip_by_name(v, status, &name);
+                open_chip_by_name(v, paths, status, &name);
             }
         }
-        ("open", ContextTarget::LibChip(name)) => open_chip_by_name(v, status, &name),
+        ("open", ContextTarget::LibChip(name)) => open_chip_by_name(v, paths, status, &name),
 
         ("label", ContextTarget::Component(id)) => {
             let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
@@ -850,7 +919,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
             }
         }
         EditorAction::UseChip(name) => {
-            open_chip_by_name(v, status, &name);
+            open_chip_by_name(v, paths, status, &name);
             v.overlay = Overlay::None;
             v.overlay_text_input.clear();
         }
@@ -892,7 +961,7 @@ struct App {
     // viewer are drawn into the same window/surface, just with different
     // scene-building code and a different logical camera).
     state: Option<RenderState>,
-    viewport: (f32, f32),
+    viewport: Vec2,
     mouse_pos: Vec2,
 
     /// Current keyboard modifier state (updated from `WindowEvent::ModifiersChanged`,
@@ -916,7 +985,7 @@ impl App {
             text_input: String::new(),
             status: None,
             state: None,
-            viewport: (1280.0, 800.0),
+            viewport: Vec2::new(1280.0, 800.0),
             mouse_pos: Vec2::ZERO,
             modifiers: ModifiersState::empty(),
             last_menu_buttons: Vec::new(),
@@ -947,18 +1016,13 @@ impl App {
                 }
                 register_all_builtins(&mut library);
 
-                let root_chip_name = project_desc
-                    .all_custom_chip_names
-                    .last()
-                    .cloned()
-                    .or_else(|| {
-                        library
-                            .iter()
-                            .filter(|d| d.chip_type == logic_sim::ChipType::Custom)
-                            .max_by_key(|d| d.sub_chips.len())
-                            .map(|d| d.name.clone())
-                    })
-                    .unwrap_or_else(|| "NAND".to_string());
+                // Every project opens onto a blank, unsaved chip rather
+                // than jumping back into whichever custom chip happens
+                // to be "last" (or biggest) -- see `unique_new_chip_name`
+                // and `start_new_chip`'s docs for why this mirrors
+                // Ctrl+N rather than remembering a chip to reopen.
+                let root_chip_name = unique_new_chip_name(&library);
+                library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
 
                 let root_desc = library.get(&root_chip_name).clone();
                 let mut sim = Simulator::build(&root_desc, &library);
@@ -979,7 +1043,7 @@ impl App {
                     library,
                     root_chip_name,
                     sim,
-                    camera: Camera::new(self.viewport.0, self.viewport.1),
+                    camera: Camera::new(self.viewport),
                     dragging: false,
                     last_cursor: Vec2::ZERO,
                     camera_fitted: false,
@@ -1120,7 +1184,7 @@ impl ApplicationHandler for App {
         let window = Arc::new(event_loop.create_window(window_attrs).expect("failed to create window"));
 
         let size = window.inner_size();
-        self.viewport = (size.width as f32, size.height as f32);
+        self.viewport = Vec2::new(size.width as f32, size.height as f32);
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
         let surface = instance.create_surface(window.clone()).expect("failed to create surface");
         let renderer = pollster::block_on(Renderer::new(&instance, surface, size.width, size.height));
@@ -1140,7 +1204,7 @@ impl ApplicationHandler for App {
                 if let Some(state) = self.state.as_mut() {
                     state.renderer.resize(size.width, size.height);
                 }
-                self.viewport = (size.width as f32, size.height as f32);
+                self.viewport = Vec2::new(size.width as f32, size.height as f32);
                 if let Screen::Viewer(v) = &mut self.screen {
                     v.camera.resize_viewport(size.width as f32, size.height as f32);
                 }
@@ -1499,6 +1563,9 @@ impl App {
                     v.overlay = Overlay::SaveChip;
                     v.overlay_text_input = v.root_chip_name.clone();
                 }
+                Key::Character(s) if (v.overlay == Overlay::None || v.overlay == Overlay::Library ) && self.modifiers.control_key() && s.eq_ignore_ascii_case("n") => {
+                    start_new_chip(v, &self.paths, &mut self.status);
+                }
                 Key::Named(NamedKey::Tab) => {
                     v.overlay = if v.overlay == Overlay::Library { Overlay::None } else { Overlay::Library };
                 }
@@ -1519,7 +1586,7 @@ impl App {
     }
 
     fn redraw(&mut self, event_loop: &ActiveEventLoop) {
-        let (vw, vh) = self.viewport;
+        let (vw, vh) = self.viewport.to_tuple();
 
         // Layers are drawn back-to-front, each as its own fully-submitted
         // pass (see `Renderer::render`'s doc comment) -- so a later
@@ -1633,7 +1700,7 @@ impl App {
         };
 
         let camera = match &self.screen {
-            Screen::Menu => Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport_width: vw, viewport_height: vh },
+            Screen::Menu => Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport: Vec2::new(vw, vh) },
             Screen::Viewer(v) => v.camera,
         };
 
