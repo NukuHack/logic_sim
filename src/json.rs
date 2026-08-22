@@ -1,13 +1,8 @@
-//! JSON loading/saving that matches the on-disk save format used by the
-//! original Digital Logic Sim (see DLS.Description.Serialization.Serializer,
-//! and the *.json files under a project's `Chips/` folder).
-//!
-//! This is a straight structural port: same field names (PascalCase, via
-//! serde rename), same enum-as-integer encoding for ChipType, same nested
-//! shape for pins/subchips/wires. Position/Colour/Points (Vector2/Color in
-//! the original) are kept as plain structs here since the simulation core
-//! doesn't need them — but they round-trip so a chip file can be
-//! re-saved without losing editor layout data.
+//! JSON loading/saving that matches the on-disk save format used by the original Digital Logic Sim
+//! (see DLS.Description.Serialization.Serializer and the `*.json` files under a project's `Chips/` folder).
+//! This is a straight structural port: same field names (PascalCase, via serde rename), same
+//! enum-as-integer encoding for ChipType, same nested shape for pins/subchips/wires. Position/Colour/Points
+//! are kept as plain structs so a chip file can be re-saved without losing editor layout data.
 
 use crate::description::{
 	ChipDescription, ChipLibrary, ChipType, Color, NameLocation, PinAddress, PinBitCount, PinDescription, SubChipDescription, ValueDisplayMode,
@@ -200,16 +195,9 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 		.wires
 		.iter()
 		.map(|w| {
-			// `Points` is [source-endpoint, ...bends..., target-endpoint].
-			// The first/last entries are cached endpoint coordinates: for
-			// a plain pin-to-pin wire they're redundant with the pin's
-			// *resolved* position and this crate re-resolves those live,
-			// but for a wire that taps into another wire's line
-			// (`ConnectionType` != ToPins) they're the only record of
-			// where along that other wire this one attaches, so they're
-			// kept (see `WireConnectionType` docs / `render::scene`'s
-			// endpoint resolution). A 2-point (or shorter) list is an
-			// unbent wire with no interior bend points.
+			// `Points` is [source-endpoint, ...bends..., target-endpoint]. The first/last entries are
+			// redundant for a plain pin-to-pin wire (re-resolved live), but for a wire tapping into
+			// another wire's line they're the only record of the attachment point, so they're kept.
 			let cached_source_point = w.points.first().copied().unwrap_or_default();
 			let cached_target_point = w.points.last().copied().unwrap_or_default();
 			let bends = if w.points.len() > 2 { w.points[1..w.points.len() - 1].to_vec() } else { Vec::new() };
@@ -290,14 +278,9 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 				connection_type: w.connection_type,
 				connected_wire_index: w.connected_wire_index,
 				connected_wire_segment_index: w.connected_wire_segment_index,
-				// Re-wrap the interior bend points with the cached
-				// endpoint coordinates, mirroring the on-disk [source,
-				// ...bends..., target] shape. For a `ToWireSource`/
-				// `ToWireTarget` wire these cached points are load-bearing
-				// (they're how that end's attachment to the other wire's
-				// segment gets re-projected on next load -- see
-				// `WireConnectionType` docs), so they must round-trip
-				// rather than being zeroed out.
+				// Re-wrap the interior bend points with the cached endpoint coordinates, mirroring the
+				// on-disk [source, ...bends..., target] shape. For a `ToWireSource`/`ToWireTarget` wire
+				// these cached points are load-bearing (see `WireConnectionType` docs), so they must round-trip.
 				points: std::iter::once(w.cached_source_point)
 					.chain(w.points.iter().copied())
 					.chain(std::iter::once(w.cached_target_point))
@@ -307,7 +290,7 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 		displays: None,
 	};
 
-	// original C# implementation used pretty printing, but we don't care about that, since json-is-json i decided to go with smaller size
+	// The original C# implementation pretty-prints; compact output is used here instead to keep file size down.
 
 	serde_json::to_string(&raw)
 }
@@ -320,8 +303,16 @@ pub fn load_chip_library_from_dir(chips_dir: &Path) -> std::io::Result<(ChipLibr
 	let mut library = ChipLibrary::new();
 	let mut errors = Vec::new();
 
-	let mut entries: Vec<_> =
-		fs::read_dir(chips_dir)?.filter_map(|e| e.ok()).filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false)).collect();
+	// A project with no custom chips yet (e.g. one that was just created)
+	// may not have a `Chips/` directory on disk at all -- that's not an
+	// error, it just means there's nothing to load.
+	let dir_iter = match fs::read_dir(chips_dir) {
+		Ok(iter) => iter,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((library, errors)),
+		Err(e) => return Err(e),
+	};
+
+	let mut entries: Vec<_> = dir_iter.filter_map(|e| e.ok()).filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false)).collect();
 	entries.sort_by_key(|e| e.path());
 
 	for entry in entries {
@@ -445,4 +436,20 @@ pub fn load_project(project_dir: &Path) -> std::io::Result<(ProjectDescription, 
 
 	let (library, errors) = load_chip_library_from_dir(&project_dir.join("Chips"))?;
 	Ok((project, library, errors))
+}
+
+#[cfg(test)]
+mod chip_dir_tests {
+	use super::*;
+
+	#[test]
+	fn load_chip_library_from_dir_returns_empty_library_when_dir_missing() {
+		let dir = std::env::temp_dir().join(format!("logic_sim_missing_chips_dir_{}", std::process::id()));
+		let _ = fs::remove_dir_all(&dir); // make sure it really doesn't exist
+		assert!(!dir.exists());
+
+		let (library, errors) = load_chip_library_from_dir(&dir).unwrap();
+		assert!(errors.is_empty());
+		assert!(library.try_get("nand").is_none(), "a missing dir should yield an empty library, not an error");
+	}
 }

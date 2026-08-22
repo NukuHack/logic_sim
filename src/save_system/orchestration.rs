@@ -55,6 +55,10 @@ pub fn create_project(paths: &SavePaths, project_name: &str) -> io::Result<Proje
 	};
 
 	Saver::save_project_description(paths, &mut description)?;
+	// `save_project_description` only creates the project's own directory; `Chips/` is otherwise created
+	// lazily on first chip save, leaving a brand-new project unreadable (`json::load_project` hard-fails
+	// on a missing `Chips/`). Create it up front so a new project is fully-formed and open-able.
+	SavePaths::ensure_directory_exists(&paths.chips_path(project_name))?;
 	Loader::load_project(paths, project_name)
 }
 
@@ -128,6 +132,25 @@ mod tests {
 		assert!(paths.project_description_path("My New Project").is_file());
 		// And builtins are present in the loaded chip library.
 		assert!(project.chip_library.try_get("nand").is_some());
+
+		std::fs::remove_dir_all(&root).ok();
+	}
+
+	#[test]
+	fn create_project_creates_the_chips_folder_so_the_project_is_immediately_open_able() {
+		// Regression test: a freshly-created project must have its `Chips/` folder on disk, because
+		// `json::load_project` -> `load_chip_library_from_dir` used to hard-fail with a "No such file
+		// or directory" error when that folder didn't exist yet, making a new project un-openable.
+		let root = temp_dir("create_project_chips_folder");
+		let paths = SavePaths::new(&root);
+
+		create_project(&paths, "Fresh Project").unwrap();
+
+		assert!(paths.chips_path("Fresh Project").is_dir());
+
+		let (_desc, library, errors) = crate::json::load_project(&paths.project_path("Fresh Project")).unwrap();
+		assert!(errors.is_empty());
+		assert!(library.try_get("nand").is_none(), "json::load_project doesn't register builtins itself; that's the app's job");
 
 		std::fs::remove_dir_all(&root).ok();
 	}

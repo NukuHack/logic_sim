@@ -1,11 +1,7 @@
-//! Pure geometry/layout math, ported from the original C#:
-//!   - `DLS.Graphics.DrawSettings` (world-space constants)
-//!   - `DLS.Game.SubChipHelper` (pin layout / min chip size)
-//!   - `DLS.Game.GridHelper` (grid snapping)
-//!
-//! Deliberately kept free of any wgpu/GPU types so it can be unit tested
-//! without a graphics device. The renderer proper (`render::gpu`) turns the
-//! output of this module into vertex buffers.
+//! Pure geometry/layout math, ported from the original C#'s `DLS.Graphics.DrawSettings` (world-space
+//! constants), `DLS.Game.SubChipHelper` (pin layout / min chip size), and `DLS.Game.GridHelper` (grid
+//! snapping). Deliberately kept free of any wgpu/GPU types so it can be unit tested without a graphics
+//! device. The renderer proper (`render::gpu`) turns the output of this module into vertex buffers.
 
 use crate::description::{NameLocation, PinBitCount};
 use crate::structs::Vec2;
@@ -345,11 +341,9 @@ mod tests {
 
 	#[test]
 	fn pin_stack_is_symmetric_about_zero_matching_centred_body_rect() {
-		// For any pin list, since the chip body rect is drawn centred on
-		// (0,0) spanning [-height/2, height/2], the topmost pin's *outer*
-		// edge and the bottommost pin's *outer* edge should sit exactly on
-		// those bounds -- i.e. the stack shouldn't be shifted entirely into
-		// one half of the body.
+		// For any pin list, since the chip body rect is drawn centred on (0,0) spanning
+		// [-height/2, height/2], the topmost pin's outer edge and the bottommost pin's outer edge
+		// should sit exactly on those bounds -- the stack shouldn't be shifted into one half of the body.
 		let pins = [PinBitCount::Bit1, PinBitCount::Bit1, PinBitCount::Bit4];
 		let (height, ys) = calculate_default_pin_layout(&pins);
 		let half = height / GRID_SIZE / 2.0;

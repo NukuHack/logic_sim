@@ -1,19 +1,8 @@
-//! A small, generic right-click "popup" menu, meant to be easily
-//! attachable to *anything* the host app can identify by a string id --
-//! a placed subchip on the canvas, a row in the chip library, etc. --
-//! without needing a bespoke menu type per call site.
-//!
-//! Same immediate-mode philosophy as [`crate::render::editor_ui`] and
-//! [`crate::render::menu_ui`]: this module only builds drawable geometry
-//! plus clickable hit-boxes for *one* frame; it holds no state of its
-//! own. The host keeps the open/closed state (see `ContextMenuState`)
-//! and re-calls [`build_context_menu`] every frame the menu is open,
-//! same as every other overlay in this codebase.
-//!
-//! Unlike the overlays in `editor_ui`, a context menu is meant to be
-//! drawn as the outermost, top-most layer of a frame -- see the `layers`
-//! doc comment on `render::gpu::Renderer::render` for how the host
-//! guarantees that ordering.
+//! A small, generic right-click "popup" menu, meant to be easily attachable to anything the host app
+//! can identify by a string id -- a placed subchip on the canvas, a row in the chip library, etc. --
+//! without needing a bespoke menu type per call site. Same immediate-mode philosophy as
+//! [`crate::render::editor_ui`] and [`crate::render::menu_ui`]: builds drawable geometry plus
+//! clickable hit-boxes for one frame; the host keeps the open/closed state and re-calls it each frame.
 
 use crate::render::menu_ui::UiRect;
 use crate::render::scene::{SceneGeometry, TextLabel};

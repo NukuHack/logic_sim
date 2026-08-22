@@ -1,10 +1,7 @@
-//! Integration test against four *real* `ProjectDescription.json` files
-//! saved by the original C# Digital Logic Sim (projects: GOL, MainTest,
-//! Snake, ZHT90). These are checked into `tests/fixtures/Projects/` verbatim.
-//!
-//! The goal is to prove this port's save/load system is actually
-//! backwards compatible with files the original game produces -- not just
-//! with hand-written test fixtures/Projects.
+//! Integration test against four real `ProjectDescription.json` files saved by the original C#
+//! Digital Logic Sim (projects: GOL, MainTest, Snake, ZHT90), checked into `tests/fixtures/Projects/`
+//! verbatim. The goal is to prove this port's save/load system is actually backwards compatible
+//! with files the original game produces -- not just with hand-written test fixtures.
 
 use logic_sim::{can_open_project, parse_project_description, Loader, SavePaths, Saver};
 

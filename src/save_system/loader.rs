@@ -98,11 +98,9 @@ impl Loader {
 			library.add(chip_desc);
 		}
 
-		// If a builtin chip name conflicts with a custom chip, the builtin
-		// must have been added in a version newer than the one the custom
-		// chip was created with -- exclude the builtin so the custom chip
-		// wins. (Mirrors `Loader.LoadChipLibrary`'s TODO-flagged behaviour:
-		// this is a silent shadow, not a rename prompt.)
+		// If a builtin chip name conflicts with a custom chip, exclude the builtin so the custom chip
+		// wins (mirrors `Loader.LoadChipLibrary`'s TODO-flagged behaviour: this is a silent shadow,
+		// not a rename prompt).
 		for builtin_desc in builtins::create_all() {
 			if !custom_names_lower.contains(&builtin_desc.name.to_ascii_lowercase()) {
 				library.add(builtin_desc);

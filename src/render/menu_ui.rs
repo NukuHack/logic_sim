@@ -1,22 +1,8 @@
-//! Builds drawable geometry + clickable hit-boxes for the app's startup
-//! screen (project picker), driven by the headless [`crate::ui_menu::MainMenu`]
-//! state machine.
-//!
-//! This is the "immediate mode" glue between `MainMenu` (pure state, no
-//! drawing) and `render::gpu` (draws triangles/text, no app logic): each
-//! frame, [`build`] is called with the current `MainMenu`, the viewport
-//! size, and whatever text the player has typed into the currently-open
-//! name popup (if any), and returns both the geometry to draw *and* the
-//! list of clickable rectangles to hit-test the next mouse click/hover
-//! against. Everything here is plain data -- no wgpu types -- so, like
-//! `render::scene`, it's fully unit-testable without a GPU.
-//!
-//! Coordinate convention: all layout is done in *screen* pixel space,
-//! origin top-left, +x right, +y down (i.e. the same space window/cursor
-//! events arrive in). [`to_world`] converts a screen point into the world
-//! coordinates `render::gpu` expects, for a camera positioned so that
-//! world space and screen space coincide 1:1 (see `menu_camera` in
-//! `src/bin/app.rs`).
+//! Builds drawable geometry + clickable hit-boxes for the app's startup screen (project picker),
+//! driven by the headless [`crate::ui_menu::MainMenu`] state machine. This is the immediate-mode
+//! glue between `MainMenu` (pure state, no drawing) and `render::gpu` (draws triangles/text, no app
+//! logic). Everything here is plain data -- no wgpu types -- so it's fully unit-testable without a
+//! GPU. Layout is done in screen pixel space; [`to_world`] converts to the world space `render::gpu` expects.
 
 use crate::render::scene::{SceneGeometry, TextLabel};
 use crate::render::theme;
@@ -128,6 +114,23 @@ fn button_colour(enabled: bool, hovered: bool) -> theme::Rgba {
 /// `mouse` is the current cursor position in screen space, used purely to
 /// compute `MenuFrame::hovered` / button hover colouring.
 pub fn build(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, mouse: Vec2) -> MenuFrame {
+	let mut frame = build_screen(menu, vw, vh, mouse);
+
+	if menu.popup() != PopupKind::None {
+		build_popup(menu, vw, vh, text_input, &mut frame, mouse);
+		// Resolve hover + enabled-gated colouring now that every button for
+		// this frame is known.
+		frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
+	}
+	frame
+}
+
+/// Just the current screen (main menu / load-project list / settings /
+/// about), *without* the popup baked in -- so a caller that wants the
+/// popup guaranteed to composite (triangles *and* text) on top of this,
+/// rather than sharing one triangles-then-text pass with it, can render
+/// them as two separate layers. See `build_popup_frame`.
+pub fn build_screen(menu: &MainMenu, vw: f32, vh: f32, mouse: Vec2) -> MenuFrame {
 	let mut frame = MenuFrame::default();
 
 	// Background fill so the menu fully occludes whatever was drawn
@@ -142,13 +145,22 @@ pub fn build(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, mouse: Vec2) -
 		MenuScreen::About => build_about_screen(vw, vh, &mut frame, mouse),
 	}
 
+	frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
+	frame
+}
+
+/// Just the popup (if one is open; an empty frame otherwise) as its own
+/// standalone frame -- render this as a later/separate layer than
+/// `build_screen`'s so it's guaranteed to composite fully (background
+/// *and* its own text) on top of the screen underneath, and so it can be
+/// hit-tested on its own ahead of (and instead of, when open) the
+/// buttons underneath it. See `build_screen`'s docs.
+pub fn build_popup_frame(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, mouse: Vec2) -> MenuFrame {
+	let mut frame = MenuFrame::default();
 	if menu.popup() != PopupKind::None {
 		build_popup(menu, vw, vh, text_input, &mut frame, mouse);
+		frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
 	}
-
-	// Resolve hover + enabled-gated colouring now that every button for
-	// this frame is known.
-	frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
 	frame
 }
 
@@ -162,8 +174,8 @@ fn add_title(frame: &mut MenuFrame, vw: f32, vh: f32, y: f32, text: &str) {
 	});
 }
 
-fn add_label(frame: &mut MenuFrame, vw: f32, vh: f32, centre_x: f32, y: f32, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
-	frame.geometry.labels.push(TextLabel { pos: to_world(Vec2::new(centre_x, y), vw, vh), text: text.to_string(), colour, font_size, width });
+fn add_label(frame: &mut MenuFrame, vw: f32, vh: f32, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
+	frame.geometry.labels.push(TextLabel { pos: to_world(centre, vw, vh), text: text.to_string(), colour, font_size, width });
 }
 
 /// Draws one button, appends its hit-box to `frame.buttons`, and returns
@@ -173,7 +185,7 @@ fn add_button(frame: &mut MenuFrame, vw: f32, vh: f32, rect: UiRect, label: &str
 	let hovered = enabled && rect.contains(mouse);
 	let bg = button_colour(enabled, hovered);
 	frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w, rect.h), bg);
-	add_label(frame, vw, vh, rect.centre().x, rect.centre().y, rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
+	add_label(frame, vw, vh, rect.centre(), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
 	frame.buttons.push(UiButton { rect, action, enabled });
 }
 
@@ -206,7 +218,16 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 	let cx = vw / 2.0;
 
 	if menu.projects().is_empty() {
-		add_label(frame, vw, vh, cx, list_top + 30.0, row_w, "No projects yet -- create one from the main menu.", [0.8, 0.8, 0.8, 1.0], FONT_SIZE);
+		add_label(
+			frame,
+			vw,
+			vh,
+			Vec2::new(cx, list_top + 30.0),
+			row_w,
+			"No projects yet -- create one from the main menu.",
+			[0.8, 0.8, 0.8, 1.0],
+			FONT_SIZE,
+		);
 	}
 
 	for (i, project) in menu.projects().iter().enumerate() {
@@ -230,7 +251,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		} else {
 			format!("{}   (incompatible project version)", project.project_name)
 		};
-		add_label(frame, vw, vh, rect.centre().x, rect.centre().y, rect.w - 20.0, &label, text_colour, FONT_SIZE * 0.9);
+		add_label(frame, vw, vh, rect.centre(), rect.w - 20.0, &label, text_colour, FONT_SIZE * 0.9);
 
 		frame.buttons.push(UiButton { rect, action: UiAction::SelectProject(i), enabled: true });
 	}
@@ -287,8 +308,7 @@ fn build_about_screen(vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
 		frame,
 		vw,
 		vh,
-		cx,
-		180.0,
+		Vec2::new(cx, 180.0),
 		vw - 160.0,
 		"A Rust port of Sebastian Lague's Digital Logic Sim (rendering + save system + project picker).",
 		[0.85, 0.85, 0.85, 1.0],
@@ -314,26 +334,34 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 		PopupKind::DeleteConfirmation => ("Delete Project?", false),
 		PopupKind::None => ("", false),
 	};
-	add_label(frame, vw, vh, cx, panel_rect.y + 30.0, panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 22.0);
+	add_label(frame, vw, vh, Vec2::new(cx, panel_rect.y + 30.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 22.0);
 
 	if is_name_popup {
 		let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 70.0, panel_w - 60.0, 36.0);
 		frame.geometry.add_rect(to_world(field_rect.centre(), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
 		let shown = if text_input.is_empty() { "|".to_string() } else { format!("{text_input}|") };
-		add_label(frame, vw, vh, field_rect.centre().x, field_rect.centre().y, field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+		add_label(frame, vw, vh, field_rect.centre(), field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
 		frame.text_field = Some(field_rect);
 
 		let valid = menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input);
 		if !valid && !text_input.is_empty() {
-			add_label(frame, vw, vh, cx, panel_rect.y + 118.0, panel_w - 40.0, "Invalid or already-used name", [0.9, 0.35, 0.35, 1.0], 14.0);
+			add_label(
+				frame,
+				vw,
+				vh,
+				Vec2::new(cx, panel_rect.y + 118.0),
+				panel_w - 40.0,
+				"Invalid or already-used name",
+				[0.9, 0.35, 0.35, 1.0],
+				14.0,
+			);
 		}
 	} else if let Some(project) = menu.selected_project() {
 		add_label(
 			frame,
 			vw,
 			vh,
-			cx,
-			panel_rect.y + 100.0,
+			Vec2::new(cx, panel_rect.y + 100.0),
 			panel_w - 40.0,
 			&format!("Delete '{}'? A backup copy will be kept.", project.project_name),
 			[0.9, 0.9, 0.9, 1.0],
@@ -381,10 +409,8 @@ mod tests {
 
 	#[test]
 	fn to_world_round_trips_through_camera_world_to_screen() {
-		// Mirrors the camera setup `src/bin/app.rs` uses for the menu: a
-		// camera centred on the viewport with zoom 1.0, so world space and
-		// screen space coincide (with a y-flip, since world is y-up and
-		// screen is y-down).
+		// Mirrors the camera setup `src/bin/app.rs` uses for the menu: a camera centred on the viewport
+		// with zoom 1.0, so world space and screen space coincide (with a y-flip, since world is y-up and screen is y-down).
 		let vw = 1280.0;
 		let vh = 800.0;
 		let cam = crate::render::camera::Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport: Vec2::new(vw, vh) };
@@ -478,6 +504,57 @@ mod tests {
 		let frame_valid = build(&menu, 1280.0, 800.0, "My New Project", Vec2::ZERO);
 		let confirm = frame_valid.buttons.iter().find(|b| b.action == UiAction::PopupConfirm).unwrap();
 		assert!(confirm.enabled);
+
+		std::fs::remove_dir_all(&root).ok();
+	}
+
+	#[test]
+	fn build_screen_excludes_popup_buttons_and_build_popup_frame_is_popup_only() {
+		// Regression test: a click on the popup must never fall through and hit a main-menu button
+		// underneath it (e.g. the New Project popup's Confirm overlapping the Quit button) -- which
+		// requires the popup's hit-boxes to live in their own frame, separate from the screen's.
+		let root = temp_dir("menu_ui_build_screen_vs_popup");
+		let paths = SavePaths::new(&root);
+		let mut menu = MainMenu::new(paths);
+		menu.choose_new_project();
+
+		let screen_frame = build_screen(&menu, 1280.0, 800.0, Vec2::ZERO);
+		assert!(
+			screen_frame.buttons.iter().all(|b| b.action != UiAction::PopupConfirm && b.action != UiAction::PopupCancel),
+			"build_screen must not include the popup's buttons"
+		);
+		assert!(
+			screen_frame.buttons.iter().any(|b| b.action == UiAction::Quit),
+			"build_screen should still draw the main screen underneath the popup"
+		);
+
+		let popup_frame = build_popup_frame(&menu, 1280.0, 800.0, "My New Project", Vec2::ZERO);
+		assert!(popup_frame.buttons.iter().any(|b| b.action == UiAction::PopupConfirm));
+		assert!(popup_frame.buttons.iter().any(|b| b.action == UiAction::PopupCancel));
+		assert!(popup_frame.buttons.iter().all(|b| b.action != UiAction::Quit), "build_popup_frame must not include the screen's own buttons");
+
+		// Together they must cover exactly what the combined `build` call
+		// produces, so existing (non-layered) callers see no change.
+		let combined = build(&menu, 1280.0, 800.0, "My New Project", Vec2::ZERO);
+		let mut split_actions: Vec<_> = screen_frame.buttons.iter().chain(popup_frame.buttons.iter()).map(|b| b.action.clone()).collect();
+		let mut combined_actions: Vec<_> = combined.buttons.iter().map(|b| b.action.clone()).collect();
+		split_actions.sort_by_key(|a| format!("{a:?}"));
+		combined_actions.sort_by_key(|a| format!("{a:?}"));
+		assert_eq!(split_actions, combined_actions);
+
+		std::fs::remove_dir_all(&root).ok();
+	}
+
+	#[test]
+	fn build_popup_frame_is_empty_when_no_popup_is_open() {
+		let root = temp_dir("menu_ui_build_popup_frame_empty");
+		let paths = SavePaths::new(&root);
+		let menu = MainMenu::new(paths);
+
+		let popup_frame = build_popup_frame(&menu, 1280.0, 800.0, "", Vec2::ZERO);
+		assert!(popup_frame.buttons.is_empty());
+		assert!(popup_frame.geometry.triangles.is_empty());
+		assert!(popup_frame.geometry.labels.is_empty());
 
 		std::fs::remove_dir_all(&root).ok();
 	}

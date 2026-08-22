@@ -1,9 +1,6 @@
-//! 2D pan/zoom camera for the chip canvas.
-//!
-//! This is the "base" piece of `Game/Interaction/CameraController.cs` that
-//! the renderer needs (world <-> screen mapping) without any of the Unity
-//! input plumbing. Kept GPU-free and unit-testable; `render::gpu` consumes
-//! `Camera::view_proj_matrix` as a uniform.
+//! 2D pan/zoom camera for the chip canvas. This is the "base" piece of `Game/Interaction/CameraController.cs`
+//! that the renderer needs (world <-> screen mapping) without any of the Unity input plumbing. Kept
+//! GPU-free and unit-testable; `render::gpu` consumes `Camera::view_proj_matrix` as a uniform.
 
 use crate::structs::Vec2;
 
@@ -21,11 +18,9 @@ pub struct Camera {
 
 impl Camera {
 	pub const MIN_ZOOM: f32 = 0.05;
-	// Chips are sized in grid units of ~0.125, so getting a single small
-	// chip to fill a comfortable fraction of a ~1000px window legitimately
-	// needs zoom in the hundreds-to-low-thousands. The old cap of 40 meant
-	// `fit_to_bounds` was silently clamped and could never actually zoom in
-	// enough to make small chips readable.
+	// Chips are sized in grid units of ~0.125, so getting a single small chip to fill a comfortable
+	// fraction of a ~1000px window legitimately needs zoom in the hundreds-to-low-thousands. The old
+	// cap of 40 meant `fit_to_bounds` was silently clamped and could never make small chips readable.
 	pub const MAX_ZOOM: f32 = 4096.0;
 
 	pub fn new(viewport: Vec2) -> Self {

@@ -36,10 +36,9 @@ fn parses_not_chip_structure_correctly() {
 
 #[test]
 fn parses_wire_bend_points_from_saved_points_stripping_placeholder_ends() {
-	// `CELL.json` (in the GOL fixture project) has a wire whose saved
-	// `Points` is [source-endpoint(0,0 placeholder), 4 real bends,
-	// target-endpoint(0,0 placeholder)] -- the interior points should
-	// survive parsing, and the placeholder first/last entries should not.
+	// `CELL.json` (in the GOL fixture project) has a wire whose saved `Points` is [source placeholder,
+	// 4 real bends, target placeholder] -- the interior points should survive parsing, and the
+	// placeholder first/last entries should not.
 	let (_project, library, errors) = load_chip_library_from_dir(&gol_fixture_dir().join("Chips")).map(|(lib, errs)| ((), lib, errs)).unwrap();
 	assert!(errors.is_empty(), "parse errors: {errors:?}");
 

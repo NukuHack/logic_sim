@@ -1,18 +1,8 @@
-//! Save/load system: project + app-settings persistence, ported from
-//! `DLS.SaveSystem` (`Saver`, `Loader`, `SavePaths`, `SaveUtils`,
-//! `UpgradeHelper`) plus the persistence-relevant parts of `DLS.Game.Main`
-//! and `DLS.Game.BuiltinCollectionCreator`.
-//!
-//! Layout:
-//! - [`paths`] -- where things live on disk (`SavePaths`)
-//! - [`version`] -- the `major.minor.patch` version type used for
-//!   compatibility checks (`Version`, `DLS_VERSION`, ...)
-//! - [`util`] -- filename validation / unique-naming / directory-copy helpers
-//! - [`timestamp`] -- ISO-8601 timestamp formatting for save metadata
-//! - [`defaults`] -- default starred list / chip collections for new projects
-//! - [`project`] -- the in-memory `Project` (description + chip library)
-//! - [`saver`] / [`loader`] -- read/write project & settings files
-//! - [`orchestration`] -- create-or-load-project + version compatibility
+//! Save/load system: project + app-settings persistence, ported from `DLS.SaveSystem` (`Saver`,
+//! `Loader`, `SavePaths`, `SaveUtils`, `UpgradeHelper`) plus the persistence-relevant parts of
+//! `DLS.Game.Main` and `DLS.Game.BuiltinCollectionCreator`. Submodules cover where things live on
+//! disk, the save-format compatibility version type, filename/timestamp helpers, project defaults,
+//! the in-memory `Project`, file read/write, and create-or-load-project orchestration.
 
 mod defaults;
 mod loader;

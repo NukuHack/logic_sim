@@ -1,33 +1,8 @@
-//! The actual, integrated Digital Logic Sim app: `cargo run` opens a
-//! project-picker startup screen (same on-disk layout and location as the
-//! original Unity build -- see `SavePaths::unity_persistent_data_dir`),
-//! lets you open an existing project or create a new one, then switches
-//! the *same window* over to the chip viewer (`render::gpu` + the scene
-//! builder) for whichever project you picked.
-//!
-//! This is the "host app" the doc comments in `ui_menu` (headless menu
-//! logic) and `src/bin/viewer.rs` (viewer-only glue) describe as needing
-//! to exist: it drives `MainMenu` from real mouse/keyboard events via
-//! `render::menu_ui`, and reuses the exact same load/build/render
-//! sequence `viewer.rs` uses once a project is opened.
-//!
-//! Usage:
-//! ```text
-//! cargo run                       # opens the picker at the default (Unity-compatible) save location
-//! cargo run -- <path-to-data-dir> # opens the picker at a custom save-data root instead
-//! ```
-//! The `<path-to-data-dir>` is the *root* that contains `Projects/`, not a
-//! project directory itself (that distinction is what lets the picker list
-//! more than one project) -- if you want to jump straight into viewing one
-//! project non-interactively, use `cargo run --bin viewer -- <project-dir>`
-//! instead.
-//!
-//! Like `viewer.rs`, this needs a real GPU adapter + window/display server
-//! to run, so it can't be exercised by `cargo test` in a headless sandbox.
-//! Its non-GPU pieces (`ui_menu::MainMenu`, `render::menu_ui`) are
-//! independently unit-tested and drive this file's control flow, so a bug
-//! here is most likely in this glue rather than in the tested state
-//! machine underneath it.
+//! The actual, integrated Digital Logic Sim app: `cargo run` opens a project-picker startup screen
+//! (same on-disk layout and location as the original Unity build), lets you open an existing project
+//! or create a new one, then switches the same window over to the chip viewer for whichever project
+//! you picked. It drives `MainMenu` from real mouse/keyboard events via `render::menu_ui`, and reuses
+//! the same load/build/render sequence `viewer.rs` uses once a project is opened. Needs a real GPU.
 
 use logic_sim::json::ProjectDescription;
 use logic_sim::render::camera::Camera;
@@ -395,10 +370,8 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 						v.library.add(pristine);
 					}
 					Err(_) => {
-						// No on-disk file for the old identity (it was
-						// never actually saved under that name to begin
-						// with) -- nothing to revert to, so just leave
-						// its in-memory draft as it was.
+						// No on-disk file for the old identity (it was never actually saved under that
+						// name to begin with) -- nothing to revert to, so leave the in-memory draft as is.
 					}
 				}
 			}
@@ -764,15 +737,9 @@ fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<String>) {
 		NamingPurpose::ConfigurePulseDuration(id) => match trimmed.parse::<u32>() {
 			Ok(ticks) => {
 				if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
-					// `Simulator::process_builtin_chip`'s `Pulse` arm indexes
-					// `internal_state` at three fixed slots -- `[DURATION,
-					// TICKS_REMAINING, INPUT_OLD]` (see its own local
-					// consts) -- not just the duration alone. Changing the
-					// configured length also resets any in-flight pulse
-					// (`TICKS_REMAINING` back to 0) and forgets the last
-					// sampled input edge (`INPUT_OLD` back to 0), which is
-					// the only sane thing to do since the running state was
-					// tied to the *old* duration anyway.
+					// `Simulator::process_builtin_chip`'s `Pulse` arm indexes `internal_state` at three
+					// fixed slots -- `[DURATION, TICKS_REMAINING, INPUT_OLD]`. Changing the configured
+					// length also resets any in-flight pulse and forgets the last sampled input edge.
 					sub.internal_data = Some(vec![ticks, 0, 0]);
 				}
 				v.rebuild_sim();
@@ -911,10 +878,8 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			v.overlay = Overlay::None;
 		}
 		EditorAction::SelectChip(name) => {
-			// Left click in the library only highlights the row now --
-			// it no longer opens the chip (see `open_chip_by_name`'s
-			// docs). Right-clicking the same row instead pops up a
-			// small "Open" menu that does the actual switch.
+			// Left click in the library only highlights the row now -- it no longer opens the chip.
+			// Right-clicking the same row instead pops up a small "Open" menu that does the actual switch.
 			v.selected_library_chip = Some(name);
 		}
 		EditorAction::ToggleCollection(i) => {
@@ -976,6 +941,10 @@ struct App {
 	// next mouse click (immediate-mode UI: layout is recomputed every
 	// frame, so "what did I just draw" is also "what can be clicked").
 	last_menu_buttons: Vec<menu_ui::UiButton>,
+	// Hit-boxes for the menu's popup (rename/new-project/delete-confirm dialog), if one is open, from
+	// the same last-drawn frame. Kept separate from `last_menu_buttons` -- and always checked first --
+	// so a click can't be mis-attributed to a screen button underneath the popup.
+	last_popup_buttons: Vec<menu_ui::UiButton>,
 }
 
 impl App {
@@ -993,6 +962,7 @@ impl App {
 			mouse_pos: Vec2::ZERO,
 			modifiers: ModifiersState::empty(),
 			last_menu_buttons: Vec::new(),
+			last_popup_buttons: Vec::new(),
 		}
 	}
 
@@ -1020,20 +990,15 @@ impl App {
 				}
 				register_all_builtins(&mut library);
 
-				// Every project opens onto a blank, unsaved chip rather
-				// than jumping back into whichever custom chip happens
-				// to be "last" (or biggest) -- see `unique_new_chip_name`
-				// and `start_new_chip`'s docs for why this mirrors
-				// Ctrl+N rather than remembering a chip to reopen.
+				// Every project opens onto a blank, unsaved chip rather than jumping back into whichever
+				// custom chip happens to be "last" (or biggest) -- mirrors Ctrl+N rather than remembering a chip to reopen.
 				let root_chip_name = unique_new_chip_name(&library);
 				library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
 
 				let root_desc = library.get(&root_chip_name).clone();
 				let mut sim = Simulator::build(&root_desc, &library);
-				// In case modifier keys are already held down (e.g. Alt from
-				// the menu action that opened this project) by the time the
-				// viewer appears, rather than only picking them up on the
-				// next change.
+				// In case modifier keys are already held down (e.g. Alt from the menu action that
+				// opened this project) by the time the viewer appears, rather than only picking them up on the next change.
 				sim.key_modifiers = encode_modifiers(self.modifiers);
 				let show_grid = project_desc.prefs_grid_display_mode == 1;
 
@@ -1290,6 +1255,17 @@ impl App {
 		match &mut self.screen {
 			Screen::Menu => {
 				if btn_state == ElementState::Pressed {
+					// The popup (if open) is the top-most layer, so it gets first refusal at every click.
+					// This must check `last_popup_buttons` in isolation and return either way, or a
+					// click landing where a popup button overlaps a screen button could fall through.
+					if self.menu.popup() != PopupKind::None {
+						let hit = self.last_popup_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
+						if let Some(action) = hit {
+							self.handle_menu_action(action, event_loop);
+						}
+						return;
+					}
+
 					let hit = self.last_menu_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
 					if let Some(action) = hit {
 						self.handle_menu_action(action, event_loop);
@@ -1297,12 +1273,9 @@ impl App {
 				}
 			}
 			Screen::Viewer(v) => {
-				// The context menu is always the top-most layer (see
-				// `render::context_menu`'s module docs), so it gets first
-				// refusal at every click -- a left click either picks one
-				// of its rows or (landing anywhere else) just closes it,
-				// either way swallowing the click rather than letting it
-				// reach the overlay/canvas underneath.
+				// The context menu is always the top-most layer, so it gets first refusal at every
+				// click -- a left click either picks one of its rows or closes it, either way
+				// swallowing the click rather than letting it reach the overlay/canvas underneath.
 				if btn_state == ElementState::Pressed && v.context_menu.is_some() {
 					let hit = v.last_context_menu_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).map(|b| b.id.clone());
 					let target = v.context_menu.take().map(|s| s.target);
@@ -1427,11 +1400,8 @@ impl App {
 		// doc comment).
 		{
 			let root_desc = v.library.get(&root_chip_name);
-			// Fixed screen-pixel tolerance converted to world units, so
-			// the click target stays the same apparent size regardless
-			// of current zoom -- matches how `hit_test_input_dev_pin_bit`
-			// and friends are always called with world-space geometry
-			// sized for whatever the camera happens to be doing.
+			// Fixed screen-pixel tolerance converted to world units, so the click target stays the
+			// same apparent size regardless of current zoom.
 			let max_dist = 6.0 / v.camera.zoom.max(0.0001);
 			if let Some(wire_idx) = hit_test_wire(root_desc, &v.library, world_pos, max_dist) {
 				let chip = v.library.get_mut(&root_chip_name);
@@ -1457,11 +1427,9 @@ impl App {
 	}
 
 	fn handle_key_event(&mut self, event: winit::event::KeyEvent, event_loop: &ActiveEventLoop) {
-		// Feed the Key chip's held-key set on both press *and* release (not
-		// just press, unlike the shortcut handling below) since it needs to
-		// know when a key stops being held, not just when it starts.
-		// The chip stores/compares its target letter in capitals, so a
-		// basic lowercase 'a' keypress must also register as 'A' here.
+		// Feed the Key chip's held-key set on both press and release (not just press, unlike the
+		// shortcut handling below) since it needs to know when a key stops being held. The chip
+		// stores/compares its target letter in capitals, so lowercase 'a' must register as 'A' here.
 		if let Key::Character(s) = &event.logical_key {
 			if let Screen::Viewer(v) = &mut self.screen {
 				if let Some(c) = s.chars().next() {
@@ -1527,10 +1495,8 @@ impl App {
 				Key::Named(NamedKey::Enter) if v.overlay == Overlay::KeySelect && v.overlay_key_choice.is_some() => {
 					confirm_key_select_popup(v, &mut self.status);
 				}
-				// Enter only auto-confirms the *unambiguous* save-chip
-				// modes (a single "Save"/"Replace" action) -- when both
-				// "Save As" and "Rename" are on offer, that choice always
-				// needs an explicit click (see `save_chip_mode`'s docs).
+				// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"
+				// action) -- when both "Save As" and "Rename" are on offer, that choice needs a click.
 				Key::Named(NamedKey::Enter)
 					if v.overlay == Overlay::SaveChip && save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
 				{
@@ -1607,27 +1573,32 @@ impl App {
 	fn redraw(&mut self, event_loop: &ActiveEventLoop) {
 		let (vw, vh) = self.viewport.to_tuple();
 
-		// Layers are drawn back-to-front, each as its own fully-submitted
-		// pass (see `Renderer::render`'s doc comment) -- so a later
-		// layer's triangles reliably paint over an earlier layer's text,
-		// not just its shapes, and the context menu (added last, if
-		// open) is genuinely the top-most thing on screen rather than
-		// merely "last in one shared vertex/label list".
-		//   0: world      -- grid + chip scene (menu screen: the menu itself)
-		//   1: ui_overlay -- library/search/preferences/naming/key-select
-		//   2: context_menu -- right-click popup, always top-most
+		// Layers are drawn back-to-front, each as its own fully-submitted pass, so a later layer's
+		// triangles paint over an earlier layer's text: 0 world (grid + chip scene), 1 ui_overlay
+		// (library/search/preferences/naming/key-select), 2 context_menu (right-click popup, top-most).
 		let world_layer;
 		let mut ui_overlay_layer = SceneGeometry::default();
 		let mut context_menu_layer = SceneGeometry::default();
 
 		match &mut self.screen {
 			Screen::Menu => {
-				let mut frame = menu_ui::build(&self.menu, vw, vh, &self.text_input, self.mouse_pos);
+				let mut frame = menu_ui::build_screen(&self.menu, vw, vh, self.mouse_pos);
 				if let Some(msg) = &self.status {
 					frame.geometry.labels.push(menu_ui::status_label(vw, vh, msg));
 				}
 				self.last_menu_buttons = frame.buttons.clone();
 				world_layer = frame.geometry;
+
+				// Popup (rename/new-project/delete-confirm), if open, is its own layer: guarantees its
+				// background and text both composite on top of the screen underneath, rather than
+				// sharing one pass with it, and lets clicks be tested against it in isolation.
+				if self.menu.popup() != PopupKind::None {
+					let popup_frame = menu_ui::build_popup_frame(&self.menu, vw, vh, &self.text_input, self.mouse_pos);
+					self.last_popup_buttons = popup_frame.buttons;
+					ui_overlay_layer = popup_frame.geometry;
+				} else {
+					self.last_popup_buttons.clear();
+				}
 			}
 			Screen::Viewer(v) => {
 				let root_desc = v.library.get(&v.root_chip_name);
@@ -1656,15 +1627,9 @@ impl App {
 				scene.labels.extend(chip_scene.labels);
 				world_layer = scene;
 
-				// Overlays are laid out in screen-pixel space by
-				// `editor_ui` (see `pin_overlay_to_screen`'s doc comment)
-				// -- remap that into `v.camera`'s current world space so
-				// they stay pinned to the screen regardless of pan/zoom.
-				// Kept in its own layer (rather than appended onto
-				// `world_layer`) so its background triangles are
-				// guaranteed to be drawn -- and to composite -- *after*
-				// the whole chip scene, including chip text, has already
-				// been fully painted.
+				// Overlays are laid out in screen-pixel space by `editor_ui` -- remap that into
+				// `v.camera`'s current world space so they stay pinned to the screen regardless of
+				// pan/zoom. Kept in its own layer so its background is drawn after the whole chip scene.
 				if v.overlay != Overlay::None {
 					let overlay_frame = match v.overlay {
 						Overlay::Library => {
@@ -1707,10 +1672,8 @@ impl App {
 					v.last_overlay_buttons.clear();
 				}
 
-				// Right-click popup: the top-most layer of all, drawn
-				// (and thus composited on top of) the world *and* the ui
-				// overlay layers above -- see `handle_right_mouse_button`
-				// for how `v.context_menu` gets populated.
+				// Right-click popup: the top-most layer of all, drawn (and composited) on top of the
+				// world and the ui overlay layers above.
 				if let Some(state) = &v.context_menu {
 					let menu_frame = context_menu::build_context_menu(state, vw, vh, self.mouse_pos);
 					v.last_context_menu_buttons = menu_frame.buttons;

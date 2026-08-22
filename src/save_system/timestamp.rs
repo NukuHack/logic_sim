@@ -1,15 +1,8 @@
-//! Minimal ISO-8601 timestamp formatting, used to stamp `CreationTime` /
-//! `LastSaveTime` on `ProjectDescription`. Both fields are plain strings as
-//! far as this port is concerned (nothing here parses them back into a
-//! structured date), so a small hand-rolled UTC formatter is enough and
-//! avoids pulling in `chrono` or `time` as a dependency.
-//!
-//! Note on compatibility: the original C# game writes local time with a
-//! UTC offset (e.g. `2025-05-10T19:41:18.761+02:00`). This port writes UTC
-//! instead (`...Z`) since Rust's standard library has no portable, safe way
-//! to read the local UTC offset. Existing offset-suffixed timestamps from
-//! C#-saved files are read back just fine (they're opaque strings here) --
-//! only newly-written timestamps differ in which offset they use.
+//! Minimal ISO-8601 timestamp formatting, used to stamp `CreationTime` / `LastSaveTime` on
+//! `ProjectDescription`. Both fields are plain strings as far as this port is concerned, so a small
+//! hand-rolled UTC formatter is enough and avoids pulling in `chrono` or `time` as a dependency.
+//! Note on compatibility: the original writes local time with a UTC offset; this port writes UTC
+//! instead, since Rust's standard library has no portable, safe way to read the local offset.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

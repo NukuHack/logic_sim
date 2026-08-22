@@ -1,10 +1,7 @@
-//! Builds drawable geometry for one "view" of a chip (i.e. what the editor
-//! shows when you open a custom chip: its subchips, each subchip's pins,
-//! and the wires between them). This is the scene-graph half of the
-//! renderer -- pure data in, triangles out, no wgpu types -- so it can be
-//! unit tested without a GPU.
-//!
-//! Mirrors (a first-pass subset of) `DLS.Graphics.World.DevSceneDrawer`.
+//! Builds drawable geometry for one "view" of a chip (i.e. what the editor shows when you open a
+//! custom chip: its subchips, each subchip's pins, and the wires between them). This is the
+//! scene-graph half of the renderer -- pure data in, triangles out, no wgpu types -- so it can be
+//! unit tested without a GPU. Mirrors (a first-pass subset of) `DLS.Graphics.World.DevSceneDrawer`.
 
 use crate::description::Color;
 use crate::description::{ChipDescription, ChipLibrary, ChipType, NameLocation, PinBitCount, WireConnectionType, WireDescription};
@@ -291,17 +288,9 @@ pub fn point_in_rounded_rect(point: Vec2, centre: Vec2, size: Vec2, radius: f32,
 	if dx.abs() > hw || dy.abs() > hh {
 		return false;
 	}
-	// A point only falls within a rounded corner's own carved-out region
-	// when it's *simultaneously* past the corner threshold on both axes
-	// (dx AND dy, not either alone) -- e.g. a point sitting right at the
-	// vertical centre of a rounded-right edge (dy near 0, dx near hw) is
-	// just on the flat middle of that edge, not anywhere near the actual
-	// arc, and must count as inside without ever touching the circle
-	// test below. Gating on dx alone (as an earlier version of this
-	// function did) wrongly treated that entire vertical strip -- most of
-	// a pill's flat sides -- as if it were corner territory, and then
-	// rejected it for sitting far from the arc centre; that's what made
-	// hover hit-testing miss large swathes of any non-circle pin shape.
+	// A point only falls within a rounded corner's own carved-out region when it's simultaneously past
+	// the corner threshold on both axes (dx AND dy, not either alone) -- gating on dx alone wrongly
+	// treats a pill's whole flat side as corner territory, breaking hover hit-testing on those points.
 	let in_dx_corner = dx.abs() > hw - r;
 	let in_dy_corner = dy.abs() > hh - r;
 	if !(in_dx_corner && in_dy_corner) {
@@ -379,15 +368,9 @@ pub fn place_sub_chips<'a>(chip: &ChipDescription, library: &'a ChipLibrary) -> 
 		let input_bits: Vec<PinBitCount> = desc.input_pins.iter().map(|p| p.bit_count).collect();
 		let output_bits: Vec<PinBitCount> = desc.output_pins.iter().map(|p| p.bit_count).collect();
 
-		// Prefer the size actually saved on disk (`ChipDescription::size`,
-		// from the JSON `Size` field) -- the original computes this via
-		// `CalculateMinChipSize` with real font metrics, so it's more
-		// accurate than anything we can derive here. Only fall back to
-		// the pins+name-estimate heuristic when there's nothing saved
-		// (size == (0,0)), e.g. a `ChipDescription` built up in code
-		// (most builtins) rather than loaded from a project file. See
-		// `ChipDescription::size` and `layout::calculate_min_chip_size`
-		// docs for why either path matters for labels actually drawing.
+		// Prefer the size actually saved on disk (`ChipDescription::size`) -- computed by the original
+		// via `CalculateMinChipSize` with real font metrics, more accurate than anything derivable here.
+		// Fall back to the pins+name-estimate heuristic only when nothing is saved (size == (0,0)).
 		let size = if desc.size.x > 0.0 && desc.size.y > 0.0 {
 			Vec2::new(desc.size.x, desc.size.y)
 		} else {
@@ -553,25 +536,9 @@ pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dy
 	// land on a subchip (as opposed to one of this chip's own dev-pins).
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 
-	// Draw order is a simple three-layer stack, back to front (this
-	// renderer has no depth buffer, so draw order *is* z-order -- see
-	// `build_grid`'s docs for the same point about the background grid):
-	// wires at the bottom, pins in the middle, component bodies (+ their
-	// name labels) on top. This keeps a component's body from ever being
-	// occluded by a wire or pin that happens to be drawn after it, and
-	// keeps pins sitting visibly on top of the wires that connect to them.
-	//
-	// Name labels (for both pins and components) are hover-gated: they're
-	// only added to `geo.labels` for whichever single thing (if any)
-	// `hover_world_pos` currently lands on, using the exact same shape
-	// each thing is actually drawn with -- a plain circle for a 1-bit
-	// pin, a "pill" for a wider pin (`point_in_rounded_rect`/
-	// `point_in_circle`, mirroring `draw_pin_shape`'s own branching), a
-	// dev-pin's partially-rounded body, or a subchip's plain rect body --
-	// rather than a fixed always-on label or an approximate hit-test that
-	// doesn't match what's on screen. Pins are checked before components,
-	// so hovering a pin sitting on a component's edge shows the pin's
-	// name, not the component's.
+	// Draw order is a simple three-layer stack, back to front (no depth buffer, so draw order is z-order):
+	// wires, then pins, then component bodies + name labels on top. Name labels are hover-gated to
+	// whichever thing `hover_world_pos` lands on; pins are checked first so an edge-hover shows the pin.
 	draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
 	let hovered_pin_name = draw_pins(&mut geo, chip, &placed, pin_state, hover_world_pos);
 	draw_components(&mut geo, &placed, pin_state, hover_world_pos, hovered_pin_name.is_some());
@@ -606,39 +573,17 @@ fn draw_wires(
 	owner_to_placed: &HashMap<i32, usize>,
 	pin_state: &dyn PinStateLookup,
 ) {
-	// Resolve each wire's two endpoints to world positions and draw a
-	// polyline through any player-authored bend points between them (saved
-	// `Points`, minus its first/last entries -- see `WireDescription::points`).
-	// No bend points just means one straight segment.
-	//
-	// An endpoint is resolved one of two ways, per `wire.connection_type`:
-	//  - `ToPins` (the common case): straight from the pin's own resolved
-	//    world position, as before.
-	//  - `ToWireSource`/`ToWireTarget`: this end is actually a tap on
-	//    *another* wire's line rather than a real pin location, so it's
-	//    resolved by re-projecting the cached attachment point onto that
-	//    other wire's segment (`resolve_wire_endpoint`/`resolve_wire_point`
-	//    below, mirroring `WireInstance.GetAttachmentPoint`). Using the raw
-	//    pin position here (the old behaviour) desyncs from the
-	//    player-authored bend points, which assume the wire starts/ends at
-	//    the tap point, not at the underlying pin -- that mismatch is what
-	//    produced visibly wrong bends for any wire tapped off another wire.
-	//
-	// `wire_point_cache` memoizes resolved endpoints across the whole
-	// chip's wire list for this build: a single wire can be the tap target
-	// for several others, and resolving a tapped chain revisits earlier
-	// wires' endpoints.
+	// Resolve each wire's two endpoints to world positions and draw a polyline through any
+	// player-authored bend points. `ToPins` resolves straight from the pin's world position;
+	// `ToWireSource`/`ToWireTarget` re-projects onto the other wire's segment instead, to stay in sync with authored bends.
 	let mut wire_point_cache: WirePointCache = HashMap::new();
 	for (wire_idx, wire) in chip.wires.iter().enumerate() {
 		let src = resolve_wire_endpoint(chip, placed, owner_to_placed, &chip.wires, wire_idx, false, &mut wire_point_cache, 0);
 		let dst = resolve_wire_endpoint(chip, placed, owner_to_placed, &chip.wires, wire_idx, true, &mut wire_point_cache, 0);
 
 		if let (Some(src), Some(dst)) = (src, dst) {
-			// Colour/bit-count always trace back to the wire's real
-			// originating pin (`source_pin_address`), regardless of
-			// `connection_type` -- a wire tapped off another wire still
-			// carries that other wire's underlying signal, so this
-			// resolution doesn't need to change for the bend fix above.
+			// Colour/bit-count always trace back to the wire's real originating pin, regardless of
+			// `connection_type` -- a wire tapped off another wire still carries that wire's signal.
 			let colour = resolve_pin_colour(chip, placed, owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
 			let bit_count =
 				resolve_pin_bit_count(chip, placed, owner_to_placed, wire.source_pin_address.pin_owner_id, wire.source_pin_address.pin_id);
@@ -714,13 +659,9 @@ fn draw_pins(
 		}
 	}
 
-	// This chip's own boundary dev-pins (`chip.input_pins`/`output_pins`),
-	// at their real saved position -- a partially rounded rectangle
-	// (rounded on the side facing outward, away from the chip; square on
-	// the side facing in, toward where a wire attaches), filled with the
-	// pin's live state/palette colour and outlined in a grey-ish border,
-	// so they read as visually distinct from a regular subchip pin's
-	// plain circle. Mirrors `layout::dev_pin_body_size`'s docs.
+	// This chip's own boundary dev-pins, at their real saved position -- a partially rounded rectangle
+	// (rounded outward, square where a wire attaches), filled with the pin's live colour and outlined,
+	// so they read as visually distinct from a regular subchip pin's plain circle.
 	for pin in &chip.input_pins {
 		draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), true);
 		if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, true)) {
@@ -760,12 +701,9 @@ fn draw_components(
 	pin_already_hovered: bool,
 ) {
 	for sub in placed {
-		// An LED's body *is* its indicator: tint it with the saved
-		// `InternalData[0]` colour (same palette-index encoding as a pin's
-		// `Colour` field), lit/dimmed/disconnected exactly like a wire of
-		// that colour would be, driven by the live state of its one input
-		// pin. Falls back to the ordinary body-colour handling below if
-		// this instance has no saved colour for some reason.
+		// An LED's body is its indicator: tint it with the saved `InternalData[0]` colour, lit/dimmed/
+		// disconnected like a wire of that colour, driven by the live state of its one input pin.
+		// Falls back to the ordinary body-colour handling below if this instance has no saved colour.
 		let led_colour = (sub.desc.chip_type == ChipType::DisplayLed).then(|| sub.internal_data.first().copied()).flatten().map(|idx| {
 			let colour = Color::from_int(idx as i32);
 			let logic = sub.desc.input_pins.first().and_then(|p| pin_state.logic_state(sub.id, p.id)).unwrap_or(LogicState::Low);
@@ -777,13 +715,9 @@ fn draw_components(
 		// chip with the same flat grey.
 		let body_colour = led_colour.unwrap_or_else(|| if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL });
 
-		// 7-segment/RGB/dot displays draw their own live pixel/segment
-		// content in place of the plain body rect (their `NameLocation` is
-		// `Hidden` precisely because the body *is* the visualisation --
-		// see the doc comment above). `DisplayLed` doesn't need a branch
-		// here: its "display" is just the whole tinted body rect already
-		// produced above, so the plain `add_rect` below is exactly right
-		// for it too.
+		// 7-segment/RGB/dot displays draw their own live pixel/segment content in place of the plain
+		// body rect (`NameLocation` is `Hidden` because the body is the visualisation). `DisplayLed`
+		// needs no branch here: its "display" is just the tinted body rect already produced above.
 		match sub.desc.chip_type {
 			ChipType::SevenSegmentDisplay => draw_display_seven_segment(geo, sub, pin_state),
 			ChipType::DisplayRgb => draw_display_pixel_grid(geo, sub, pin_state, true),
@@ -791,15 +725,9 @@ fn draw_components(
 			_ => geo.add_rect(sub.centre, sub.size, body_colour),
 		}
 
-		// Draw this subchip's name label, unless explicitly hidden (e.g.
-		// display/bus/pin chips, which save NameLocation = Hidden since
-		// their body is the visualisation). Mirrors
-		// `DevSceneDrawer.DrawSubChip`'s "if (... desc.NameLocation !=
-		// NameDisplayLocation.Hidden)" gate -- except for the Key chip,
-		// which forces its label to show regardless of the saved (always
-		// Hidden) `NameLocation`: its body has no other visualisation, so
-		// the bound key's letter (from saved `InternalData[0]`, an ASCII
-		// code -- capitalised, e.g. `A` = 65) is shown in its place.
+		// Draw this subchip's name label, unless explicitly hidden (e.g. display/bus/pin chips, whose
+		// body is the visualisation) -- except the Key chip, which forces its label to show regardless:
+		// the bound key's letter (from saved `InternalData[0]`, capitalised ASCII) is its only visualisation.
 		let key_letter =
 			(sub.desc.chip_type == ChipType::Key).then(|| sub.internal_data.first().copied()).flatten().map(|code| (code as u8 as char).to_string());
 
@@ -859,12 +787,9 @@ fn draw_display_seven_segment(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_
 	const DISPLAY_INSET_FRAC: f32 = 0.2;
 
 	let centre = sub.centre;
-	// The body is sized to fit this display (see `BuiltinChipCreator`'s
-	// 7-seg sizing), so derive the display's own "scale" from whichever
-	// body dimension is the tighter fit for the fixed 1:1.75 aspect,
-	// rather than assuming a saved `DisplayDescription::Scale` (which this
-	// port's builtin chip descriptions don't carry -- see `builtins.rs`'s
-	// module doc on dropping editor-only sizing metadata).
+	// The body is sized to fit this display, so derive the display's own "scale" from whichever body
+	// dimension is the tighter fit for the fixed 1:1.75 aspect, rather than assuming a saved
+	// `DisplayDescription::Scale` (which this port's builtin chip descriptions don't carry).
 	let scale = sub.size.x.min(sub.size.y / TARGET_HEIGHT_ASPECT);
 
 	let bounds_width = scale;
@@ -1363,10 +1288,9 @@ fn grid_line_skip(screen_half_height: f32) -> i32 {
 pub fn build_grid(camera: &Camera, colour: Rgba) -> SceneGeometry {
 	let mut geo = SceneGeometry::default();
 
-	// World-space half-extents of the current view -- equivalent to the
-	// original's `cam.orthographicSize` (half-height) and
-	// `orthographicSize * aspect` (half-width); this camera already folds
-	// aspect ratio into `viewport_width`/`viewport_height` directly.
+	// World-space half-extents of the current view -- equivalent to the original's `orthographicSize`
+	// (half-height) and `orthographicSize * aspect` (half-width); this camera already folds aspect
+	// ratio into `viewport_width`/`viewport_height` directly.
 	let screen_half_width = camera.viewport.x / (2.0 * camera.zoom);
 	let screen_half_height = camera.viewport.y / (2.0 * camera.zoom);
 	let world_centre = camera.position;
@@ -1382,30 +1306,22 @@ pub fn build_grid(camera: &Camera, colour: Rgba) -> SceneGeometry {
 
 	let skip = grid_line_skip(screen_half_height);
 
-	// World-space thickness widened, if needed, so lines never render
-	// thinner than ~1.5 screen pixels -- see `layout::grid_line_thickness`
-	// docs for why a flat, non-antialiased quad needs this to avoid a
-	// patchy/inconsistent-looking grid once zoomed out.
+	// World-space thickness widened, if needed, so lines never render thinner than ~1.5 screen pixels
+	// -- see `layout::grid_line_thickness` docs for why a flat, non-antialiased quad needs this to
+	// avoid a patchy/inconsistent-looking grid once zoomed out.
 	let thickness = layout::grid_line_thickness(camera.zoom);
 
-	// `left`/`right`/`top`/`bottom` are already exact multiples of
-	// `GRID_SIZE` (0.125, exactly representable in binary floating point),
-	// so converting to integer grid indices up front is exact -- avoids the
-	// float-accumulation drift a `for px = left; px < right; px += GRID_SIZE`
-	// loop would risk over many iterations at high zoom.
+	// `left`/`right`/`top`/`bottom` are already exact multiples of `GRID_SIZE` (0.125, exactly
+	// representable in binary floating point), so converting to integer grid indices up front is
+	// exact -- avoids the float-accumulation drift a `+= GRID_SIZE` loop would risk at high zoom.
 	let left_i = (left / layout::GRID_SIZE).round() as i32;
 	let right_i = (right / layout::GRID_SIZE).round() as i32;
 	let bottom_i = (bottom / layout::GRID_SIZE).round() as i32;
 	let top_i = (top / layout::GRID_SIZE).round() as i32;
 
-	// Defensive cap: a degenerate camera (e.g. near-zero zoom, or a
-	// viewport of 0 before the window's first real resize event lands)
-	// can otherwise blow these bounds out to i32::MIN..i32::MAX, turning
-	// this into a multi-billion-iteration loop that grows `geo.triangles`
-	// without limit -- which can hang the app for a very long time and,
-	// once it exhausts memory, crash outright (rather than just drawing
-	// one bad-looking frame of grid lines). No real view ever needs more
-	// than a few thousand grid lines in either direction.
+	// Defensive cap: a degenerate camera (near-zero zoom, or a 0 viewport before the first resize
+	// event) can otherwise blow these bounds out to i32::MIN..i32::MAX, turning this into a
+	// multi-billion-iteration loop that hangs the app and exhausts memory. No real view needs more.
 	const MAX_GRID_LINES_PER_AXIS: i32 = 20_000;
 	let left_i = left_i.max(right_i.saturating_sub(MAX_GRID_LINES_PER_AXIS));
 	let bottom_i = bottom_i.max(top_i.saturating_sub(MAX_GRID_LINES_PER_AXIS));
@@ -1532,13 +1448,9 @@ fn resolve_pin_position(
 		return None;
 	}
 
-	// Case 2: owner refers to one of this chip's own boundary dev-pins
-	// (owner id == the pin's own global id, single local pin id 0). Unlike
-	// a subchip's pins (whose position is *derived* from the subchip's
-	// body + default pin layout), a dev-pin's position is authoritative
-	// and saved directly on the `PinDescription` itself -- see the
-	// `position` field's docs. Use it as-is instead of fabricating a
-	// stacked placeholder layout.
+	// Case 2: owner refers to one of this chip's own boundary dev-pins (owner id == the pin's own
+	// global id, single local pin id 0). Unlike a subchip's pins (derived from body + default pin
+	// layout), a dev-pin's position is authoritative and saved directly on `PinDescription` -- use as-is.
 	let _ = pin_id;
 	let _ = is_input_side;
 	if let Some(p) = chip.input_pins.iter().find(|p| p.id == owner_id) {
@@ -1631,10 +1543,9 @@ mod tests {
 
 	#[test]
 	fn build_scene_label_width_is_wide_enough_to_fit_its_own_text() {
-		// The regression this guards against: a `TextLabel.width` narrower
-		// than the text it holds gets clipped down to a sliver by the
-		// renderer's text bounds and is effectively invisible on screen,
-		// even though a `TextLabel` was technically produced.
+		// The regression this guards against: a `TextLabel.width` narrower than the text it holds
+		// gets clipped down to a sliver by the renderer's text bounds, effectively invisible on
+		// screen even though a `TextLabel` was technically produced.
 		let mut lib = ChipLibrary::new();
 		let mut wide_named = ChipDescription::new("Full Adder", ChipType::Custom);
 		wide_named.input_pins.push(PinDescription::new("A", 0, PinBitCount::Bit1));
@@ -1735,11 +1646,9 @@ mod tests {
 		let mut lib = ChipLibrary::new();
 		crate::builtins::register_all(&mut lib);
 
-		// A tiny custom chip: one NAND subchip, unconnected inputs (so both
-		// read HIGH via the sim's disconnected-pin convention) feeding its
-		// output pin. We just need *a* live SimChip id to query through
-		// `find_pin`, not full end-to-end signal correctness (that's
-		// sim.rs's job, already covered by its own tests).
+		// A tiny custom chip: one NAND subchip, unconnected inputs (so both read HIGH via the sim's
+		// disconnected-pin convention) feeding its output pin. We just need a live SimChip id to
+		// query through `find_pin`, not full end-to-end signal correctness (that's sim.rs's job).
 		let mut root = ChipDescription::new("ROOT", ChipType::Custom);
 		root.sub_chips.push(SubChipDescription {
 			name: "NAND".into(),
@@ -1832,10 +1741,9 @@ mod tests {
 		wire0.points = vec![Vec2::new(2.0, 5.0)];
 		chip.wires.push(wire0);
 
-		// wire 1: taps onto wire 0's first segment (its source -> its
-		// bend), attaching at a cached point that's deliberately off that
-		// segment's line -- it should snap onto the segment, not just be
-		// used verbatim. Its target is NAND3's input B.
+		// wire 1: taps onto wire 0's first segment (its source -> its bend), attaching at a cached
+		// point that's deliberately off that segment's line -- it should snap onto the segment, not
+		// just be used verbatim. Its target is NAND3's input B.
 		let mut wire1 = WireDescription::new(PinAddress::new(1, 0), PinAddress::new(3, 1));
 		wire1.connection_type = WireConnectionType::ToWireSource;
 		wire1.connected_wire_index = 0;
@@ -1904,18 +1812,9 @@ mod tests {
 
 		let scene = build_scene(&chip, &lib, &AllLow, None);
 
-		// wire 1 is unbent (no interior points), so it's drawn as exactly
-		// one quad (6 verts). Wires are drawn first (see `draw_wires`),
-		// before pins/components, and wire 0 (bent through one point, so
-		// 2 quads = 12 verts) is drawn immediately before it -- so wire
-		// 1's quad sits right after wire 0's, at indices [12..18].
-		//
-		// Within that quad, `add_line` builds it as two triangles sharing
-		// edge (a+n)-(b-n) -- `push_quad(a+n, b+n, b-n, a-n)` emits
-		// [a+n, b+n, b-n]  then  [a+n, b-n, a-n] -- so the source end's
-		// two perpendicular-offset corners are vertex 0 (a+n) and vertex 5
-		// (a-n), *not* 0 and 3 (index 3 is just vertex 0's own triangle-2
-		// duplicate). Their midpoint is the wire's actual drawn start point.
+		// wire 1 is unbent (one quad, 6 verts), drawn right after wire 0 (bent through one point, so
+		// 2 quads = 12 verts), so wire 1's quad sits at indices [12..18]. Within that quad, `add_line`
+		// builds two triangles sharing edge (a+n)-(b-n): source-end corners are vertex 0 and vertex 5.
 		let wire1_verts = &scene.triangles[12..18];
 		let start_mid = Vec2::new((wire1_verts[0].pos.x + wire1_verts[5].pos.x) / 2.0, (wire1_verts[0].pos.y + wire1_verts[5].pos.y) / 2.0);
 		assert_eq!(start_mid, expected_tap_point);
@@ -1942,12 +1841,9 @@ mod tests {
 			chip.wires.push(WireDescription::new(PinAddress::new(10, 0), PinAddress::new(20, 0)));
 
 			let scene = build_scene(&chip, &lib, &AllLow, None);
-			// Both dev-pins are placed at y=0, so this wire (and every one
-			// of its strands) is perfectly horizontal, and each strand is
-			// unbent -> exactly one quad (6 verts) per strand. Wires are
-			// drawn first (see `draw_wires`), so the first `bit_count * 6`
-			// vertices are exactly this wire's strands, before any
-			// dev-pin body geometry.
+			// Both dev-pins are placed at y=0, so this wire (and every one of its strands) is
+			// perfectly horizontal, and each strand is unbent -> exactly one quad (6 verts) per
+			// strand. Wires are drawn first, so the first `bit_count * 6` vertices are this wire's strands.
 			scene.triangles[..bit_count as u32 as usize * 6].to_vec()
 		}
 
@@ -2252,10 +2148,8 @@ mod tests {
 		let screen_half_width = cam.viewport.x / (2.0 * cam.zoom);
 		let screen_half_height = cam.viewport.y / (2.0 * cam.zoom);
 
-		// The grid must extend at least as far as the visible viewport in
-		// every direction (it's allowed to overshoot slightly -- the
-		// original pads by one extra `GridSize` on each edge -- but must
-		// never fall short, or you'd see ungridded space at the window edge).
+		// The grid must extend at least as far as the visible viewport in every direction (it's
+		// allowed to overshoot slightly, but must never fall short, or you'd see ungridded space at the window edge).
 		assert!(min.x <= -screen_half_width);
 		assert!(max.x >= screen_half_width);
 		assert!(min.y <= -screen_half_height);
@@ -2312,12 +2206,9 @@ mod tests {
 
 	#[test]
 	fn build_grid_widens_line_thickness_when_zoomed_out_to_avoid_subpixel_lines() {
-		// Zoomed out enough that the base GRID_THICKNESS (0.0035 world
-		// units) would render as a fraction of a screen pixel and start
-		// aliasing inconsistently -- this is the "grid falls apart"
-		// symptom. Kept mild enough (zoom=2) that grid lines are still
-		// spaced further apart (skip*GRID_SIZE = 2.0 units) than the
-		// widened thickness, so this isn't just measuring an overlap blob.
+		// Zoomed out enough that the base GRID_THICKNESS would render as a fraction of a screen pixel
+		// and start aliasing inconsistently -- the "grid falls apart" symptom. Kept mild enough (zoom=2)
+		// that grid lines are still spaced further apart than the widened thickness.
 		let mut cam = Camera::new(Vec2::new(800.0, 400.0));
 		cam.zoom = 2.0;
 		let geo = build_grid(&cam, theme::GRID_COL);
@@ -2325,12 +2216,9 @@ mod tests {
 		let expected_thickness = layout::grid_line_thickness(cam.zoom);
 		assert!(expected_thickness > layout::GRID_THICKNESS, "sanity check: this zoom level should actually require widening");
 
-		// World x=0 is always a drawn line (0 is divisible by any skip),
-		// and centred at camera position (0,0) its quad corners are the
-		// *only* vertices in the whole scene landing within
-		// `expected_thickness` of x=0 (the next line over sits a full
-		// `skip * GRID_SIZE` away, and horizontal lines' corners sit out
-		// near the viewport's left/right edges).
+		// World x=0 is always a drawn line, and centred at camera position (0,0) its quad corners are
+		// the only vertices in the whole scene landing within `expected_thickness` of x=0 (the next
+		// line over sits a full `skip * GRID_SIZE` away).
 		let near_zero_x: Vec<f32> = geo.triangles.iter().map(|v| v.pos.x).filter(|x| x.abs() < expected_thickness).collect();
 		assert!(!near_zero_x.is_empty(), "expected to find the x=0 grid line's vertices");
 
@@ -2342,14 +2230,9 @@ mod tests {
 
 	#[test]
 	fn build_grid_thickness_matches_default_constant_when_zoomed_in() {
-		// At a comfortably zoomed-in level the base GRID_THICKNESS is
-		// already many screen pixels wide, so no widening should occur --
-		// this guards against the fix overcorrecting and always
-		// over-thickening the grid regardless of zoom. zoom=100 (as used by
-		// `test_camera`) is no longer enough on its own: with the current
-		// `GRID_MIN_PIXEL_THICKNESS` (1.5px), the base GRID_THICKNESS
-		// (0.0035 world units) only clears the minimum once zoom exceeds
-		// ~429, so zoom is bumped well past that here.
+		// At a comfortably zoomed-in level the base GRID_THICKNESS is already many screen pixels wide,
+		// so no widening should occur -- guards against overcorrecting. zoom=100 is no longer enough
+		// on its own: with `GRID_MIN_PIXEL_THICKNESS` (1.5px), the base thickness only clears the minimum past zoom ~429.
 		let mut cam = test_camera();
 		cam.zoom = 1000.0;
 		let geo = build_grid(&cam, theme::GRID_COL);
@@ -2540,12 +2423,9 @@ mod tests {
 		assert_eq!(geo_1bit.triangles.len(), 16 * 3);
 
 		let segments = 16u32;
-		// All 4 corners are rounded (round_left AND round_right), each
-		// contributing its own `segments + 1`-point arc -- the right
-		// side's two corner-arcs (and separately the left side's) share
-		// the same arc centre when radius == height/2, so together they
-		// trace a continuous semicircle, but `add_rounded_rect` still
-		// counts each of the 4 corners independently.
+		// All 4 corners are rounded (round_left AND round_right), each contributing its own
+		// `segments + 1`-point arc -- the two corner-arcs on a side share an arc centre when
+		// radius == height/2, but `add_rounded_rect` still counts each of the 4 corners independently.
 		let expected_pill_tris = 4 * (segments + 1) as usize;
 		let mut geo_4bit = SceneGeometry::default();
 		draw_pin_shape(&mut geo_4bit, Vec2::ZERO, PinBitCount::Bit4, theme::PIN_COL);
@@ -2610,10 +2490,8 @@ mod tests {
 		let size = Vec2::new(1.0, 1.0);
 		let radius = 0.3;
 
-		// Top-right corner, rounded (round_right = true): the exact
-		// bounding-box corner (0.5, 0.5) is well outside the arc (arc
-		// centre (0.2, 0.2), radius 0.3 -> corner is sqrt(0.3^2*2) =~
-		// 0.424 from the arc centre, safely past radius 0.3).
+		// Top-right corner, rounded (round_right = true): the exact bounding-box corner (0.5, 0.5) is
+		// well outside the arc (arc centre (0.2, 0.2), radius 0.3 -> corner is ~0.424 from the arc centre).
 		assert!(!point_in_rounded_rect(Vec2::new(0.5, 0.5), centre, size, radius, false, true));
 		// Same corner region, but round_right = false (square): must be a hit.
 		assert!(point_in_rounded_rect(Vec2::new(0.5, 0.5), centre, size, radius, false, false));
@@ -2975,10 +2853,8 @@ mod tests {
 			"wire layer must be drawn before the component body, not mixed in with or after it"
 		);
 
-		// Layer 3: the component body. `draw_components` draws the body
-		// rect (6 verts) last, after every pin -- so the component's
-		// colour should only appear at the very end of the buffer, never
-		// earlier (e.g. not before the wire or any pin).
+		// Layer 3: the component body. `draw_components` draws the body rect (6 verts) last, after
+		// every pin -- so the component's colour should only appear at the very end of the buffer.
 		let last_six = &scene.triangles[scene.triangles.len() - 6..];
 		assert!(last_six.iter().all(|v| v.colour == nand.colour), "component body must be the last thing drawn (top layer)");
 		let before_last_six = &scene.triangles[..scene.triangles.len() - 6];

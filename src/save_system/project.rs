@@ -1,11 +1,8 @@
-//! A loaded project: its metadata (`ProjectDescription`) plus the chip
-//! library built from it (custom chips loaded from disk + all builtins).
-//!
-//! This mirrors only the persistence-relevant slice of `DLS.Game.Project`
-//! -- the original also carries a huge amount of live editor/simulation
-//! state (undo stacks, camera, the currently-viewed chip, audio, ...) that
-//! belongs with the editor/sim integration this port doesn't include yet,
-//! not with save/load.
+//! A loaded project: its metadata (`ProjectDescription`) plus the chip library built from it
+//! (custom chips loaded from disk + all builtins). This mirrors only the persistence-relevant slice
+//! of `DLS.Game.Project` -- the original also carries a large amount of live editor/simulation state
+//! (undo stacks, camera, the currently-viewed chip, audio, ...) that belongs with the editor/sim
+//! integration this port doesn't include yet, not with save/load.
 
 use crate::description::ChipDescription;
 use crate::json::ProjectDescription;

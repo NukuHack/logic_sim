@@ -1,10 +1,7 @@
-//! Tests for the `Key` builtin (turns on while a given letter is held) and
-//! the new `KeyMods` builtin (outputs the current shift/ctrl/alt/super
-//! state as a bitmask). Both chips are driven purely through
-//! `Simulator::held_keys` / `Simulator::key_modifiers` here -- the actual
-//! winit event -> `Simulator` field plumbing lives in `bin/app.rs` /
-//! `bin/viewer.rs`, which (being GPU-window binaries) aren't exercised by
-//! `cargo test`; see their module docs.
+//! Tests for the `Key` builtin (turns on while a given letter is held) and the new `KeyMods` builtin
+//! (outputs the current shift/ctrl/alt/super state as a bitmask). Both chips are driven purely
+//! through `Simulator::held_keys` / `Simulator::key_modifiers` here -- the actual winit event ->
+//! `Simulator` field plumbing lives in the GPU-window binaries, which aren't exercised by `cargo test`.
 
 use logic_sim::description::{ChipDescription, ChipType, PinAddress, PinBitCount, SubChipDescription, WireDescription};
 use logic_sim::sim::key_mods_bits;

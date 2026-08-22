@@ -1,26 +1,8 @@
-//! Path layout for saved data, ported from `DLS.SaveSystem.SavePaths`.
-//!
-//! Unlike the original (which hangs everything off Unity's
-//! `Application.persistentDataPath`, a single implicit global), this is a
-//! plain value you construct and pass around. That makes it trivial to
-//! point at a temp directory in tests, and leaves the choice of "real"
-//! default location up to the host application rather than baking in a
-//! Unity-specific convention.
-//!
-//! On-disk layout (identical to the original):
-//! ```text
-//! <root>/
-//!   AppSettings.json
-//!   Projects/
-//!     <ProjectName>/
-//!       ProjectDescription.json
-//!       Chips/
-//!         <ChipName>.json
-//!       Deleted Chips/
-//!         <ChipName>.json (or <ChipName>_1.json, ... if a name collides)
-//!   Deleted Projects/
-//!     <ProjectName>/  (or <ProjectName>_1/, ... if a name collides)
-//! ```
+//! Path layout for saved data, ported from `DLS.SaveSystem.SavePaths`. Unlike the original (which
+//! hangs everything off a single implicit global), this is a plain value you construct and pass
+//! around, making it trivial to point at a temp directory in tests and leaving the choice of default
+//! location up to the host application. On-disk layout mirrors the original: a `Projects/` directory
+//! of named project folders, each holding `ProjectDescription.json` and a `Chips/` subfolder.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -137,10 +119,8 @@ fn platform_data_dir() -> Option<PathBuf> {
 fn unity_persistent_data_dir_impl() -> Option<PathBuf> {
 	#[cfg(target_os = "windows")]
 	{
-		// `%APPDATA%` is `...\AppData\Roaming`; Unity's LocalLow folder is
-		// a sibling of `Roaming`/`Local` under `...\AppData\`, and (unlike
-		// Roaming/Local) has no dedicated env var, so it's derived from
-		// `%USERPROFILE%` directly.
+		// `%APPDATA%` is `...\AppData\Roaming`; Unity's LocalLow folder is a sibling of `Roaming`/`Local`
+		// under `...\AppData\` and (unlike them) has no dedicated env var, so it's derived from `%USERPROFILE%`.
 		std::env::var_os("USERPROFILE")
 			.map(|home| PathBuf::from(home).join("AppData").join("LocalLow").join("SebastianLague").join("Digital-Logic-Sim"))
 	}

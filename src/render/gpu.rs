@@ -1,15 +1,8 @@
-//! wgpu/WGSL renderer for the chip canvas.
-//!
-//! This module owns the GPU device/surface and turns a `SceneGeometry`
-//! (from `render::scene`) into a single triangle-list draw call each frame,
-//! with the camera's view-projection matrix (`render::camera::Camera`) fed
-//! in as a uniform.
-//!
-//! NOTE: this file can't be exercised by `cargo test` in a headless/CI
-//! sandbox (it needs a real GPU adapter + window surface), so it is kept as
-//! thin glue around the pure, fully-tested `layout` / `theme` / `scene` /
-//! `camera` modules. It compiles as-is; wiring it up to an actual `winit`
-//! window loop is left to `src/bin/viewer.rs`.
+//! wgpu/WGSL renderer for the chip canvas. This module owns the GPU device/surface and turns a
+//! `SceneGeometry` (from `render::scene`) into a single triangle-list draw call each frame, with the
+//! camera's view-projection matrix fed in as a uniform. This file can't be exercised by `cargo test`
+//! in a headless/CI sandbox (it needs a real GPU adapter + window surface), so it is kept as thin
+//! glue around the pure, fully-tested `layout` / `theme` / `scene` / `camera` modules.
 
 use crate::render::camera::Camera;
 use crate::render::scene::{SceneGeometry, SceneVertex, TextLabel};
@@ -73,16 +66,9 @@ pub struct Renderer {
 	vertex_capacity: usize,
 	vertex_count: u32,
 
-	// ---- text (gate/chip name labels) ----
-	// Owns its own small glyphon pipeline layered on top of the flat-colour
-	// triangle pass above; see `render::scene::TextLabel` for the
-	// world-space label data this consumes and `prepare_text`/the tail of
-	// `render` below for how it's driven each frame. Kept behind its own
-	// `Cache`/`Viewport`/`TextAtlas` (rather than reusing the main
-	// pipeline's bind groups) since glyphon manages these as an
-	// independent middleware pass -- see the module docs on
-	// https://github.com/grovesNL/glyphon for the prepare()-then-render()
-	// split this follows.
+	// Text (gate/chip name labels): owns its own small glyphon pipeline layered on top of the
+	// flat-colour triangle pass above; see `render::scene::TextLabel` for the label data this
+	// consumes, kept behind its own `Cache`/`Viewport`/`TextAtlas` per glyphon's prepare()-then-render() split.
 	font_system: FontSystem,
 	swash_cache: SwashCache,
 	text_atlas: TextAtlas,
@@ -387,11 +373,9 @@ impl Renderer {
 		}
 		self.vertex_count = vertices.len() as u32;
 
-		// Must happen before the render pass begins -- glyphon's prepare()
-		// writes into the atlas texture via the queue, it doesn't record
-		// into a pass. `_text_buffers` just needs to outlive the pass below
-		// (the `TextArea`s handed to `text_renderer` during prepare borrow
-		// from it).
+		// Must happen before the render pass begins -- glyphon's prepare() writes into the atlas texture
+		// via the queue rather than recording into a pass. `_text_buffers` just needs to outlive the pass
+		// below (the `TextArea`s handed to `text_renderer` during prepare borrow from it).
 		let _text_buffers = self.prepare_text(&layer.labels, camera);
 		let has_text = !layer.labels.is_empty();
 
@@ -427,11 +411,9 @@ impl Renderer {
 				pass.draw(0..self.vertex_count, 0..1);
 			}
 
-			// Text draws on top of this layer's own shapes, in the same
-			// pass (glyphon is designed as middleware over an existing
-			// pass -- no extra clear/load needed) -- but never leaks
-			// into the *next* layer's pass, unlike the old single-pass
-			// renderer.
+			// Text draws on top of this layer's own shapes, in the same pass (glyphon is designed as
+			// middleware over an existing pass -- no extra clear/load needed), but never leaks into
+			// the next layer's pass, unlike the old single-pass renderer.
 			if has_text {
 				self.text_renderer.render(&self.text_atlas, &self.text_viewport, &mut pass).expect("glyphon text render failed");
 			}

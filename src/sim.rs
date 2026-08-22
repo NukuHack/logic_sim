@@ -1,15 +1,8 @@
-//! Runtime simulation graph + stepping logic.
-//!
-//! Ported from DLS.Simulation (SimPin.cs, SimChip.cs, Simulator.cs).
-//!
-//! Design note: the original C# uses plain object references, which form a
-//! graph with cross-links (pin -> connected target pins in other chips).
-//! Rust doesn't like that kind of aliased mutable graph with owned
-//! references, so instead of Rc<RefCell<..>> everywhere we use a flat-arena
-//! design: all pins live in one `Vec<SimPin>` and all chips in one
-//! `Vec<SimChip>`, and everything else refers to them by index. This keeps
-//! the hot simulation loop allocation-free and cache-friendly, similar in
-//! spirit to the original's flat arrays.
+//! Runtime simulation graph + stepping logic, ported from DLS.Simulation (SimPin.cs, SimChip.cs, Simulator.cs).
+//! The original C# uses plain object references, forming a graph with cross-links between pins in
+//! different chips. Rust doesn't like that kind of aliased mutable graph with owned references, so
+//! instead of `Rc<RefCell<..>>` everywhere this uses a flat-arena design: all pins live in one `Vec<SimPin>`
+//! and all chips in one `Vec<SimChip>`, indexed rather than referenced, keeping the hot loop allocation-free.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
 use crate::pin_state;

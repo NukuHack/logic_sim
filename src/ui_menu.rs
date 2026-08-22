@@ -1,25 +1,8 @@
-//! The startup screen's *logic*, ported from `DLS.Graphics.MainMenu`.
-//!
-//! The original draws its own UI with an immediate-mode framework
-//! (`Seb.Vis.UI`) that has no equivalent here yet -- this port's renderer
-//! (`crate::render`) is a from-scratch wgpu pipeline for the chip canvas,
-//! not a general UI toolkit. So rather than a pixel port, this is a
-//! *headless* port: the same screens, popups, validation rules, and
-//! transitions as the original, expressed as a plain state machine you can
-//! drive from any UI (immediate-mode, retained-mode, or even a CLI/test
-//! harness) and query to decide what to draw.
-//!
-//! Typical usage from a host app's event loop:
-//! ```no_run
-//! use logic_sim::{MainMenu, MenuOutcome, SavePaths};
-//! let mut menu = MainMenu::new(SavePaths::new("."));
-//! menu.on_menu_opened();
-//! // ... draw menu.screen() / menu.popup() / menu.projects() ...
-//! menu.choose_new_project();
-//! if let Ok(Some(MenuOutcome::OpenProject { name })) = menu.confirm_name_popup("My Project") {
-//!     // load `name` and hand off to the editor/sim.
-//! }
-//! ```
+//! The startup screen's logic, ported from `DLS.Graphics.MainMenu`.
+//! The original draws its own UI with an immediate-mode framework that has no equivalent here yet, so
+//! rather than a pixel port, this is a headless port: the same screens, popups, validation rules, and
+//! transitions as the original, expressed as a plain state machine you can drive from any UI and query
+//! to decide what to draw. See the crate docs / tests for a typical host app event-loop usage example.
 
 use crate::json::ProjectDescription;
 use crate::save_system::{can_open_project, valid_file_name, SavePaths};

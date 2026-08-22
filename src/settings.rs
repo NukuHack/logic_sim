@@ -1,11 +1,8 @@
-//! Application-level settings (window resolution, fullscreen mode, vsync),
-//! saved at `<data dir>/AppSettings.json`. Mirrors `DLS.Description.AppSettings`
-//! and the `FullScreenMode` enum it depends on (`UnityEngine.FullScreenMode`).
-//!
-//! This is intentionally decoupled from any particular windowing backend
-//! (winit, etc): it's just the persisted data + its on-disk shape. Whatever
-//! sets up the window is expected to translate `AppSettings` into whatever
-//! its windowing library needs.
+//! Application-level settings (window resolution, fullscreen mode, vsync), saved at
+//! `<data dir>/AppSettings.json`. Mirrors `DLS.Description.AppSettings` and the `FullScreenMode` enum
+//! it depends on. This is intentionally decoupled from any particular windowing backend (winit, etc):
+//! it's just the persisted data plus its on-disk shape. Whatever sets up the window is expected to
+//! translate `AppSettings` into whatever its windowing library needs.
 
 use serde::{Deserialize, Serialize};
 
@@ -207,10 +204,8 @@ mod tests {
 
 	#[test]
 	fn missing_fullscreen_mode_field_defaults_to_fullscreen_window_not_zero() {
-		// Regression test: `#[serde(default)]` on an i32 field falls back
-		// to `i32::default()` (0), which happens to decode as
-		// `ExclusiveFullScreen` rather than the intended
-		// `FullScreenWindow` default. Must use an explicit default fn.
+		// Regression test: `#[serde(default)]` on an i32 field falls back to `i32::default()` (0), which
+		// decodes as `ExclusiveFullScreen` rather than the intended `FullScreenWindow`; needs an explicit default fn.
 		let json = r#"{"ResolutionX": 1920, "ResolutionY": 1080, "VSyncEnabled": true}"#;
 		let parsed = parse_app_settings(json).unwrap();
 		assert_eq!(parsed.fullscreen_mode, FullScreenMode::FullScreenWindow);

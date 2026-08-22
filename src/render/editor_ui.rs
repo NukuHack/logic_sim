@@ -1,26 +1,8 @@
-//! Builds drawable geometry + clickable hit-boxes for the in-editor
-//! overlays that sit on top of the chip viewer, ported from the
-//! corresponding `DLS.Graphics.*Menu` classes. Same philosophy as
-//! [`crate::render::menu_ui`]: plain data in, plain data out, no wgpu
-//! types, fully unit-testable without a GPU. This file only builds
-//! *frames* to draw/hit-test -- it holds no simulation or save-system
-//! logic of its own.
-//!
-//! Covers:
-//! - [`build_preferences_panel`] -- `DLS.Graphics.PreferencesMenu`.
-//! - [`build_chip_library_panel`] -- `DLS.Graphics.ChipLibraryMenu` (the
-//!   collapsible, collection-grouped chip palette).
-//! - [`build_search_popup`] -- `DLS.Graphics.SearchPopup`.
-//! - [`build_simple_naming_popup`] -- `DLS.Graphics.ChipLabelMenu` (a
-//!   single text field + Cancel/Confirm, reused for anything that just
-//!   needs a short name/label typed in).
-//! - [`build_key_select_popup`] -- `DLS.Graphics.RebindKeyChipMenu`.
-//! - [`build_rom_editor_popup`] -- 256-cell grid editor for a placed
-//!   `Rom256x16`'s contents (not ported from the original C# -- that
-//!   version doesn't have an in-place ROM editor at all).
-//! - [`build_save_chip_popup`] -- Ctrl+S: save/replace/save-as/rename
-//!   the currently open chip (also not in the original C# port; see
-//!   `bin/app.rs`'s `confirm_save_chip_popup` for the actual disk I/O).
+//! Builds drawable geometry + clickable hit-boxes for the in-editor overlays that sit on top of the
+//! chip viewer, ported from the corresponding `DLS.Graphics.*Menu` classes. Same philosophy as
+//! [`crate::render::menu_ui`]: plain data in, plain data out, no wgpu types, fully unit-testable
+//! without a GPU. Holds no simulation or save-system logic of its own -- only builds frames to
+//! draw/hit-test for the preferences, chip library, search/naming, key-select, ROM-editor, and save-chip popups.
 
 use crate::json::ChipCollection;
 use crate::json::ProjectDescription;
@@ -119,8 +101,8 @@ fn panel_bg(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, colour: the
 	frame.geometry.add_rect(to_world(centre(&rect), vw, vh), Vec2::new(rect.w, rect.h), colour);
 }
 
-fn add_label(frame: &mut EditorFrame, vw: f32, vh: f32, centre_x: f32, y: f32, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
-	frame.geometry.labels.push(TextLabel { pos: to_world(Vec2::new(centre_x, y), vw, vh), text: text.to_string(), colour, font_size, width });
+fn add_label(frame: &mut EditorFrame, vw: f32, vh: f32, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
+	frame.geometry.labels.push(TextLabel { pos: to_world(centre, vw, vh), text: text.to_string(), colour, font_size, width });
 }
 
 fn add_button(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, label: &str, action: EditorAction, enabled: bool, mouse: Vec2) {
@@ -133,7 +115,7 @@ fn add_button(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, label: &s
 		theme::CHIP_BODY_COL
 	};
 	panel_bg(frame, vw, vh, rect, bg);
-	add_label(frame, vw, vh, centre(&rect).x, centre(&rect).y, rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
+	add_label(frame, vw, vh, centre(&rect), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
 	frame.buttons.push(EditorButton { rect, action, enabled });
 }
 
@@ -163,7 +145,7 @@ fn add_button_coloured(
 		base_colour
 	};
 	panel_bg(frame, vw, vh, rect, bg);
-	add_label(frame, vw, vh, centre(&rect).x, centre(&rect).y, rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
+	add_label(frame, vw, vh, centre(&rect), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
 	frame.buttons.push(EditorButton { rect, action, enabled });
 }
 
@@ -206,7 +188,7 @@ pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mous
 	let top = vh * 0.12;
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, top - 40.0, panel_w, vh * 0.76);
 	panel_bg(&mut frame, vw, vh, panel_rect, [0.14, 0.14, 0.16, 0.97]);
-	add_label(&mut frame, vw, vh, cx, top - 10.0, panel_w - 40.0, "Preferences", [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE);
+	add_label(&mut frame, vw, vh, Vec2::new(cx, top - 10.0), panel_w - 40.0, "Preferences", [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE);
 
 	let rows = [
 		PrefRow { label: "Show I/O pin names", options: &PIN_DISPLAY_OPTIONS, current: desc.prefs_main_pin_names_display_mode },
@@ -226,8 +208,7 @@ pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mous
 			&mut frame,
 			vw,
 			vh,
-			label_x + (panel_w - field_w - 60.0) / 2.0,
-			y + ROW_H / 2.0,
+			Vec2::new(label_x + (panel_w - field_w - 60.0) / 2.0, y + ROW_H / 2.0),
 			panel_w - field_w - 60.0,
 			row.label,
 			[0.9, 0.9, 0.9, 1.0],
@@ -261,7 +242,7 @@ pub fn build_chip_library_panel(collections: &[ChipCollection], selected_chip: O
 	let panel_w = 220.0_f32.min(vw * 0.3);
 	let panel_rect = UiRect::new(0.0, 0.0, panel_w, vh);
 	panel_bg(&mut frame, vw, vh, panel_rect, [0.16, 0.16, 0.18, 0.98]);
-	add_label(&mut frame, vw, vh, panel_w / 2.0, 24.0, panel_w - 16.0, "Chips", [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.8);
+	add_label(&mut frame, vw, vh, Vec2::new(panel_w / 2.0, 24.0), panel_w - 16.0, "Chips", [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.8);
 
 	let row_w = panel_w - 16.0;
 	let mut y = 50.0;
@@ -274,8 +255,7 @@ pub fn build_chip_library_panel(collections: &[ChipCollection], selected_chip: O
 			&mut frame,
 			vw,
 			vh,
-			centre(&header_rect).x,
-			centre(&header_rect).y,
+			centre(&header_rect),
 			row_w - 16.0,
 			&format!("{arrow} {}", collection.name),
 			[0.85, 0.95, 0.85, 1.0],
@@ -300,8 +280,7 @@ pub fn build_chip_library_panel(collections: &[ChipCollection], selected_chip: O
 					&mut frame,
 					vw,
 					vh,
-					centre(&row_rect).x,
-					centre(&row_rect).y,
+					centre(&row_rect),
 					row_rect.w - 12.0,
 					chip_name,
 					theme::text_colour_for_background(bg),
@@ -334,7 +313,7 @@ pub fn build_search_popup(all_chip_names: &[String], query: &str, vw: f32, vh: f
 	let field_rect = UiRect::new(cx - panel_w / 2.0, top, panel_w, 36.0);
 	frame.geometry.add_rect(to_world(centre(&field_rect), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
 	let shown = if query.is_empty() { "Search...|".to_string() } else { format!("{query}|") };
-	add_label(&mut frame, vw, vh, centre(&field_rect).x, centre(&field_rect).y, field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+	add_label(&mut frame, vw, vh, centre(&field_rect), field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
 	frame.text_field = Some(field_rect);
 
 	let needle = query.to_lowercase();
@@ -350,23 +329,13 @@ pub fn build_search_popup(all_chip_names: &[String], query: &str, vw: f32, vh: f
 		let row_rect = UiRect::new(cx - panel_w / 2.0, y, panel_w, ROW_H - 4.0);
 		let bg = if row_rect.contains(mouse) { [0.32, 0.32, 0.36, 1.0] } else { [0.22, 0.22, 0.25, 1.0] };
 		frame.geometry.add_rect(to_world(centre(&row_rect), vw, vh), Vec2::new(row_rect.w, row_rect.h), bg);
-		add_label(
-			&mut frame,
-			vw,
-			vh,
-			centre(&row_rect).x,
-			centre(&row_rect).y,
-			row_rect.w - 16.0,
-			name,
-			theme::text_colour_for_background(bg),
-			FONT_SIZE * 0.9,
-		);
+		add_label(&mut frame, vw, vh, centre(&row_rect), row_rect.w - 16.0, name, theme::text_colour_for_background(bg), FONT_SIZE * 0.9);
 		frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::UseChip((*name).clone()), enabled: true });
 		y += ROW_H;
 	}
 
 	if filtered.is_empty() {
-		add_label(&mut frame, vw, vh, cx, list_top + 20.0, panel_w, "No matching chips", [0.7, 0.7, 0.7, 1.0], FONT_SIZE * 0.9);
+		add_label(&mut frame, vw, vh, Vec2::new(cx, list_top + 20.0), panel_w, "No matching chips", [0.7, 0.7, 0.7, 1.0], FONT_SIZE * 0.9);
 	}
 
 	finish(frame, mouse)
@@ -393,13 +362,13 @@ pub fn build_simple_naming_popup(title: &str, text: &str, confirm_enabled: bool,
 	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
 	if !title.is_empty() {
-		add_label(&mut frame, vw, vh, cx, panel_rect.y + 26.0, panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 20.0);
+		add_label(&mut frame, vw, vh, Vec2::new(cx, panel_rect.y + 26.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 20.0);
 	}
 
 	let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 46.0, panel_w - 60.0, 34.0);
 	frame.geometry.add_rect(to_world(centre(&field_rect), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
 	let shown = if text.is_empty() { "|".to_string() } else { format!("{text}|") };
-	add_label(&mut frame, vw, vh, centre(&field_rect).x, centre(&field_rect).y, field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+	add_label(&mut frame, vw, vh, centre(&field_rect), field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
 	frame.text_field = Some(field_rect);
 
 	let confirm_rect = UiRect::new(cx - 186.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0);
@@ -430,12 +399,21 @@ pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse:
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
 	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
-	add_label(&mut frame, vw, vh, cx, panel_rect.y + 30.0, panel_w - 30.0, "Press a key to rebind\n(alphanumeric only)", [1.0, 1.0, 1.0, 0.8], 18.0);
+	add_label(
+		&mut frame,
+		vw,
+		vh,
+		Vec2::new(cx, panel_rect.y + 30.0),
+		panel_w - 30.0,
+		"Press a key to rebind\n(alphanumeric only)",
+		[1.0, 1.0, 1.0, 0.8],
+		18.0,
+	);
 
 	let key_box = UiRect::new(cx - 35.0, panel_rect.y + 66.0, 70.0, 70.0);
 	panel_bg(&mut frame, vw, vh, key_box, [0.1, 0.1, 0.1, 1.0]);
 	let shown = chosen_key.map(|c| c.to_string()).unwrap_or_default();
-	add_label(&mut frame, vw, vh, centre(&key_box).x, centre(&key_box).y, key_box.w, &shown, [1.0, 1.0, 1.0, 1.0], 27.0);
+	add_label(&mut frame, vw, vh, centre(&key_box), key_box.w, &shown, [1.0, 1.0, 1.0, 1.0], 27.0);
 
 	let confirm_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0);
 	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0);
@@ -489,16 +467,16 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
 	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
-	add_label(&mut frame, vw, vh, cx, panel_rect.y + 20.0, panel_w - 30.0, "Configure ROM (256 x 16-bit)", [1.0, 1.0, 1.0, 1.0], 20.0);
+	add_label(&mut frame, vw, vh, Vec2::new(cx, panel_rect.y + 20.0), panel_w - 30.0, "Configure ROM (256 x 16-bit)", [1.0, 1.0, 1.0, 1.0], 20.0);
 
 	let selected = selected.min(ROM_WORD_COUNT - 1);
 	let addr_label = format!("Address {selected} (0x{selected:02X})");
-	add_label(&mut frame, vw, vh, panel_rect.x + 90.0, panel_rect.y + 52.0, 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
+	add_label(&mut frame, vw, vh, Vec2::new(panel_rect.x + 90.0, panel_rect.y + 52.0), 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
 
 	let field_rect = UiRect::new(panel_rect.x + panel_w - 190.0, panel_rect.y + 38.0, 100.0, 30.0);
 	frame.geometry.add_rect(to_world(centre(&field_rect), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
 	let shown = if edit_text.is_empty() { "|".to_string() } else { format!("{edit_text}|") };
-	add_label(&mut frame, vw, vh, centre(&field_rect).x, centre(&field_rect).y, field_rect.w - 10.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+	add_label(&mut frame, vw, vh, centre(&field_rect), field_rect.w - 10.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
 	frame.text_field = Some(field_rect);
 
 	let set_rect = UiRect::new(panel_rect.x + panel_w - 80.0, panel_rect.y + 38.0, 60.0, 30.0);
@@ -527,17 +505,7 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 				[0.14, 0.14, 0.16, 1.0]
 			};
 			panel_bg(&mut frame, vw, vh, cell_rect, bg);
-			add_label(
-				&mut frame,
-				vw,
-				vh,
-				centre(&cell_rect).x,
-				centre(&cell_rect).y,
-				cell_rect.w - 4.0,
-				&value.to_string(),
-				theme::text_colour_for_background(bg),
-				11.0,
-			);
+			add_label(&mut frame, vw, vh, centre(&cell_rect), cell_rect.w - 4.0, &value.to_string(), theme::text_colour_for_background(bg), 11.0);
 			frame.buttons.push(EditorButton { rect: cell_rect, action: EditorAction::RomSelectCell(idx), enabled: true });
 		}
 	}
@@ -599,8 +567,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		&mut frame,
 		vw,
 		vh,
-		cx,
-		panel_rect.y + 24.0,
+		Vec2::new(cx, panel_rect.y + 24.0),
 		panel_w - 40.0,
 		&format!("Save chip (currently: {current_name})"),
 		[1.0, 1.0, 1.0, 1.0],
@@ -610,7 +577,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 	let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 48.0, panel_w - 60.0, 34.0);
 	frame.geometry.add_rect(to_world(centre(&field_rect), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
 	let shown = if text.is_empty() { "|".to_string() } else { format!("{text}|") };
-	add_label(&mut frame, vw, vh, centre(&field_rect).x, centre(&field_rect).y, field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
+	add_label(&mut frame, vw, vh, centre(&field_rect), field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
 	frame.text_field = Some(field_rect);
 
 	let hint = match mode {
@@ -619,7 +586,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		SaveChipMode::SaveAsOrRename => "Name changed -- keep both, or rename?",
 	};
 	if !hint.is_empty() {
-		add_label(&mut frame, vw, vh, cx, panel_rect.y + 92.0, panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
+		add_label(&mut frame, vw, vh, Vec2::new(cx, panel_rect.y + 92.0), panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
 	}
 
 	let confirm_enabled = !text.trim().is_empty();
