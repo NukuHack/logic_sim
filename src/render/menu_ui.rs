@@ -4,43 +4,13 @@
 //! logic). Everything here is plain data -- no wgpu types -- so it's fully unit-testable without a
 //! GPU. Layout is done in screen pixel space; [`to_world`] converts to the world space `render::gpu` expects.
 
-use crate::render::scene::{SceneGeometry, TextLabel};
+use crate::render::scene::TextLabel;
 use crate::render::theme;
+use crate::render::ui_kit::{self, Frame};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, MenuScreen, PopupKind};
 
-/// Converts a screen-space point (origin top-left, +y down) into the
-/// world-space point that lands there when drawn through a camera
-/// positioned at `(vw / 2, vh / 2)` with `zoom = 1.0` (see `menu_camera`
-/// in `src/bin/app.rs`). The inverse of what `Camera::world_to_screen`
-/// computes for that same camera.
-pub fn to_world(screen: Vec2, vw: f32, vh: f32) -> Vec2 {
-	let _ = vw; // kept for symmetry / clarity at call sites, x maps 1:1
-	Vec2::new(screen.x, vh - screen.y)
-}
-
-/// An axis-aligned rectangle in screen pixel space.
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub struct UiRect {
-	pub x: f32,
-	pub y: f32,
-	pub w: f32,
-	pub h: f32,
-}
-
-impl UiRect {
-	pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
-		Self { x, y, w, h }
-	}
-
-	pub fn contains(&self, p: Vec2) -> bool {
-		p.x >= self.x && p.x <= self.x + self.w && p.y >= self.y && p.y <= self.y + self.h
-	}
-
-	fn centre(&self) -> Vec2 {
-		Vec2::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
-	}
-}
+pub use crate::render::ui_kit::{to_world, UiRect};
 
 /// Something a click on a `UiButton` should cause the host app to do.
 /// Mirrors (a UI-level view of) `MainMenu`'s methods -- `src/bin/app.rs`
@@ -68,45 +38,22 @@ pub enum UiAction {
 	ApplySettings,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct UiButton {
-	pub rect: UiRect,
-	pub action: UiAction,
-	pub enabled: bool,
-}
+/// Hit-box of one clickable region of a [`MenuFrame`] -- see [`ui_kit::Button`].
+pub type UiButton = ui_kit::Button<UiAction>;
 
 /// Everything needed to draw one frame of the menu and to hit-test the
-/// next mouse event against it.
-#[derive(Debug, Default, Clone)]
-pub struct MenuFrame {
-	pub geometry: SceneGeometry,
-	pub buttons: Vec<UiButton>,
-	/// Hit-box of the text-entry field for the currently-open name popup,
-	/// if any (purely informational right now -- the host treats "a name
-	/// popup is open" as enough to route keyboard input to it regardless
-	/// of click-to-focus, since there's at most one field on screen).
-	pub text_field: Option<UiRect>,
-	/// The button currently under `mouse`, if any -- convenience mirror of
-	/// `buttons.iter().find(|b| b.rect.contains(mouse))` so callers don't
-	/// have to redo the search themselves for hover styling.
-	pub hovered: Option<UiAction>,
-}
+/// next mouse event against it. Its `text_field` is the hit-box of the
+/// text-entry field for the currently-open name popup, if any (purely
+/// informational right now -- the host treats "a name popup is open" as
+/// enough to route keyboard input to it regardless of click-to-focus,
+/// since there's at most one field on screen). See [`ui_kit::Frame`].
+pub type MenuFrame = Frame<UiAction>;
 
 const BUTTON_W: f32 = 260.0;
 const BUTTON_H: f32 = 44.0;
 const BUTTON_GAP: f32 = 14.0;
-const FONT_SIZE: f32 = 18.0;
+const FONT_SIZE: f32 = ui_kit::FONT_SIZE;
 const TITLE_FONT_SIZE: f32 = 40.0;
-
-fn button_colour(enabled: bool, hovered: bool) -> theme::Rgba {
-	if !enabled {
-		theme::PIN_INVALID_COL
-	} else if hovered {
-		[0.45, 0.45, 0.5, 1.0]
-	} else {
-		theme::CHIP_BODY_COL
-	}
-}
 
 /// Builds the full drawable + clickable frame for the current `MainMenu`
 /// state. `text_input` is whatever the player has typed so far into the
@@ -120,7 +67,7 @@ pub fn build(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, mouse: Vec2) -
 		build_popup(menu, vw, vh, text_input, &mut frame, mouse);
 		// Resolve hover + enabled-gated colouring now that every button for
 		// this frame is known.
-		frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
+		frame.hovered = ui_kit::hovered_button(&frame.buttons, mouse, false);
 	}
 	frame
 }
@@ -145,7 +92,7 @@ pub fn build_screen(menu: &MainMenu, vw: f32, vh: f32, mouse: Vec2) -> MenuFrame
 		MenuScreen::About => build_about_screen(vw, vh, &mut frame, mouse),
 	}
 
-	frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
+	frame.hovered = ui_kit::hovered_button(&frame.buttons, mouse, false);
 	frame
 }
 
@@ -159,7 +106,7 @@ pub fn build_popup_frame(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, mo
 	let mut frame = MenuFrame::default();
 	if menu.popup() != PopupKind::None {
 		build_popup(menu, vw, vh, text_input, &mut frame, mouse);
-		frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.action.clone());
+		frame.hovered = ui_kit::hovered_button(&frame.buttons, mouse, false);
 	}
 	frame
 }
@@ -175,18 +122,11 @@ fn add_title(frame: &mut MenuFrame, vw: f32, vh: f32, y: f32, text: &str) {
 }
 
 fn add_label(frame: &mut MenuFrame, vw: f32, vh: f32, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
-	frame.geometry.labels.push(TextLabel { pos: to_world(centre, vw, vh), text: text.to_string(), colour, font_size, width });
+	ui_kit::add_label(frame, vw, vh, centre, width, text, colour, font_size);
 }
 
-/// Draws one button, appends its hit-box to `frame.buttons`, and returns
-/// whether the mouse is currently over it (for callers that want to react
-/// immediately, e.g. disabling a hover state on a disabled button).
 fn add_button(frame: &mut MenuFrame, vw: f32, vh: f32, rect: UiRect, label: &str, action: UiAction, enabled: bool, mouse: Vec2) {
-	let hovered = enabled && rect.contains(mouse);
-	let bg = button_colour(enabled, hovered);
-	frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w, rect.h), bg);
-	add_label(frame, vw, vh, rect.centre(), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
-	frame.buttons.push(UiButton { rect, action, enabled });
+	ui_kit::add_button(frame, vw, vh, rect, label, action, enabled, mouse, None);
 }
 
 fn build_main_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
@@ -243,7 +183,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		} else {
 			[0.3, 0.3, 0.33, 1.0]
 		};
-		frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w, rect.h), bg);
+		ui_kit::fill_rect(frame, vw, vh, rect, bg);
 
 		let text_colour = if compatible { theme::text_colour_for_background(bg) } else { [0.9, 0.35, 0.35, 1.0] };
 		let label = if compatible {
@@ -325,7 +265,7 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	frame.geometry.add_rect(to_world(panel_rect.centre(), vw, vh), Vec2::new(panel_w, panel_h), [0.18, 0.18, 0.2, 1.0]);
+	ui_kit::fill_rect(frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
 	let (title, is_name_popup) = match menu.popup() {
 		PopupKind::NewProject => ("New Project", true),
@@ -338,10 +278,7 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 
 	if is_name_popup {
 		let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 70.0, panel_w - 60.0, 36.0);
-		frame.geometry.add_rect(to_world(field_rect.centre(), vw, vh), Vec2::new(field_rect.w, field_rect.h), [0.08, 0.08, 0.09, 1.0]);
-		let shown = if text_input.is_empty() { "|".to_string() } else { format!("{text_input}|") };
-		add_label(frame, vw, vh, field_rect.centre(), field_rect.w - 16.0, &shown, [1.0, 1.0, 1.0, 1.0], FONT_SIZE);
-		frame.text_field = Some(field_rect);
+		ui_kit::text_field_row(frame, vw, vh, field_rect, text_input, "", FONT_SIZE, 16.0);
 
 		let valid = menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input);
 		if !valid && !text_input.is_empty() {

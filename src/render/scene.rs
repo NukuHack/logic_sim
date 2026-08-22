@@ -371,10 +371,10 @@ pub fn place_sub_chips<'a>(chip: &ChipDescription, library: &'a ChipLibrary) -> 
 		// Prefer the size actually saved on disk (`ChipDescription::size`) -- computed by the original
 		// via `CalculateMinChipSize` with real font metrics, more accurate than anything derivable here.
 		// Fall back to the pins+name-estimate heuristic only when nothing is saved (size == (0,0)).
-		let size = if desc.size.x > 0.0 && desc.size.y > 0.0 {
+		let size = if desc.size != Vec2::ZERO {
 			Vec2::new(desc.size.x, desc.size.y)
 		} else {
-			layout::calculate_min_chip_size(&input_bits, &output_bits, &desc.name, desc.name_location, theme::FONT_SIZE_CHIP_NAME)
+			layout::calculate_min_chip_size(&input_bits, &output_bits, desc, theme::FONT_SIZE_CHIP_NAME)
 		};
 		let (_, input_pin_y) = layout::calculate_default_pin_layout(&input_bits);
 		let (_, output_pin_y) = layout::calculate_default_pin_layout(&output_bits);
@@ -1079,12 +1079,12 @@ pub fn hit_test_dev_pin(chip: &ChipDescription, world_pos: Vec2) -> Option<(bool
 fn draw_pin_shape(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Rgba) {
 	match bit_count {
 		PinBitCount::Bit1 => {
-			geo.add_circle(pos, layout::pin_radius_for_bit_count(bit_count), colour, 16);
+			geo.add_circle(pos, layout::pin_radius_for_bit_count(bit_count), colour, layout::PIN_SEGMENTS);
 		}
 		PinBitCount::Bit4 | PinBitCount::Bit8 => {
 			let size = layout::pin_visual_shape_size(bit_count);
 			let radius = size.y / 2.0;
-			geo.add_rounded_rect(pos, size, colour, radius, true, true, 16);
+			geo.add_rounded_rect(pos, size, colour, radius, true, true, layout::PIN_SEGMENTS / 4);
 		}
 	}
 }
@@ -1104,13 +1104,13 @@ fn draw_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount,
 	let fill_colour = theme::state_colour(logic.unwrap_or(LogicState::Low), colour);
 
 	// Border first (drawn full-size, in the grey-ish outline colour)...
-	geo.add_rounded_rect(pos, size, theme::CHIP_OUTLINE_COL, radius, round_left, !round_left, layout::DEV_PIN_ROUND_SEGMENTS);
+	geo.add_rounded_rect(pos, size, theme::CHIP_OUTLINE_COL, radius, round_left, !round_left, layout::DEV_PIN_SEGMENTS / 4);
 
 	// ...then the pin-coloured fill on top, inset by the border width so
 	// the border reads as an outline rather than being fully covered.
 	let inner_size = Vec2::new((size.x - border * 2.0).max(0.0), (size.y - border * 2.0).max(0.0));
 	let inner_radius = (radius - border).max(0.0);
-	geo.add_rounded_rect(pos, inner_size, fill_colour, inner_radius, round_left, !round_left, layout::DEV_PIN_ROUND_SEGMENTS);
+	geo.add_rounded_rect(pos, inner_size, fill_colour, inner_radius, round_left, !round_left, layout::DEV_PIN_SEGMENTS / 4);
 }
 
 /// Draws one of a chip's own boundary *input* dev-pins as a grid of
@@ -1131,9 +1131,9 @@ fn draw_input_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBit
 
 		match bit_count {
 			PinBitCount::Bit1 => {
-				geo.add_circle(cell_pos, layout::INPUT_BIT_CIRCLE_RADIUS, theme::CHIP_OUTLINE_COL, layout::DEV_PIN_ROUND_SEGMENTS * 2);
+				geo.add_circle(cell_pos, layout::INPUT_BIT_CIRCLE_RADIUS, theme::CHIP_OUTLINE_COL, layout::DEV_PIN_SEGMENTS * 2);
 				let border = layout::DEV_PIN_BORDER_WIDTH.min(layout::INPUT_BIT_CIRCLE_RADIUS);
-				geo.add_circle(cell_pos, (layout::INPUT_BIT_CIRCLE_RADIUS - border).max(0.0), fill_colour, layout::DEV_PIN_ROUND_SEGMENTS * 2);
+				geo.add_circle(cell_pos, (layout::INPUT_BIT_CIRCLE_RADIUS - border).max(0.0), fill_colour, layout::DEV_PIN_SEGMENTS * 2);
 			}
 			PinBitCount::Bit4 | PinBitCount::Bit8 => {
 				let size = Vec2::new(layout::INPUT_BIT_CELL_SIZE, layout::INPUT_BIT_CELL_SIZE);
@@ -2887,7 +2887,7 @@ mod tests {
 		let colour = Color::from_int(3);
 		draw_dev_pin_body(&mut geo, Vec2::new(1.0, 2.0), bit_count, colour, Some(LogicState::High), true);
 
-		let segments = layout::DEV_PIN_ROUND_SEGMENTS;
+		let segments = layout::DEV_PIN_SEGMENTS;
 		let points_per_shape = 2 * (segments + 1) + 2; // 2 rounded corners + 2 square corners
 		let tris_per_shape = points_per_shape as usize;
 		// Border shape + fill shape, both with the same corner pattern
@@ -2925,14 +2925,14 @@ mod tests {
 
 		// The output pin still draws as the ordinary rounded-rect "pill"
 		// dev-pin body (border + fill).
-		let out_segments = layout::DEV_PIN_ROUND_SEGMENTS;
+		let out_segments = layout::DEV_PIN_SEGMENTS;
 		let out_points_per_shape = 2 * (out_segments + 1) + 2;
 		let out_tris = out_points_per_shape as usize * 2; // border + fill
 
 		// The input pin (1-bit) now draws as a single clickable circle
 		// (border + fill), twice a plain pin's radius, per
 		// `draw_input_dev_pin_body`.
-		let in_segments = layout::DEV_PIN_ROUND_SEGMENTS * 2;
+		let in_segments = layout::DEV_PIN_SEGMENTS * 2;
 		let in_tris = in_segments as usize * 2; // border + fill
 
 		// No subchips and no wires here -- the whole scene is just the two
