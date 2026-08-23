@@ -6,16 +6,19 @@
 
 use logic_sim::json::{ChipCollection, ProjectDescription};
 use logic_sim::render::camera::Camera;
-use logic_sim::render::context_menu::{self, ContextMenuAction, ContextMenuButton, ContextMenuItem, ContextMenuState};
-use logic_sim::render::editor_ui::{self, EditorAction, EditorButton, LibrarySelection};
+use logic_sim::render::context_menu::{self, ContextMenuAction, ContextMenuItem, ContextMenuState};
+use logic_sim::render::editor_ui::{self, EditorAction, LibrarySelection};
 use logic_sim::render::gpu::Renderer;
 use logic_sim::render::layout;
 use logic_sim::render::menu_ui::{self, UiAction};
 use logic_sim::render::scene::{
 	apply_alpha, bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip,
-	hit_test_wire, place_sub_chips, AllLow, SceneGeometry, SimulatorPinState,
+	hit_test_wire, place_sub_chips, AllLow, SceneGeometry, SimulatorPinState, TextLabel,
 };
 use logic_sim::render::theme;
+use logic_sim::render::ui_kit::UiCtx;
+use logic_sim::render::ui_kit::{Button, UiRect};
+use logic_sim::render::ui_stack::{Capture, InputResult, LayerId, StackLayer, UiStack};
 use logic_sim::sim::key_mods_bits;
 use logic_sim::sim::Simulator;
 use logic_sim::structs::Vec2;
@@ -32,13 +35,15 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
-/// Which (if any) of the editor overlays from `render::editor_ui` is
-/// currently open on top of the viewer. Only one at a time -- matches how
-/// the original's popups/menus stack (library sidebar aside, which can
-/// stay open alongside browsing, everything else here is modal).
+/// One editor panel from `render::editor_ui` that can sit in
+/// `ViewerState::overlays`. Overlays are entries of the live UI stack:
+/// several may be open at once, stacked bottom-to-top in open order
+/// (e.g. Ctrl+F pushes Search *on top of* an already-open Library, and
+/// Escape pops just the Search back off). The top-most overlay is the
+/// stack's keyboard target; only the Library leaves its bar buttons
+/// usable beneath it (see `redraw`'s `bar_enabled`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Overlay {
-	None,
 	Library,
 	Search,
 	Preferences,
@@ -46,6 +51,37 @@ enum Overlay {
 	KeySelect,
 	RomEditor,
 	SaveChip,
+}
+
+impl Overlay {
+	fn layer_id(self) -> LayerId {
+		match self {
+			Overlay::Library => LayerId::Library,
+			Overlay::Search => LayerId::Search,
+			Overlay::Preferences => LayerId::Preferences,
+			Overlay::Naming => LayerId::Naming,
+			Overlay::KeySelect => LayerId::KeySelect,
+			Overlay::RomEditor => LayerId::RomEditor,
+			Overlay::SaveChip => LayerId::SaveChip,
+		}
+	}
+}
+
+/// Unified action type carried by every button of the viewer's UI stack.
+/// The stack mixes surfaces built by different modules (editor panels and
+/// bars produce `EditorAction`s; right-click popups produce
+/// `ContextMenuAction`s), so each layer's buttons are mapped into this
+/// one enum when pushed on -- see `StackLayer::convert_frame`.
+#[derive(Debug, Clone, PartialEq)]
+enum ViewerAction {
+	Editor(EditorAction),
+	Context(ContextMenuAction),
+}
+
+/// Mapping function handed to `StackLayer::convert_frame` for every layer built from an
+/// `EditorFrame`.
+fn editor_action(action: EditorAction) -> ViewerAction {
+	ViewerAction::Editor(action)
 }
 
 /// What `Overlay::Naming`'s Confirm/Enter should actually *do* with the
@@ -194,9 +230,16 @@ struct ViewerState {
 	/// The project's saved prefs/collections, edited live by the
 	/// preferences/library overlays and written back to disk on Apply.
 	prefs: ProjectDescription,
-	overlay: Overlay,
-	/// Shared text buffer for whichever overlay currently has a text
-	/// field open (search query, or the naming popup's text).
+	/// Editor panels currently open, bottom-to-top in open order -- see
+	/// [`Overlay`]'s docs for the stacking rules. Empty = plain viewer.
+	overlays: Vec<Overlay>,
+	/// The Search overlay's own query buffer (kept separate from the
+	/// shared `overlay_text_input`, which a Library collection-name field
+	/// underneath a popped-open Search must keep owning).
+	search_query: String,
+	/// Shared text buffer for whichever *top-most* text-field overlay is
+	/// currently open (the naming popup, ROM cell editor, save-chip name,
+	/// or the library's inline new/rename-collection field).
 	overlay_text_input: String,
 	/// Pending key choice for the key-select popup.
 	overlay_key_choice: Option<char>,
@@ -208,9 +251,22 @@ struct ViewerState {
 	key_select_purpose: KeySelectPurpose,
 	/// Draft state for `Overlay::RomEditor`, when open.
 	rom_editor: Option<RomEditorState>,
-	/// Hit-boxes from the overlay's *last drawn* frame -- same
-	/// immediate-mode pattern as `App::last_menu_buttons`.
-	last_overlay_buttons: Vec<EditorButton>,
+
+	/// The viewer's UI stack as of the *last drawn* frame -- every
+	/// visible surface is a layer in here (canvas at the bottom, popups
+	/// on top), rebuilt from live state by `redraw` each frame. All input
+	/// routing (click/wheel/keyboard focus) dispatches against it, same
+	/// immediate-mode "hit-test what I just drew" contract the per-frame
+	/// `last_*_buttons` lists this replaces used to have.
+	stack: UiStack<ViewerAction>,
+
+	/// Horizontal scroll offset (px) of the starred bottom bar's
+	/// overflow, driven by wheel events the stack routes to the bar's
+	/// scroll region; clamped against `bottom_bar_scroll_max`.
+	bottom_bar_scroll_x: f32,
+	/// How far the bar can scroll: its content width minus the viewport,
+	/// recomputed each redraw. Zero while everything fits.
+	bottom_bar_scroll_max: f32,
 
 	/// Which row of the real `Overlay::Library` panel is currently
 	/// selected -- see `editor_ui::LibrarySelection`'s docs.
@@ -232,22 +288,13 @@ struct ViewerState {
 	/// the bottom bar (`editor_ui::build_starred_collection_popup`), if
 	/// any.
 	bottom_bar_open_collection: Option<String>,
-	/// Hit-boxes from the bottom bar's *last drawn* frame -- same
-	/// immediate-mode pattern as `last_overlay_buttons`.
-	last_bottom_bar_buttons: Vec<EditorButton>,
-	/// Hit-boxes from the bottom bar's starred-collection flyout's *last
-	/// drawn* frame, if one is open.
-	last_bottom_bar_popup_buttons: Vec<EditorButton>,
 
 	/// The right-click popup currently open (over a canvas component or
-	/// a library row), if any -- see `render::context_menu`. Always
-	/// drawn/hit-tested as the top-most layer of the frame, above even a
-	/// modal `overlay`, so it's never hidden behind (or accidentally
+	/// a library row), if any -- see `render::context_menu`. Lives in the
+	/// UI stack as its own top-most layer (`LayerId::ContextMenu`), above
+	/// even a modal overlay, so it's never hidden behind (or accidentally
 	/// swallowed by) whatever else is open.
 	context_menu: Option<ContextMenuState>,
-	/// Hit-boxes from the context menu's *last drawn* frame -- same
-	/// immediate-mode pattern as `last_overlay_buttons`.
-	last_context_menu_buttons: Vec<ContextMenuButton>,
 
 	/// The wire currently being placed by clicking one endpoint then
 	/// another, if any -- see `PendingWire`'s docs. Cleared (`None`)
@@ -635,6 +682,283 @@ fn pin_overlay_to_screen(mut geometry: SceneGeometry, camera: &Camera, _vw: f32,
 		l.width /= camera.zoom;
 	}
 	geometry
+}
+
+/// Drops UI-stack layers whose backing live state has closed since the stack was last rebuilt by
+/// `redraw` -- events arrive between frames, so an action (or Escape) that closed a popup must not
+/// let the *next* event be eaten by that popup's still-cached layer. Called before every dispatch.
+/// Layers are only ever popped off the top; anything still live stays exactly where it is.
+fn sync_stack_with_state(v: &mut ViewerState) {
+	if v.context_menu.is_none() {
+		v.stack.pop_if_top(|id| id == LayerId::ContextMenu);
+	}
+	if v.bottom_bar_open_collection.is_none() {
+		v.stack.pop_if_top(|id| id == LayerId::BottomBarFlyout);
+	}
+	if v.overlays.is_empty() {
+		v.stack.pop_while_top(|id| id.is_overlay_panel());
+	}
+}
+
+/// Pushes `overlay` as the new top of `ViewerState::overlays`, or -- if an instance is already
+/// open somewhere down the stack -- re-focuses it (moves it to the top) instead of stacking a
+/// duplicate, so e.g. mashing Ctrl+F can't pile up identical Search layers.
+/// Reopening clears whichever draft text the previous instance had left behind.
+fn open_overlay(v: &mut ViewerState, overlay: Overlay) {
+	v.overlays.retain(|o| *o != overlay);
+	v.overlays.push(overlay);
+}
+
+/// Ctrl+F: opens (or re-focuses) the search popup with a fresh query.
+fn open_search(v: &mut ViewerState) {
+	open_overlay(v, Overlay::Search);
+	v.search_query.clear();
+}
+
+/// Ctrl+S: opens (or re-focuses) the save-chip popup pre-filled with the chip's current name.
+fn open_save_chip(v: &mut ViewerState) {
+	open_overlay(v, Overlay::SaveChip);
+	v.overlay_text_input = v.root_chip_name.clone();
+}
+
+/// Pops the top-most overlay off `ViewerState::overlays`, releasing whichever purpose/draft state
+/// belonged to it (each overlay owns its own transient state, so closing it half-way through just
+/// resets that one). A no-op when nothing is open.
+fn close_top_overlay(v: &mut ViewerState) {
+	let Some(top) = v.overlays.pop() else { return };
+	match top {
+		Overlay::Library => reset_library_popup_state(v),
+		Overlay::Naming => v.naming_purpose = NamingPurpose::default(),
+		Overlay::KeySelect => v.key_select_purpose = KeySelectPurpose::default(),
+		Overlay::RomEditor => v.rom_editor = None,
+		Overlay::Search => v.search_query.clear(),
+		// The shared buffer belongs to whichever text-field overlay owned it while open.
+		Overlay::SaveChip => v.overlay_text_input.clear(),
+		// Preferences carries no transient draft of its own.
+		Overlay::Preferences => {}
+	}
+	if !matches!(top, Overlay::Library | Overlay::Search) {
+		v.overlay_text_input.clear();
+	}
+}
+
+/// Closes every open overlay at once -- the "leave whatever panels were open" gesture shared by
+/// flows that hand control back to the plain viewer (Use-chip, Exit-library, Apply-preferences).
+fn close_all_overlays(v: &mut ViewerState) {
+	while !v.overlays.is_empty() {
+		close_top_overlay(v);
+	}
+}
+
+/// Builds the transient status/error toast (`LayerId::StatusToast`): a small dark strip with the
+/// message centred in it, floating just above the bottom bar in the viewer (`above_y`) or near
+/// the very bottom on the menu screen. Returned in raw screen-pixel space -- the caller pins it
+/// through the active camera with `pin_overlay_to_screen`. Its layer never captures input, so it
+/// can sit at the very top of the stack without getting in anyone's way.
+fn status_toast_geometry(message: &str, vw: f32, vh: f32, above_y: Option<f32>) -> SceneGeometry {
+	let width = (vw - 80.0).min(700.0);
+	let centre_y = above_y.unwrap_or(vh - 26.0);
+	let bg = UiRect::new((vw - width) / 2.0, centre_y - 14.0, width, 28.0);
+
+	let mut geo = SceneGeometry::default();
+	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.08, 0.08, 0.1, 0.92]);
+	geo.labels.push(TextLabel { pos: bg.centre(), text: message.to_string(), colour: [0.95, 0.78, 0.35, 1.0], font_size: 15.0, width: width - 20.0 });
+	geo
+}
+
+/// Applies a canvas click that the UI stack let fall all the way through
+/// (`UiStack::dispatch_click` returned [`InputResult::Propagate`] --
+/// every visible UI layer was either missed or transparent at that
+/// point). Free function (not an `App` method) for the same reason
+/// `apply_editor_action` is: the caller is mid-`match` holding `v`.
+fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
+	// A chip picked up for placement claims every click ahead of anything else below,
+	// same "claims the click" priority a wire in progress gets just below -- see
+	// `try_place_pending_chip`'s doc comment for what actually happens with the click.
+	if v.pending_place.is_some() {
+		try_place_pending_chip(v, world_pos, status);
+		return;
+	}
+
+	// A wire already being placed claims every click ahead of anything else below --
+	// including the input-pin toggle, so clicking a switch's pin finishes/bends the
+	// wire instead of flipping it (see `try_continue_pending_wire`'s doc comment).
+	if v.pending_wire.is_some() {
+		try_continue_pending_wire(v, world_pos, status);
+		return;
+	}
+	if try_start_pending_wire(v, world_pos) {
+		return;
+	}
+
+	let root_desc = v.library.get(&v.root_chip_name);
+	if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
+		let root_chip_name = v.root_chip_name.clone();
+		toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+	}
+}
+
+/// What `handle_viewer_key` did with a key press routed to the viewer.
+enum KeyOutcome {
+	/// The press belonged to some overlay/panel/popup and was consumed.
+	Consumed,
+	/// Nothing wanted it anywhere in the stack -- plain-viewer gesture
+	/// space fell through to Escape's "leave the chip editor" cascade.
+	ReturnToMenu,
+}
+
+/// Routes a key *press* to whichever surface currently owns the keyboard,
+/// per `ViewerState::stack.keyboard_target()` -- mirroring, guard-for-guard, the old
+/// single match over `v.overlay` states this replaces. Typed characters are only UI data when a
+/// text-field overlay owns focus; `handle_key_event` separately gates feeding them to Key chips on
+/// `UiStack::keyboard_stop()`. Free function like its siblings above.
+fn handle_viewer_key(
+	v: &mut ViewerState,
+	paths: &SavePaths,
+	status: &mut Option<String>,
+	event: &winit::event::KeyEvent,
+	modifiers: ModifiersState,
+) -> KeyOutcome {
+	use winit::keyboard::{Key, NamedKey};
+	match &event.logical_key {
+		// ---- Text entry for whichever text-field overlay owns focus ----
+		// The search popup deliberately types into its own `search_query`
+		// buffer rather than the shared `overlay_text_input`, so a
+		// collection-name field open underneath it (Library + Ctrl+F) keeps
+		// its draft while the query comes and goes.
+		Key::Named(NamedKey::Backspace) if v.stack.keyboard_target() == Some(LayerId::Search) => {
+			v.search_query.pop();
+		}
+		Key::Named(NamedKey::Backspace)
+			if matches!(v.stack.keyboard_target(), Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip))
+				|| (matches!(v.stack.keyboard_target(), Some(LayerId::Library))
+					&& (v.library_creating_collection || v.library_renaming_collection)) =>
+		{
+			v.overlay_text_input.pop();
+		}
+		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::Naming) => {
+			confirm_naming_popup(v, status);
+		}
+		Key::Named(NamedKey::Enter)
+			if v.stack.keyboard_target() == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) =>
+		{
+			apply_editor_action(v, paths, status, EditorAction::ConfirmCollectionName);
+		}
+		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::RomEditor) => {
+			confirm_rom_cell(v, status);
+		}
+		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::KeySelect) && v.overlay_key_choice.is_some() => {
+			confirm_key_select_popup(v, status);
+		}
+		// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"
+		// action) -- when both "Save As" and "Rename" are on offer, that choice needs a click.
+		Key::Named(NamedKey::Enter)
+			if v.stack.keyboard_target() == Some(LayerId::SaveChip)
+				&& save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
+		{
+			confirm_save_chip_popup(v, paths, status);
+		}
+		Key::Character(s) if v.stack.keyboard_target() == Some(LayerId::Search) => {
+			if v.search_query.chars().count() < 64 {
+				v.search_query.push_str(s);
+			}
+		}
+		Key::Character(s)
+			if matches!(v.stack.keyboard_target(), Some(LayerId::Naming | LayerId::SaveChip))
+				|| (matches!(v.stack.keyboard_target(), Some(LayerId::Library))
+					&& (v.library_creating_collection || v.library_renaming_collection)) =>
+		{
+			if v.overlay_text_input.chars().count() < 64 {
+				v.overlay_text_input.push_str(s);
+			}
+		}
+		// ROM cell values are short numbers -- a lower cap keeps a
+		// stray paste from overflowing the little text field.
+		Key::Character(s) if v.stack.keyboard_target() == Some(LayerId::RomEditor) => {
+			if v.overlay_text_input.chars().count() < 10 {
+				v.overlay_text_input.push_str(s);
+			}
+		}
+		// ---- Key-select overlay: capture the next alphanumeric key ----
+		Key::Character(s) if v.stack.keyboard_target() == Some(LayerId::KeySelect) => {
+			if let Some(c) = s.chars().next() {
+				let upper = c.to_ascii_uppercase();
+				if editor_ui::KEY_SELECT_ALLOWED_CHARS.contains(upper) {
+					v.overlay_key_choice = Some(upper);
+				}
+			}
+		}
+		// ---- Library panel keys (work while it has focus, even under another popup) ----
+		Key::Named(NamedKey::Tab) if v.stack.keyboard_target() == Some(LayerId::Library) => {
+			let mut desc = v.prefs.clone();
+			if Saver::save_project_description(paths, &mut desc).is_ok() {
+				v.prefs = desc;
+			}
+			close_all_overlays(v);
+			v.library_selection = LibrarySelection::None;
+		}
+		Key::Named(NamedKey::Escape)
+			if v.stack.keyboard_target() == Some(LayerId::Library)
+				&& (v.library_creating_collection
+					|| v.library_renaming_collection
+					|| v.library_confirming_chip_delete
+					|| v.library_confirming_collection_delete) =>
+		{
+			reset_library_popup_state(v);
+		}
+		Key::Named(NamedKey::Escape) if v.stack.keyboard_target().is_some_and(LayerId::is_overlay_panel) => {
+			if v.stack.keyboard_target() == Some(LayerId::Library) {
+				v.library_selection = LibrarySelection::None;
+			}
+			close_top_overlay(v);
+		}
+		// ---- Right-click popup: Escape dismisses it ----
+		Key::Named(NamedKey::Escape) if v.context_menu.is_some() => v.context_menu = None,
+		// ---- Normal viewer shortcuts (only while nothing owns the keyboard) ----
+		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("r") => v.rebuild_sim(),
+		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
+		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("g") => v.show_grid = !v.show_grid,
+		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("p") => open_overlay(v, Overlay::Preferences),
+		Key::Character(s)
+			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
+				&& modifiers.control_key()
+				&& s.eq_ignore_ascii_case("f") =>
+		{
+			open_search(v);
+		}
+		Key::Character(s)
+			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
+				&& modifiers.control_key()
+				&& s.eq_ignore_ascii_case("s") =>
+		{
+			open_save_chip(v);
+		}
+		Key::Character(s)
+			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
+				&& modifiers.control_key()
+				&& s.eq_ignore_ascii_case("n") =>
+		{
+			start_new_chip(v, paths, status);
+		}
+		Key::Named(NamedKey::Tab) if v.stack.keyboard_target().is_none() => {
+			sync_library_collections(&mut v.prefs, &v.library);
+			open_overlay(v, Overlay::Library);
+		}
+		// ---- Escape cascade, top-most thing first: popup state > whole
+		// overlay > pending wire/chip > bottom-bar flyout > leave the editor ----
+		Key::Named(NamedKey::Escape) => {
+			if v.pending_wire.is_some() || v.pending_place.is_some() {
+				v.pending_wire = None;
+				v.pending_place = None;
+			} else if v.bottom_bar_open_collection.is_some() {
+				v.bottom_bar_open_collection = None;
+			} else {
+				return KeyOutcome::ReturnToMenu;
+			}
+		}
+		_ => {}
+	}
+	KeyOutcome::Consumed
 }
 
 /// Advances the wheel field at `row_index` (matching the row order
@@ -1046,8 +1370,7 @@ fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, status: &mut 
 		editor_ui::SaveChipMode::Replace => replace_chip_with_current(v, paths, status, &typed),
 		editor_ui::SaveChipMode::SaveAsOrRename => return,
 	}
-	v.overlay = Overlay::None;
-	v.overlay_text_input.clear();
+	close_top_overlay(v);
 }
 
 fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
@@ -1056,8 +1379,7 @@ fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Opt
 		return;
 	}
 	save_chip_as(v, paths, status, &typed);
-	v.overlay = Overlay::None;
-	v.overlay_text_input.clear();
+	close_top_overlay(v);
 }
 
 fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
@@ -1066,8 +1388,7 @@ fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, status: &mut
 		return;
 	}
 	rename_current_chip(v, paths, status, &typed);
-	v.overlay = Overlay::None;
-	v.overlay_text_input.clear();
+	close_top_overlay(v);
 }
 
 /// Re-reads a single chip's own save file from disk, without touching
@@ -1216,6 +1537,10 @@ enum ContextTarget {
 	FlyoutChip(String),
 }
 
+/// Constructor for one of the context targets that just wraps a plain
+/// name string (see [`ContextTarget::parse`]).
+type PlainTargetCtor = fn(String) -> ContextTarget;
+
 impl ContextTarget {
 	/// Inverse of however `handle_right_mouse_button` built the
 	/// `target` string in the first place -- kept next to that so the
@@ -1227,14 +1552,10 @@ impl ContextTarget {
 			rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: true, id })
 		} else if let Some(rest) = target.strip_prefix("devpin:out:") {
 			rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: false, id })
-		} else if let Some(rest) = target.strip_prefix("libchip:") {
-			Some(ContextTarget::LibChip(rest.to_string()))
-		} else if let Some(rest) = target.strip_prefix("barchip:") {
-			Some(ContextTarget::BarChip(rest.to_string()))
-		} else if let Some(rest) = target.strip_prefix("flyoutchip:") {
-			Some(ContextTarget::FlyoutChip(rest.to_string()))
 		} else {
-			None
+			const PLAIN_TARGETS: [(&str, PlainTargetCtor); 3] =
+				[("libchip:", ContextTarget::LibChip), ("barchip:", ContextTarget::BarChip), ("flyoutchip:", ContextTarget::FlyoutChip)];
+			PLAIN_TARGETS.iter().find_map(|(prefix, wrap)| target.strip_prefix(prefix).map(|rest| wrap(rest.to_string())))
 		}
 	}
 }
@@ -1298,9 +1619,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 		}
 		(ContextMenuAction::Open, ContextTarget::LibChip(name)) => {
 			open_chip_by_name(v, paths, status, &name);
-			v.overlay = Overlay::None;
-			reset_library_popup_state(v);
-			v.library_selection = LibrarySelection::None;
+			close_all_overlays(v);
 		}
 		(ContextMenuAction::Open, ContextTarget::BarChip(name)) | (ContextMenuAction::Open, ContextTarget::FlyoutChip(name)) => {
 			open_chip_by_name(v, paths, status, &name);
@@ -1322,7 +1641,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 
 		(ContextMenuAction::Label, ContextTarget::Component(id)) => {
 			let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
-			v.overlay = Overlay::Naming;
+			open_overlay(v, Overlay::Naming);
 			v.overlay_text_input = current;
 			v.naming_purpose = NamingPurpose::LabelComponent(id);
 		}
@@ -1341,7 +1660,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			let chip = v.library.get(&root_chip_name);
 			let pins = if is_input { &chip.input_pins } else { &chip.output_pins };
 			let current = pins.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
-			v.overlay = Overlay::Naming;
+			open_overlay(v, Overlay::Naming);
 			v.overlay_text_input = current;
 			v.naming_purpose = NamingPurpose::LabelDevPin { is_input, id };
 		}
@@ -1354,19 +1673,19 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 				v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.internal_data.clone()).unwrap_or_default();
 			match chip_type {
 				Some(ChipType::Pulse) => {
-					v.overlay = Overlay::Naming;
+					open_overlay(v, Overlay::Naming);
 					v.overlay_text_input = internal_data.first().copied().unwrap_or(0).to_string();
 					v.naming_purpose = NamingPurpose::ConfigurePulseDuration(id);
 				}
 				Some(ChipType::Key) => {
-					v.overlay = Overlay::KeySelect;
+					open_overlay(v, Overlay::KeySelect);
 					v.overlay_key_choice = internal_data.first().map(|&code| code as u8 as char);
 					v.key_select_purpose = KeySelectPurpose::ConfigureKeyChar(id);
 				}
 				Some(ChipType::Rom256x16) => {
 					let mut data = internal_data;
 					data.resize(editor_ui::ROM_WORD_COUNT, 0);
-					v.overlay = Overlay::RomEditor;
+					open_overlay(v, Overlay::RomEditor);
 					v.overlay_text_input = data[0].to_string();
 					v.rom_editor = Some(RomEditorState { component_id: id, data, selected: 0 });
 				}
@@ -1423,9 +1742,7 @@ fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<String>) {
 		},
 	}
 
-	v.overlay = Overlay::None;
-	v.overlay_text_input.clear();
-	v.naming_purpose = NamingPurpose::default();
+	close_top_overlay(v);
 }
 
 /// Parses a single ROM cell value, same rule as the old comma-list
@@ -1474,8 +1791,7 @@ fn apply_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
 		}
 		v.rebuild_sim();
 	}
-	v.overlay = Overlay::None;
-	v.overlay_text_input.clear();
+	close_top_overlay(v);
 }
 
 /// Applies whatever's chosen in `Overlay::KeySelect`, per
@@ -1500,8 +1816,7 @@ fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<String>) {
 			}
 		}
 	}
-	v.overlay = Overlay::None;
-	v.key_select_purpose = KeySelectPurpose::default();
+	close_top_overlay(v);
 }
 
 /// Deletes subchip `id` from the current root chip, plus every wire
@@ -1546,11 +1861,7 @@ fn delete_component(v: &mut ViewerState, id: i32) {
 /// `self.paths` / `self.status` fields -- see `App::handle_mouse_button`.
 fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, action: EditorAction) {
 	match action {
-		EditorAction::ClosePopup => {
-			v.overlay = Overlay::None;
-			v.overlay_text_input.clear();
-			v.rom_editor = None;
-		}
+		EditorAction::ClosePopup => close_top_overlay(v),
 		EditorAction::CyclePref(i) => cycle_pref(&mut v.prefs, i),
 		EditorAction::ApplyPreferences => {
 			v.show_grid = v.prefs.prefs_grid_display_mode == 1;
@@ -1559,7 +1870,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 				Ok(()) => v.prefs = desc,
 				Err(e) => *status = Some(format!("Failed to save preferences: {e}")),
 			}
-			v.overlay = Overlay::None;
+			v.overlays.retain(|o| *o != Overlay::Preferences);
 		}
 		EditorAction::SelectCollection(i) => {
 			v.library_selection = LibrarySelection::Collection(i);
@@ -1581,8 +1892,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 		EditorAction::MoveSelectedJump(down) => move_selected_library_row(v, down, true),
 		EditorAction::OpenSelectedChip(name) => {
 			open_chip_by_name(v, paths, status, &name);
-			v.overlay = Overlay::None;
-			reset_library_popup_state(v);
+			close_all_overlays(v);
 			v.library_selection = LibrarySelection::None;
 			v.bottom_bar_open_collection = None;
 		}
@@ -1663,8 +1973,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			} else {
 				v.prefs = desc;
 			}
-			v.overlay = Overlay::None;
-			reset_library_popup_state(v);
+			close_all_overlays(v);
 			v.library_selection = LibrarySelection::None;
 			v.pending_wire = None;
 			v.pending_place = Some(name);
@@ -1676,8 +1985,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			} else {
 				v.prefs = desc;
 			}
-			v.overlay = Overlay::None;
-			reset_library_popup_state(v);
+			close_all_overlays(v);
 			v.library_selection = LibrarySelection::None;
 		}
 		EditorAction::ToggleStarredCollectionPopup(name) => {
@@ -1686,8 +1994,7 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 		EditorAction::CloseStarredCollectionPopup => v.bottom_bar_open_collection = None,
 		EditorAction::UseChip(name) => {
 			open_chip_by_name(v, paths, status, &name);
-			v.overlay = Overlay::None;
-			v.overlay_text_input.clear();
+			close_all_overlays(v);
 		}
 		EditorAction::ConfirmName => confirm_naming_popup(v, status),
 		EditorAction::ChooseKey(c) => v.overlay_key_choice = Some(c),
@@ -1708,7 +2015,10 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 
 enum Screen {
 	Menu,
-	Viewer(ViewerState),
+	/// Boxed so `Screen` itself stays small -- `ViewerState` is by far the
+	/// biggest value in the app and would otherwise bloat every `Screen`
+	/// (clippy::large_enum_variant).
+	Viewer(Box<ViewerState>),
 }
 
 struct RenderState {
@@ -1734,14 +2044,11 @@ struct App {
 	/// which winit reports independently of individual key press/release events).
 	modifiers: ModifiersState,
 
-	// Hit-boxes from the menu screen's *last drawn* frame, used by the
-	// next mouse click (immediate-mode UI: layout is recomputed every
-	// frame, so "what did I just draw" is also "what can be clicked").
-	last_menu_buttons: Vec<menu_ui::UiButton>,
-	// Hit-boxes for the menu's popup (rename/new-project/delete-confirm dialog), if one is open, from
-	// the same last-drawn frame. Kept separate from `last_menu_buttons` -- and always checked first --
-	// so a click can't be mis-attributed to a screen button underneath the popup.
-	last_popup_buttons: Vec<menu_ui::UiButton>,
+	/// The menu screen's UI stack as of the *last drawn* frame -- the
+	/// screen itself at the bottom, the modal dialog on top of it (see
+	/// `redraw`). Immediate-mode, same as `ViewerState::stack`: every
+	/// click/wheel event dispatches against what was just drawn.
+	menu_stack: UiStack<UiAction>,
 }
 
 impl App {
@@ -1758,8 +2065,7 @@ impl App {
 			viewport: Vec2::new(1280.0, 800.0),
 			mouse_pos: Vec2::ZERO,
 			modifiers: ModifiersState::empty(),
-			last_menu_buttons: Vec::new(),
-			last_popup_buttons: Vec::new(),
+			menu_stack: UiStack::new(),
 		}
 	}
 
@@ -1807,7 +2113,7 @@ impl App {
 					prefs.starred_list = default_starred_list();
 				}
 
-				self.screen = Screen::Viewer(ViewerState {
+				self.screen = Screen::Viewer(Box::new(ViewerState {
 					project_name: name.to_string(),
 					library,
 					root_chip_name,
@@ -1818,13 +2124,16 @@ impl App {
 					camera_fitted: false,
 					show_grid,
 					prefs,
-					overlay: Overlay::None,
+					overlays: Vec::new(),
+					search_query: String::new(),
 					overlay_text_input: String::new(),
 					overlay_key_choice: None,
 					naming_purpose: NamingPurpose::default(),
 					key_select_purpose: KeySelectPurpose::default(),
 					rom_editor: None,
-					last_overlay_buttons: Vec::new(),
+					stack: UiStack::new(),
+					bottom_bar_scroll_x: 0.0,
+					bottom_bar_scroll_max: 0.0,
 					library_selection: LibrarySelection::None,
 					library_creating_collection: false,
 					library_renaming_collection: false,
@@ -1832,13 +2141,10 @@ impl App {
 					library_confirming_collection_delete: false,
 					library_delete_message: String::new(),
 					bottom_bar_open_collection: None,
-					last_bottom_bar_buttons: Vec::new(),
-					last_bottom_bar_popup_buttons: Vec::new(),
 					context_menu: None,
-					last_context_menu_buttons: Vec::new(),
 					pending_wire: None,
 					pending_place: None,
-				});
+				}));
 				self.status = None;
 				self.set_window_title();
 			}
@@ -2039,8 +2345,22 @@ impl ApplicationHandler for App {
 						MouseScrollDelta::LineDelta(_, y) => y,
 						MouseScrollDelta::PixelDelta(p) => (p.y / 100.0) as f32,
 					};
-					let zoom_factor = 1.0 + scroll * 0.1;
-					v.camera.zoom_at(v.last_cursor, zoom_factor);
+					sync_stack_with_state(v);
+					let dispatch = v.stack.dispatch_wheel(self.mouse_pos);
+					match dispatch.result {
+						// Over the bottom bar's scrollable strip: scroll the bar horizontally
+						// instead of zooming the canvas underneath it.
+						InputResult::Handled if dispatch.layer == Some(LayerId::BottomBar) && !dispatch.scroll_regions.is_empty() => {
+							v.bottom_bar_scroll_x = (v.bottom_bar_scroll_x - scroll * 40.0).clamp(0.0, v.bottom_bar_scroll_max.max(0.0));
+						}
+						// Swallowed by some other capturing layer (a modal panel, flyout, popup...).
+						InputResult::Handled | InputResult::Stop => {}
+						// Nobody wanted it: zoom the camera, as before.
+						InputResult::Propagate => {
+							let zoom_factor = 1.0 + scroll * 0.1;
+							v.camera.zoom_at(v.last_cursor, zoom_factor);
+						}
+					}
 				}
 			}
 
@@ -2052,150 +2372,94 @@ impl ApplicationHandler for App {
 }
 
 impl App {
-	/// Left-click handling: overlay/UI button hits first (unchanged), then
-	/// -- new -- toggling one bit of a root input dev-pin if the click
-	/// landed on one of its clickable cells. Falls through to the toggle
-	/// check whenever the click wasn't swallowed by a *modal* popup --
-	/// same "overlay is None or the (non-modal) Library sidebar" gate the
-	/// old dragging code used, so switching a chip from the Library
-	/// sidebar doesn't leave clicks stuck unable to reach the canvas.
-	/// Camera panning is *not* handled here any more -- see
-	/// `handle_middle_mouse_button`.
+	/// Left-click handling, routed through the screen's UI stack
+	/// (`ViewerState::stack` / `App::menu_stack`): the click is offered to
+	/// layers front-to-back and lands on the first one whose capture
+	/// region contains it -- exactly the priority chain the old hand-rolled
+	/// sequence of `last_*_buttons` checks implemented, now expressed as
+	/// stack order instead. A click that propagates past every UI layer is
+	/// a canvas click (`handle_canvas_click`). Camera panning is *not*
+	/// handled here -- see `handle_middle_mouse_button`.
 	fn handle_mouse_button(&mut self, btn_state: ElementState, event_loop: &ActiveEventLoop) {
 		match &mut self.screen {
 			Screen::Menu => {
 				if btn_state == ElementState::Pressed {
-					// The popup (if open) is the top-most layer, so it gets first refusal at every click.
-					// This must check `last_popup_buttons` in isolation and return either way, or a
-					// click landing where a popup button overlaps a screen button could fall through.
-					if self.menu.popup() != PopupKind::None {
-						let hit = self.last_popup_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
-						if let Some(action) = hit {
-							self.handle_menu_action(action, event_loop);
-						}
-						return;
-					}
-
-					let hit = self.last_menu_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
-					if let Some(action) = hit {
+					let dispatch = self.menu_stack.dispatch_click(self.mouse_pos);
+					if let Some(action) = dispatch.button.map(|b| b.action.clone()) {
 						self.handle_menu_action(action, event_loop);
 					}
 				}
 			}
 			Screen::Viewer(v) => {
-				// The context menu is always the top-most layer, so it gets first refusal at every
-				// click -- a left click either picks one of its rows or closes it, either way
-				// swallowing the click rather than letting it reach the overlay/canvas underneath.
-				if btn_state == ElementState::Pressed && v.context_menu.is_some() {
-					let hit = v.last_context_menu_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).map(|b| b.id.clone());
-					let target = v.context_menu.take().map(|s| s.target);
-					if let (Some(id), Some(target)) = (hit, target) {
-						apply_context_menu_action(v, &self.paths, &mut self.status, &target, id);
-					}
+				if btn_state != ElementState::Pressed {
 					return;
 				}
-
-				if btn_state == ElementState::Pressed && v.overlay != Overlay::None {
-					let hit = v.last_overlay_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
-					if let Some(action) = hit {
-						apply_editor_action(v, &self.paths, &mut self.status, action);
+				sync_stack_with_state(v);
+				let world_pos = v.camera.screen_to_world(self.mouse_pos);
+				let dispatch = v.stack.dispatch_click(self.mouse_pos);
+				match dispatch.result {
+					// Nobody wanted it: it falls through the whole stack to the canvas.
+					InputResult::Propagate => {
+						// Same as ever, a click anywhere outside the bar closes its open flyout --
+						// with the bar no longer swallowing clicks in its padding, "outside" now
+						// includes the strip between/around its buttons.
+						v.bottom_bar_open_collection = None;
+						handle_canvas_click(v, world_pos, &mut self.status);
 					}
-					// Every overlay -- including the library now -- is a
-					// full-screen modal, so a click that missed every
-					// button still belongs to it, not the canvas below.
-					return;
-				}
-
-				if btn_state == ElementState::Pressed {
-					let world_pos = v.camera.screen_to_world(self.mouse_pos);
-					// handle UI
-					{
-						// The bottom bar's starred-collection flyout, if one's
-						// open, gets first refusal -- same "top layer first"
-						// priority the context menu and overlays get above.
-						if v.bottom_bar_open_collection.is_some() {
-							let hit = v
-								.last_bottom_bar_popup_buttons
-								.iter()
-								.find(|b| b.enabled && b.rect.contains(self.mouse_pos))
-								.map(|b| b.action.clone());
-							if let Some(action) = hit {
+					InputResult::Stop => {}
+					InputResult::Handled => match dispatch.layer {
+						// A row inside an open starred-collection flyout acts *and* closes the
+						// flyout; the flyout's own capture region swallows everything else.
+						Some(LayerId::BottomBarFlyout) => {
+							if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
 								apply_editor_action(v, &self.paths, &mut self.status, action);
-								v.bottom_bar_open_collection = None;
-								return;
+							}
+							v.bottom_bar_open_collection = None;
+						}
+						// The context menu's layer either picks one of its rows or just dismisses
+						// it -- either way the click is swallowed, never reaching what's underneath.
+						Some(LayerId::ContextMenu) => {
+							if let (Some(ViewerAction::Context(id)), Some(target)) =
+								(dispatch.button.map(|b| b.action.clone()), v.context_menu.take().map(|s| s.target))
+							{
+								apply_context_menu_action(v, &self.paths, &mut self.status, &target, id);
 							}
 						}
-
-						let bar_hit =
-							v.last_bottom_bar_buttons.iter().find(|b| b.enabled && b.rect.contains(self.mouse_pos)).map(|b| b.action.clone());
-						if let Some(action) = bar_hit {
-							apply_editor_action(v, &self.paths, &mut self.status, action);
-							return;
+						_ => {
+							if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
+								apply_editor_action(v, &self.paths, &mut self.status, action);
+							}
 						}
-						// Missed the bar and (if it was open) its flyout: a
-						// click anywhere else closes the flyout, same as the
-						// original's "click outside" dismissal.
-						v.bottom_bar_open_collection = None;
-					}
-					// Handle canvas
-					{
-						// A chip picked up for placement claims every click ahead of anything else below,
-						// same "claims the click" priority a wire in progress gets just below -- see
-						// `try_place_pending_chip`'s doc comment for what actually happens with the click.
-						if v.pending_place.is_some() {
-							try_place_pending_chip(v, world_pos, &mut self.status);
-							return;
-						}
-
-						// A wire already being placed claims every click ahead of anything else below --
-						// including the input-pin toggle, so clicking a switch's pin finishes/bends the
-						// wire instead of flipping it (see `try_continue_pending_wire`'s doc comment).
-						if v.pending_wire.is_some() {
-							try_continue_pending_wire(v, world_pos, &mut self.status);
-							return;
-						}
-						if try_start_pending_wire(v, world_pos) {
-							return;
-						}
-
-						let root_desc = v.library.get(&v.root_chip_name);
-						if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
-							let root_chip_name = v.root_chip_name.clone();
-							toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
-						}
-					}
+					},
 				}
 			}
 		}
 	}
 
-	/// Right-click handling: opens (or, if the click didn't land on
-	/// anything right-clickable, just closes) the generic context-menu
-	/// popup from `render::context_menu`. For now this is wired up for
-	/// two targets, both offering a single "Open" action:
-	///  - a placed component on the canvas (opens *its* chip definition,
-	///    same as double-clicking it used to in the original), and
-	///  - a row in the (open) library sidebar (opens that chip -- left
-	///    click there only highlights the row now, see
-	///    `EditorAction::SelectChip`'s docs).
-	/// Easy to attach to more things later: building a `ContextMenuState`
-	/// with a different `target`/`items` and assigning it to
-	/// `v.context_menu` is the whole integration surface.
 	/// Right-click handling:
+	///  - always first cancels whatever popup / pending wire / pending
+	///    chip was in progress (the standard "cancel" gesture, same as
+	///    Escape);
+	///  - over a modal overlay panel other than the library, nothing
+	///    sensible to attach to -- leaves everything closed;
+	///  - on a library chip row (the panel itself), a starred bottom-bar
+	///    chip button, or a row of an open bar flyout -- all found via
+	///    `UiStack::topmost_button`, i.e. "whatever row is visibly on
+	///    top" -- opens the generic context-menu popup from
+	///    `render::context_menu` with whichever rows apply;
+	///  - on a placed component on the canvas, a dev-pin of the current
+	///    root chip, opens that same popup (`context_menu_items_for_component`);
 	///  - on a wire, deletes it immediately (no popup -- see
 	///    `scene::hit_test_wire`/`delete_wire`'s docs for the "shortest
-	///    possible section" semantics), taking priority over the popup
-	///    path entirely;
-	///  - on a placed component, a dev-pin of the current root chip, a
-	///    library row, or a starred bottom-bar chip button (bar itself or
-	///    an open collection's flyout), opens the generic context-menu
-	///    popup from `render::context_menu` with whichever rows apply
-	///    (see `context_menu_items_for_component`);
+	///    possible section" semantics);
 	///  - anywhere else, just closes whatever popup was already open.
+	///
 	/// Hit-tests run in the same order things are actually drawn on top
-	/// of each other (library row > bottom bar > dev-pin > component >
-	/// wire), so a click that could plausibly land on more than one
-	/// resolves to whichever one the player can actually see.
+	/// of each other (library row > flyout row > bottom bar > dev-pin >
+	/// component > wire), so a click that could plausibly land on more
+	/// than one resolves to whichever one the player can actually see --
+	/// with UI-surface lookups now delegated to the stack instead of
+	/// hand-rolled per list.
 	fn handle_right_mouse_button(&mut self, btn_state: ElementState) {
 		if btn_state != ElementState::Pressed {
 			return;
@@ -2212,69 +2476,54 @@ impl App {
 		v.pending_wire = None;
 		v.pending_place = None;
 
+		sync_stack_with_state(v);
+
 		// A right click while a *modal* overlay is open (anything but
-		// the library sidebar) has nothing sensible to attach to, so
+		// the library panel) has nothing sensible to attach to, so
 		// just leave the popup closed.
-		if v.overlay != Overlay::None && v.overlay != Overlay::Library {
+		let top = v.stack.top_id();
+		if top.is_some_and(LayerId::is_overlay_panel) && top != Some(LayerId::Library) {
 			return;
 		}
 
-		// 1) A chip row in the open library panel -- pop up its
-		// Open/Delete menu. The library is a full-screen modal (like
-		// every other overlay), so a click that misses every row still
-		// belongs to the library, not the canvas behind it.
-		if v.overlay == Overlay::Library {
-			let hit = v.last_overlay_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
-				EditorAction::SelectChipRow { collection, chip } => {
-					v.prefs.chip_collections.get(*collection).and_then(|c| c.chips.get(*chip)).cloned()
+		// 1) A visible UI row under the cursor: a chip row in the library
+		// panel, or a chip button in the bottom bar / its open flyout.
+		// All screen-space, so they're looked up through the stack rather
+		// than hit-tested in world space like everything below.
+		if let Some((layer, action)) = v.stack.topmost_button(self.mouse_pos).map(|(l, b)| (l, b.action.clone())) {
+			match (&layer, &action) {
+				(LayerId::Library, ViewerAction::Editor(EditorAction::SelectChipRow { collection, chip })) => {
+					if let Some(name) = v.prefs.chip_collections.get(*collection).and_then(|c| c.chips.get(*chip)).cloned() {
+						let custom = is_custom_chip(&v.library, &name);
+						let items = vec![
+							ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, custom),
+							ContextMenuItem::new_enabled("Delete", ContextMenuAction::Delete, custom),
+						];
+						v.context_menu = Some(ContextMenuState::new(format!("libchip:{name}"), self.mouse_pos, items));
+					}
+					return;
 				}
-				_ => None,
-			});
-			if let Some(name) = hit {
-				let custom = is_custom_chip(&v.library, &name);
-				let items = vec![
-					ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, custom),
-					ContextMenuItem::new_enabled("Delete", ContextMenuAction::Delete, custom),
-				];
-				v.context_menu = Some(ContextMenuState::new(format!("libchip:{name}"), self.mouse_pos, items));
+				(LayerId::BottomBar | LayerId::BottomBarFlyout, ViewerAction::Editor(EditorAction::PlaceChip(name))) => {
+					let items = if layer == LayerId::BottomBar {
+						vec![
+							ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(&v.library, name)),
+							ContextMenuItem::new("Un-star", ContextMenuAction::Unstar),
+						]
+					} else {
+						vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(&v.library, name))]
+					};
+					let prefix = if layer == LayerId::BottomBar { "barchip" } else { "flyoutchip" };
+					v.context_menu = Some(ContextMenuState::new(format!("{prefix}:{name}"), self.mouse_pos, items));
+					return;
+				}
+				_ => {}
 			}
-			return;
 		}
 
 		let root_chip_name = v.root_chip_name.clone();
 		let world_pos = v.camera.screen_to_world(self.mouse_pos);
 
-		// 2) A chip button in the starred bottom bar -- either directly in the bar itself, or
-		// listed inside an open collection's flyout (checked first, same "top layer first"
-		// priority the flyout gets over the bar in `handle_mouse_button`'s left-click handling).
-		// Both are screen-space, not world-space, so they're hit-tested against last frame's
-		// button rects rather than `world_pos` like everything below.
-		{
-			let flyout_hit = v.last_bottom_bar_popup_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
-				EditorAction::PlaceChip(name) => Some(name.clone()),
-				_ => None,
-			});
-			if let Some(name) = flyout_hit {
-				let items = vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(&v.library, &name))];
-				v.context_menu = Some(ContextMenuState::new(format!("flyoutchip:{name}"), self.mouse_pos, items));
-				return;
-			}
-
-			let bar_hit = v.last_bottom_bar_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
-				EditorAction::PlaceChip(name) => Some(name.clone()),
-				_ => None,
-			});
-			if let Some(name) = bar_hit {
-				let items = vec![
-					ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(&v.library, &name)),
-					ContextMenuItem::new("Un-star", ContextMenuAction::Unstar),
-				];
-				v.context_menu = Some(ContextMenuState::new(format!("barchip:{name}"), self.mouse_pos, items));
-				return;
-			}
-		}
-
-		// 3) One of the current root chip's own boundary dev-pins.
+		// 2) One of the current root chip's own boundary dev-pins.
 		{
 			let root_desc = v.library.get(&root_chip_name);
 			if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
@@ -2285,7 +2534,7 @@ impl App {
 			}
 		}
 
-		// 4) A placed component on the canvas.
+		// 3) A placed component on the canvas.
 		{
 			let root_desc = v.library.get(&root_chip_name);
 			let placed = place_sub_chips(root_desc, &v.library);
@@ -2298,7 +2547,7 @@ impl App {
 			}
 		}
 
-		// 5) A wire -- deleted immediately, no popup (see this method's
+		// 4) A wire -- deleted immediately, no popup (see this method's
 		// doc comment).
 		{
 			let root_desc = v.library.get(&root_chip_name);
@@ -2316,13 +2565,19 @@ impl App {
 	/// Middle-click handling: drags/pans the camera, exactly like left-click
 	/// used to. Split out from `handle_mouse_button` so left-click is free
 	/// to toggle input dev-pins instead, and right-click free for
-	/// `handle_right_mouse_button`'s context-menu popup. Mirrors the same
-	/// "swallow clicks while a modal popup is open" gate `handle_mouse_button`
-	/// applies, so panning can't happen "through" an open popup either.
+	/// `handle_right_mouse_button`'s context-menu popup. Panning starts
+	/// only where a press would propagate past every UI layer (i.e. land
+	/// on the canvas) -- the same "swallow clicks while a modal popup is
+	/// open" gate the old code applied by hand -- but releasing always
+	/// stops an in-flight drag, so a drag started on the canvas can end
+	/// anywhere.
 	fn handle_middle_mouse_button(&mut self, btn_state: ElementState) {
 		if let Screen::Viewer(v) = &mut self.screen {
-			if btn_state == ElementState::Pressed && v.overlay != Overlay::None {
-				return;
+			if btn_state == ElementState::Pressed {
+				sync_stack_with_state(v);
+				if v.stack.dispatch_click(self.mouse_pos).result != InputResult::Propagate {
+					return;
+				}
 			}
 			v.dragging = btn_state == ElementState::Pressed;
 		}
@@ -2332,16 +2587,26 @@ impl App {
 		// Feed the Key chip's held-key set on both press and release (not just press, unlike the
 		// shortcut handling below) since it needs to know when a key stops being held. The chip
 		// stores/compares its target letter in capitals, so lowercase 'a' must register as 'A' here.
+		//
+		// Typed characters are only *simulation input* while no UI surface wants them, though:
+		// `UiStack::keyboard_stop` says when the top of the stack owns typing outright (a text
+		// field, or the key-select popup capturing its next key as data) -- configuring a Key chip
+		// to 'A' must not itself hold 'A' down in the simulator. Only *presses* are gated;
+		// releases always go through, so a key that was being held when a text overlay opened can
+		// never get stuck "on".
 		if let Key::Character(s) = &event.logical_key {
 			if let Screen::Viewer(v) = &mut self.screen {
-				if let Some(c) = s.chars().next() {
-					let c = c.to_ascii_uppercase();
-					match event.state {
-						ElementState::Pressed => {
-							v.sim.held_keys.insert(c);
-						}
-						ElementState::Released => {
-							v.sim.held_keys.remove(&c);
+				let press_swallowed_by_ui = event.state == ElementState::Pressed && v.stack.keyboard_stop();
+				if !press_swallowed_by_ui {
+					if let Some(c) = s.chars().next() {
+						let c = c.to_ascii_uppercase();
+						match event.state {
+							ElementState::Pressed => {
+								v.sim.held_keys.insert(c);
+							}
+							ElementState::Released => {
+								v.sim.held_keys.remove(&c);
+							}
 						}
 					}
 				}
@@ -2364,10 +2629,8 @@ impl App {
 							self.menu.cancel_popup();
 							self.text_input.clear();
 						}
-						Key::Character(s) => {
-							if self.text_input.chars().count() < logic_sim::ui_menu::MAX_PROJECT_NAME_LENGTH {
-								self.text_input.push_str(s);
-							}
+						Key::Character(s) if self.text_input.chars().count() < logic_sim::ui_menu::MAX_PROJECT_NAME_LENGTH => {
+							self.text_input.push_str(s);
 						}
 						_ => {}
 					}
@@ -2381,124 +2644,12 @@ impl App {
 					self.menu.back_to_main();
 				}
 			}
-			Screen::Viewer(v) => match &event.logical_key {
-				// ---- Text entry for the search / naming / ROM-cell overlays ----
-				Key::Named(NamedKey::Backspace)
-					if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::RomEditor | Overlay::SaveChip)
-						|| (v.overlay == Overlay::Library && (v.library_creating_collection || v.library_renaming_collection)) =>
-				{
-					v.overlay_text_input.pop();
+			Screen::Viewer(v) => {
+				sync_stack_with_state(v);
+				if let KeyOutcome::ReturnToMenu = handle_viewer_key(v, &self.paths, &mut self.status, &event, self.modifiers) {
+					self.return_to_menu();
 				}
-				Key::Named(NamedKey::Enter) if v.overlay == Overlay::Naming => {
-					confirm_naming_popup(v, &mut self.status);
-				}
-				Key::Named(NamedKey::Enter) if v.overlay == Overlay::Library && (v.library_creating_collection || v.library_renaming_collection) => {
-					apply_editor_action(v, &self.paths, &mut self.status, EditorAction::ConfirmCollectionName);
-				}
-				Key::Named(NamedKey::Enter) if v.overlay == Overlay::RomEditor => {
-					confirm_rom_cell(v, &mut self.status);
-				}
-				Key::Named(NamedKey::Enter) if v.overlay == Overlay::KeySelect && v.overlay_key_choice.is_some() => {
-					confirm_key_select_popup(v, &mut self.status);
-				}
-				// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"
-				// action) -- when both "Save As" and "Rename" are on offer, that choice needs a click.
-				Key::Named(NamedKey::Enter)
-					if v.overlay == Overlay::SaveChip && save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
-				{
-					confirm_save_chip_popup(v, &self.paths, &mut self.status);
-				}
-				Key::Character(s)
-					if matches!(v.overlay, Overlay::Search | Overlay::Naming | Overlay::SaveChip)
-						|| (v.overlay == Overlay::Library && (v.library_creating_collection || v.library_renaming_collection)) =>
-				{
-					if v.overlay_text_input.chars().count() < 64 {
-						v.overlay_text_input.push_str(s);
-					}
-				}
-				// ROM cell values are short numbers -- a lower cap keeps a
-				// stray paste from overflowing the little text field.
-				Key::Character(s) if v.overlay == Overlay::RomEditor => {
-					if v.overlay_text_input.chars().count() < 10 {
-						v.overlay_text_input.push_str(s);
-					}
-				}
-				// ---- Key-select overlay: capture the next alphanumeric key ----
-				Key::Character(s) if v.overlay == Overlay::KeySelect => {
-					if let Some(c) = s.chars().next() {
-						let upper = c.to_ascii_uppercase();
-						if editor_ui::KEY_SELECT_ALLOWED_CHARS.contains(upper) {
-							v.overlay_key_choice = Some(upper);
-						}
-					}
-				}
-				// ---- Normal viewer shortcuts (only while nothing's open) ----
-				Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("r") => v.rebuild_sim(),
-				Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
-				Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("g") => v.show_grid = !v.show_grid,
-				Key::Character(s) if v.overlay == Overlay::None && s.eq_ignore_ascii_case("p") => v.overlay = Overlay::Preferences,
-				Key::Character(s)
-					if (v.overlay == Overlay::None || v.overlay == Overlay::Library)
-						&& self.modifiers.control_key()
-						&& s.eq_ignore_ascii_case("f") =>
-				{
-					v.overlay = Overlay::Search;
-					v.overlay_text_input.clear();
-				}
-				Key::Character(s)
-					if (v.overlay == Overlay::None || v.overlay == Overlay::Library)
-						&& self.modifiers.control_key()
-						&& s.eq_ignore_ascii_case("s") =>
-				{
-					v.overlay = Overlay::SaveChip;
-					v.overlay_text_input = v.root_chip_name.clone();
-				}
-				Key::Character(s)
-					if (v.overlay == Overlay::None || v.overlay == Overlay::Library)
-						&& self.modifiers.control_key()
-						&& s.eq_ignore_ascii_case("n") =>
-				{
-					start_new_chip(v, &self.paths, &mut self.status);
-				}
-				Key::Named(NamedKey::Tab) => {
-					if v.overlay == Overlay::Library {
-						let mut desc = v.prefs.clone();
-						if Saver::save_project_description(&self.paths, &mut desc).is_ok() {
-							v.prefs = desc;
-						}
-						v.overlay = Overlay::None;
-						reset_library_popup_state(v);
-						v.library_selection = LibrarySelection::None;
-					} else if v.overlay == Overlay::None {
-						sync_library_collections(&mut v.prefs, &v.library);
-						v.overlay = Overlay::Library;
-					}
-				}
-				Key::Named(NamedKey::Escape) => {
-					if v.overlay == Overlay::Library
-						&& (v.library_creating_collection
-							|| v.library_renaming_collection
-							|| v.library_confirming_chip_delete
-							|| v.library_confirming_collection_delete)
-					{
-						reset_library_popup_state(v);
-					} else if v.overlay != Overlay::None {
-						v.overlay = Overlay::None;
-						v.overlay_text_input.clear();
-						v.rom_editor = None;
-						reset_library_popup_state(v);
-						v.library_selection = LibrarySelection::None;
-					} else if v.pending_wire.is_some() || v.pending_place.is_some() {
-						v.pending_wire = None;
-						v.pending_place = None;
-					} else if v.bottom_bar_open_collection.is_some() {
-						v.bottom_bar_open_collection = None;
-					} else {
-						self.return_to_menu();
-					}
-				}
-				_ => {}
-			},
+			}
 		}
 
 		let _ = event_loop;
@@ -2507,12 +2658,12 @@ impl App {
 	fn redraw(&mut self, event_loop: &ActiveEventLoop) {
 		let (vw, vh) = self.viewport.to_tuple();
 
-		// Layers are drawn back-to-front, each as its own fully-submitted pass, so a later layer's
-		// triangles paint over an earlier layer's text: 0 world (grid + chip scene), 1 ui_overlay
-		// (library/search/preferences/naming/key-select), 2 context_menu (right-click popup, top-most).
-		let world_layer;
-		let mut ui_overlay_layer = SceneGeometry::default();
-		let mut context_menu_layer = SceneGeometry::default();
+		// Rebuild this screen's whole UI stack from live state -- layers bottom-to-top, each drawn
+		// back-to-front as its own fully-submitted pass, so a later layer's triangles paint over an
+		// earlier layer's *text* too (the reason the old fixed triple-pass layout couldn't stack
+		// surfaces). Input dispatch in the handlers consults exactly what's built here.
+		let mut menu_stack = UiStack::new();
+		let mut viewer_stack: UiStack<ViewerAction> = UiStack::new();
 
 		match &mut self.screen {
 			Screen::Menu => {
@@ -2520,18 +2671,14 @@ impl App {
 				if let Some(msg) = &self.status {
 					frame.geometry.labels.push(menu_ui::status_label(vw, vh, msg));
 				}
-				self.last_menu_buttons = frame.buttons.clone();
-				world_layer = frame.geometry;
+				menu_stack.push(StackLayer::from_frame(LayerId::MenuScreen, frame, Capture::FullScreen));
 
-				// Popup (rename/new-project/delete-confirm), if open, is its own layer: guarantees its
-				// background and text both composite on top of the screen underneath, rather than
-				// sharing one pass with it, and lets clicks be tested against it in isolation.
+				// Popup (rename/new-project/delete-confirm), if open, is its own layer stacked on
+				// top: guarantees its background and text both composite over the screen underneath,
+				// and its full-screen capture keeps clicks from reaching the screen beneath it.
 				if self.menu.popup() != PopupKind::None {
 					let popup_frame = menu_ui::build_popup_frame(&self.menu, vw, vh, &self.text_input, self.mouse_pos);
-					self.last_popup_buttons = popup_frame.buttons;
-					ui_overlay_layer = popup_frame.geometry;
-				} else {
-					self.last_popup_buttons.clear();
+					menu_stack.push(StackLayer::from_frame(LayerId::MenuPopup, popup_frame, Capture::FullScreen));
 				}
 			}
 			Screen::Viewer(v) => {
@@ -2545,8 +2692,8 @@ impl App {
 
 				let root_desc = v.library.get(&v.root_chip_name);
 				let lookup = SimulatorPinState { sim: &v.sim, scope: v.sim.root() };
-				let hover_world_pos = Some(v.camera.screen_to_world(self.mouse_pos));
-				let chip_scene = build_scene(root_desc, &v.library, &lookup, hover_world_pos);
+				let hover_world_pos = v.camera.screen_to_world(self.mouse_pos);
+				let chip_scene = build_scene(root_desc, &v.library, &lookup, Some(hover_world_pos));
 
 				if !v.camera_fitted {
 					let bounds = bounding_box(&chip_scene).or_else(|| bounding_box(&build_scene(root_desc, &v.library, &AllLow, None)));
@@ -2560,21 +2707,21 @@ impl App {
 				scene.triangles.extend(chip_scene.triangles);
 				scene.labels.extend(chip_scene.labels);
 				if let Some(pending) = &v.pending_wire {
-					draw_pending_wire_preview(&mut scene, pending, hover_world_pos.expect("just set above"));
+					draw_pending_wire_preview(&mut scene, pending, hover_world_pos);
 				}
 				if let Some(chip_name) = &v.pending_place {
-					if let Some(ghost) = build_pending_place_scene(&v.library, chip_name, hover_world_pos.expect("just set above")) {
+					if let Some(ghost) = build_pending_place_scene(&v.library, chip_name, hover_world_pos) {
 						scene.triangles.extend(ghost.triangles);
 						scene.labels.extend(ghost.labels);
 					}
 				}
-				world_layer = scene;
+				viewer_stack.push(StackLayer::<ViewerAction>::new(LayerId::Canvas, Capture::None).with_geometry(scene));
 
 				// Bottom bar of starred chips/collections is always drawn (mirrors `BottomBarUI`
-				// always being visible), its buttons just disabled while a modal overlay is open --
+				// always being visible), its buttons just disabled while an overlay panel is open --
 				// see `EditorAction::ToggleStarredCollectionPopup`'s docs for what its "MENU" button
 				// equivalent deliberately doesn't do here.
-				let bar_enabled = v.overlay == Overlay::None;
+				let bar_enabled = v.overlays.is_empty();
 				let bar_cycle_blocked: std::collections::HashSet<String> = v
 					.prefs
 					.starred_list
@@ -2582,25 +2729,49 @@ impl App {
 					.filter(|it| !it.is_collection && would_create_cycle(&v.library, &v.root_chip_name, &it.name))
 					.map(|it| it.name.to_ascii_lowercase())
 					.collect();
-				let bar_frame = editor_ui::build_starred_bottom_bar(
+				let mut bar_frame = editor_ui::build_starred_bottom_bar(
 					&v.prefs.starred_list,
 					v.bottom_bar_open_collection.as_deref(),
 					bar_enabled,
 					&bar_cycle_blocked,
-					vw,
-					vh,
-					self.mouse_pos,
+					v.bottom_bar_scroll_x,
+					UiCtx::new(vw, vh, self.mouse_pos),
 				);
-				v.last_bottom_bar_buttons = bar_frame.buttons;
-				let mut bar_geometry = bar_frame.geometry;
+				// Measure how far the strip actually overflows (buttons are laid out at their
+				// scrolled positions, so add the current offset back), clamp the stored offset
+				// against it and rebuild if that moved anything -- e.g. right after un-starring
+				// the last overflowing item.
+				{
+					let content_right = bar_frame.buttons.iter().map(|b| b.rect.x + b.rect.w).fold(0.0f32, f32::max);
+					v.bottom_bar_scroll_max = (content_right + editor_ui::BOTTOM_BAR_BTN_PAD + v.bottom_bar_scroll_x - vw).max(0.0);
+					if v.bottom_bar_scroll_x > v.bottom_bar_scroll_max {
+						v.bottom_bar_scroll_x = v.bottom_bar_scroll_max;
+						bar_frame = editor_ui::build_starred_bottom_bar(
+							&v.prefs.starred_list,
+							v.bottom_bar_open_collection.as_deref(),
+							bar_enabled,
+							&bar_cycle_blocked,
+							v.bottom_bar_scroll_x,
+							UiCtx::new(vw, vh, self.mouse_pos),
+						);
+					}
+				}
+				let bar_rect = UiRect::new(0.0, vh - editor_ui::BOTTOM_BAR_HEIGHT, vw, editor_ui::BOTTOM_BAR_HEIGHT);
+				let mut bar_layer =
+					StackLayer::convert_frame(LayerId::BottomBar, bar_frame, Capture::Rect(bar_rect), editor_action).with_scroll_region(bar_rect);
+				bar_layer.geometry = pin_overlay_to_screen(std::mem::take(&mut bar_layer.geometry), &v.camera, vw, vh);
+				viewer_stack.push(bar_layer);
 
 				if bar_enabled {
 					if let Some(open_name) = v.bottom_bar_open_collection.clone() {
 						if let Some(collection) = v.prefs.chip_collections.iter().find(|c| c.name.eq_ignore_ascii_case(&open_name)) {
-							let anchor_x = v
-								.last_bottom_bar_buttons
+							let anchor_x = viewer_stack
+								.layers()
 								.iter()
-								.find(|b| matches!(&b.action, EditorAction::ToggleStarredCollectionPopup(n) if n.eq_ignore_ascii_case(&open_name)))
+								.flat_map(|l| l.buttons.iter())
+								.find(
+									|b| matches!(b.action, ViewerAction::Editor(EditorAction::ToggleStarredCollectionPopup(ref n)) if n.eq_ignore_ascii_case(&open_name)),
+								)
 								.map(|b| b.rect.x)
 								.unwrap_or(8.0);
 							let flyout_cycle_blocked: std::collections::HashSet<String> = collection
@@ -2609,29 +2780,24 @@ impl App {
 								.filter(|n| would_create_cycle(&v.library, &v.root_chip_name, n))
 								.map(|n| n.to_ascii_lowercase())
 								.collect();
-							let popup_frame =
+							let flyout_frame =
 								editor_ui::build_starred_collection_popup(collection, anchor_x, true, &flyout_cycle_blocked, vw, vh, self.mouse_pos);
-							v.last_bottom_bar_popup_buttons = popup_frame.buttons;
-							bar_geometry.triangles.extend(popup_frame.geometry.triangles);
-							bar_geometry.labels.extend(popup_frame.geometry.labels);
-						} else {
-							v.last_bottom_bar_popup_buttons.clear();
+							// The flyout captures its whole panel rect (exposed by `frame.panel`),
+							// so clicks on the padding between/around its rows belong to it rather
+							// than falling through to the canvas or the bar underneath.
+							let capture = flyout_frame.panel.map_or(Capture::FullScreen, Capture::Rect);
+							let mut flyout_layer = StackLayer::convert_frame(LayerId::BottomBarFlyout, flyout_frame, capture, editor_action);
+							flyout_layer.geometry = pin_overlay_to_screen(std::mem::take(&mut flyout_layer.geometry), &v.camera, vw, vh);
+							viewer_stack.push(flyout_layer);
 						}
-					} else {
-						v.last_bottom_bar_popup_buttons.clear();
 					}
-				} else {
-					v.last_bottom_bar_popup_buttons.clear();
 				}
 
-				ui_overlay_layer = pin_overlay_to_screen(bar_geometry, &v.camera, vw, vh);
-
-				// Overlays are laid out in screen-pixel space by `editor_ui` -- remap that into
-				// `v.camera`'s current world space so they stay pinned to the screen regardless of
-				// pan/zoom. Appended onto the bottom bar's own layer (rather than replacing it) so
-				// a modal overlay still composites on top of the bar drawn beneath it.
-				if v.overlay != Overlay::None {
-					let overlay_frame = match v.overlay {
+				// Overlay panels, bottom-to-top in open order -- several can be stacked at once
+				// (Ctrl+F pushes Search on top of an open Library). Each captures the full screen:
+				// they're modal, so nothing underneath (bar included) gets clicked through them.
+				for overlay in v.overlays.clone() {
+					let overlay_frame = match overlay {
 						Overlay::Library => {
 							let selected_chip_name = match v.library_selection {
 								LibrarySelection::Chip(ci, chi) => v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).cloned(),
@@ -2659,7 +2825,7 @@ impl App {
 						Overlay::Search => {
 							let mut names: Vec<String> = v.library.iter().map(|d| d.name.clone()).collect();
 							names.sort();
-							editor_ui::build_search_popup(&names, &v.overlay_text_input, vw, vh, self.mouse_pos)
+							editor_ui::build_search_popup(&names, &v.search_query, vw, vh, self.mouse_pos)
 						}
 						Overlay::Preferences => editor_ui::build_preferences_panel(&v.prefs, vw, vh, self.mouse_pos),
 						Overlay::Naming => {
@@ -2685,27 +2851,48 @@ impl App {
 							let mode = save_chip_mode(v, &v.overlay_text_input);
 							editor_ui::build_save_chip_popup(&v.root_chip_name, &v.overlay_text_input, mode, vw, vh, self.mouse_pos)
 						}
-						Overlay::None => unreachable!(),
 					};
-					v.last_overlay_buttons = overlay_frame.buttons;
-					let pinned_overlay = pin_overlay_to_screen(overlay_frame.geometry, &v.camera, vw, vh);
-					ui_overlay_layer.triangles.extend(pinned_overlay.triangles);
-					ui_overlay_layer.labels.extend(pinned_overlay.labels);
-				} else {
-					v.last_overlay_buttons.clear();
+					let layer_id = overlay.layer_id();
+					let mut overlay_layer = StackLayer::convert_frame(layer_id, overlay_frame, Capture::FullScreen, editor_action);
+					overlay_layer.geometry = pin_overlay_to_screen(std::mem::take(&mut overlay_layer.geometry), &v.camera, vw, vh);
+					viewer_stack.push(overlay_layer);
 				}
 
-				// Right-click popup: the top-most layer of all, drawn (and composited) on top of the
-				// world and the ui overlay layers above.
+				// Right-click popup: above even the modal overlays.
 				if let Some(state) = &v.context_menu {
 					let menu_frame = context_menu::build_context_menu(state, vw, vh, self.mouse_pos);
-					v.last_context_menu_buttons = menu_frame.buttons;
-					context_menu_layer = pin_overlay_to_screen(menu_frame.geometry, &v.camera, vw, vh);
-				} else {
-					v.last_context_menu_buttons.clear();
+					// `ContextMenuFrame` isn't a `ui_kit::Frame` (it tracks hover for its own
+					// highlight pass), so build its stack layer by hand: same capture/button shape.
+					let mut ctx_layer = StackLayer::<ViewerAction>::new(LayerId::ContextMenu, Capture::Rect(menu_frame.panel_rect));
+					ctx_layer.geometry = pin_overlay_to_screen(menu_frame.geometry, &v.camera, vw, vh);
+					ctx_layer.buttons =
+						menu_frame.buttons.into_iter().map(|b| Button { rect: b.rect, action: ViewerAction::Context(b.id), enabled: true }).collect();
+					viewer_stack.push(ctx_layer);
 				}
 			}
 		};
+
+		// Transient status/error toast floats above everything else on either screen; its layer
+		// never captures input, so it never blocks what's underneath.
+		if let Some(msg) = &self.status {
+			match &mut self.screen {
+				Screen::Menu => {
+					let mut geo = SceneGeometry::default();
+					geo.labels.push(menu_ui::status_label(vw, vh, msg));
+					menu_stack.push(StackLayer::<UiAction>::new(LayerId::StatusToast, Capture::None).with_geometry(geo));
+				}
+				Screen::Viewer(v) => {
+					let geo =
+						pin_overlay_to_screen(status_toast_geometry(msg, vw, vh, Some(vh - editor_ui::BOTTOM_BAR_HEIGHT - 34.0)), &v.camera, vw, vh);
+					viewer_stack.push(StackLayer::<ViewerAction>::new(LayerId::StatusToast, Capture::None).with_geometry(geo));
+				}
+			}
+		}
+
+		self.menu_stack = menu_stack;
+		if let Screen::Viewer(v) = &mut self.screen {
+			v.stack = viewer_stack;
+		}
 
 		let camera = match &self.screen {
 			Screen::Menu => Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport: Vec2::new(vw, vh) },
@@ -2713,8 +2900,11 @@ impl App {
 		};
 
 		if let Some(state) = self.state.as_mut() {
-			let layers = [world_layer, ui_overlay_layer, context_menu_layer];
-			match state.renderer.render(&layers, &camera, theme::BACKGROUND_COL) {
+			let geoms = match &self.screen {
+				Screen::Menu => self.menu_stack.geometries(),
+				Screen::Viewer(v) => v.stack.geometries(),
+			};
+			match state.renderer.render(&geoms, &camera, theme::BACKGROUND_COL) {
 				Ok(()) => {}
 				Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
 					let size = state.window.inner_size();

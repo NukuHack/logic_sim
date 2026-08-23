@@ -8,7 +8,7 @@ use crate::json::ChipCollection;
 use crate::json::ProjectDescription;
 use crate::json::StarredItem;
 use crate::render::theme;
-use crate::render::ui_kit::{self, Frame, UiRect};
+use crate::render::ui_kit::{self, Frame, UiCtx, UiRect};
 use crate::structs::Vec2;
 use std::collections::HashSet;
 
@@ -141,16 +141,16 @@ const TITLE_FONT_SIZE: f32 = 26.0;
 const ROW_H: f32 = 34.0;
 const ROW_GAP: f32 = 6.0;
 
-fn panel_bg(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, colour: theme::Rgba) {
-	ui_kit::fill_rect(frame, vw, vh, rect, colour);
+fn panel_bg(frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, colour: theme::Rgba) {
+	ui_kit::fill_rect(frame, ui, rect, colour);
 }
 
-fn add_label(frame: &mut EditorFrame, vw: f32, vh: f32, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
-	ui_kit::add_label(frame, vw, vh, centre, width, text, colour, font_size);
+fn add_label(frame: &mut EditorFrame, ui: UiCtx, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
+	ui_kit::add_label(frame, ui, centre, width, text, colour, font_size);
 }
 
-fn add_button(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, label: &str, action: EditorAction, enabled: bool, mouse: Vec2) {
-	ui_kit::add_button(frame, vw, vh, rect, label, action, enabled, mouse, None);
+fn add_button(frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, label: &str, action: EditorAction, enabled: bool) {
+	ui_kit::add_button(frame, ui, rect, label, action, enabled, None);
 }
 
 /// Same as [`add_button`], but with an explicit base colour (before the
@@ -158,22 +158,12 @@ fn add_button(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, label: &s
 /// save-chip popup's "Replace" button, which is deliberately red (see
 /// `build_save_chip_popup`) since it's a destructive action (backs up,
 /// then overwrites, a different existing chip).
-fn add_button_coloured(
-	frame: &mut EditorFrame,
-	vw: f32,
-	vh: f32,
-	rect: UiRect,
-	label: &str,
-	action: EditorAction,
-	enabled: bool,
-	mouse: Vec2,
-	base_colour: theme::Rgba,
-) {
-	ui_kit::add_button(frame, vw, vh, rect, label, action, enabled, mouse, Some(base_colour));
+fn add_button_coloured(frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, label: &str, action: EditorAction, enabled: bool, base_colour: theme::Rgba) {
+	ui_kit::add_button(frame, ui, rect, label, action, enabled, Some(base_colour));
 }
 
-fn finish(frame: EditorFrame, mouse: Vec2) -> EditorFrame {
-	ui_kit::finish(frame, mouse)
+fn finish(frame: EditorFrame, ui: UiCtx) -> EditorFrame {
+	ui_kit::finish(frame, ui.mouse)
 }
 
 // ---------------------------------------------------------------------
@@ -204,13 +194,14 @@ struct PrefRow<'a> {
 /// value back to its own copy of `desc` and re-calling this each frame,
 /// same pattern as `menu_ui`'s settings screen.
 pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = (vw * 0.6).clamp(360.0, 620.0);
 	let cx = vw / 2.0;
 	let top = vh * 0.12;
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, top - 40.0, panel_w, vh * 0.76);
-	panel_bg(&mut frame, vw, vh, panel_rect, [0.14, 0.14, 0.16, 0.97]);
-	add_label(&mut frame, vw, vh, Vec2::new(cx, top - 10.0), panel_w - 40.0, "Preferences", [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE);
+	panel_bg(&mut frame, ui, panel_rect, [0.14, 0.14, 0.16, 0.97]);
+	add_label(&mut frame, ui, Vec2::new(cx, top - 10.0), panel_w - 40.0, "Preferences", [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE);
 
 	let rows = [
 		PrefRow { label: "Show I/O pin names", options: &PIN_DISPLAY_OPTIONS, current: desc.prefs_main_pin_names_display_mode },
@@ -228,8 +219,7 @@ pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mous
 		let field_rect = UiRect::new(panel_rect.x + panel_w - field_w - 20.0, y, field_w, ROW_H);
 		add_label(
 			&mut frame,
-			vw,
-			vh,
+			ui,
 			Vec2::new(label_x + (panel_w - field_w - 60.0) / 2.0, y + ROW_H / 2.0),
 			panel_w - field_w - 60.0,
 			row.label,
@@ -237,16 +227,16 @@ pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mous
 			FONT_SIZE * 0.9,
 		);
 		let option_text = row.options.get(row.current as usize).copied().unwrap_or("?");
-		add_button(&mut frame, vw, vh, field_rect, option_text, EditorAction::CyclePref(i), true, mouse);
+		add_button(&mut frame, ui, field_rect, option_text, EditorAction::CyclePref(i), true);
 		y += ROW_H + ROW_GAP;
 	}
 
 	let apply_rect = UiRect::new(cx - 90.0, panel_rect.y + panel_rect.h - 56.0, 180.0, 40.0);
-	add_button(&mut frame, vw, vh, apply_rect, "Apply", EditorAction::ApplyPreferences, true, mouse);
+	add_button(&mut frame, ui, apply_rect, "Apply", EditorAction::ApplyPreferences, true);
 	let close_rect = UiRect::new(cx - 90.0, panel_rect.y + panel_rect.h - 10.0, 180.0, 32.0);
-	add_button(&mut frame, vw, vh, close_rect, "Close", EditorAction::ClosePopup, true, mouse);
+	add_button(&mut frame, ui, close_rect, "Close", EditorAction::ClosePopup, true);
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 // ---------------------------------------------------------------------
@@ -318,21 +308,21 @@ fn is_starred(starred_list: &[StarredItem], name: &str, is_collection: bool) -> 
 /// `DrawHorizontalButtonGroup` uses throughout the original's selected-item
 /// panel), returning the y just below the row so callers can keep
 /// stacking without hand-computing offsets themselves.
-fn button_row(frame: &mut EditorFrame, vw: f32, vh: f32, x: f32, y: f32, width: f32, buttons: &[(&str, EditorAction, bool)], mouse: Vec2) -> f32 {
+fn button_row(frame: &mut EditorFrame, ui: UiCtx, x: f32, y: f32, width: f32, buttons: &[(&str, EditorAction, bool)]) -> f32 {
 	let gap = 6.0;
 	let n = buttons.len() as f32;
 	let w = (width - gap * (n - 1.0)) / n;
 	let mut bx = x;
 	for (label, action, enabled) in buttons {
-		add_button(frame, vw, vh, UiRect::new(bx, y, w, ROW_H), label, action.clone(), *enabled, mouse);
+		add_button(frame, ui, UiRect::new(bx, y, w, ROW_H), label, action.clone(), *enabled);
 		bx += w + gap;
 	}
 	y + ROW_H + 8.0
 }
 
-fn library_panel_header(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, title: &str) {
-	panel_bg(frame, vw, vh, rect, [0.11, 0.11, 0.12, 1.0]);
-	add_label(frame, vw, vh, rect.centre(), rect.w - 12.0, title, [0.24, 0.82, 0.41, 1.0], FONT_SIZE * 0.85);
+fn library_panel_header(frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, title: &str) {
+	panel_bg(frame, ui, rect, [0.11, 0.11, 0.12, 1.0]);
+	add_label(frame, ui, rect.centre(), rect.w - 12.0, title, [0.24, 0.82, 0.41, 1.0], FONT_SIZE * 0.85);
 }
 
 /// Builds the "real" three-panel chip library overlay: a STARRED list on
@@ -345,8 +335,9 @@ fn library_panel_header(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect,
 /// name field are drawn inline at the bottom of the detail column, same
 /// as the original.
 pub fn build_chip_library_panel(state: &ChipLibraryState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
-	panel_bg(&mut frame, vw, vh, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
+	panel_bg(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
 
 	let pad = 24.0;
 	let top = 20.0;
@@ -364,13 +355,14 @@ pub fn build_chip_library_panel(state: &ChipLibraryState, vw: f32, vh: f32, mous
 	build_collections_panel(&mut frame, vw, vh, UiRect::new(collections_x, top, collections_w, panel_h), state, mouse);
 	build_detail_panel(&mut frame, vw, vh, UiRect::new(detail_x, top, detail_w, panel_h), state, mouse);
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 fn build_starred_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState, mouse: Vec2) {
-	panel_bg(frame, vw, vh, rect, [0.16, 0.16, 0.18, 0.98]);
+	let ui = UiCtx::new(vw, vh, mouse);
+	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let header_h = 30.0;
-	library_panel_header(frame, vw, vh, UiRect::new(rect.x, rect.y, rect.w, header_h), "STARRED");
+	library_panel_header(frame, ui, UiRect::new(rect.x, rect.y, rect.w, header_h), "STARRED");
 
 	let mut y = rect.y + header_h + 8.0;
 	let row_w = rect.w - 16.0;
@@ -387,18 +379,19 @@ fn build_starred_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, 
 		} else {
 			[0.22, 0.22, 0.25, 1.0]
 		};
-		panel_bg(frame, vw, vh, row_rect, bg);
+		panel_bg(frame, ui, row_rect, bg);
 		let label = if item.is_collection { format!("[{}]", item.name) } else { item.name.clone() };
-		add_label(frame, vw, vh, row_rect.centre(), row_rect.w - 12.0, &label, theme::text_colour_for_background(bg), FONT_SIZE * 0.85);
+		add_label(frame, ui, row_rect.centre(), row_rect.w - 12.0, &label, theme::text_colour_for_background(bg), FONT_SIZE * 0.85);
 		frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::SelectStarredRow(i), enabled: true });
 		y += ROW_H;
 	}
 }
 
 fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState, mouse: Vec2) {
-	panel_bg(frame, vw, vh, rect, [0.16, 0.16, 0.18, 0.98]);
+	let ui = UiCtx::new(vw, vh, mouse);
+	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let header_h = 30.0;
-	library_panel_header(frame, vw, vh, UiRect::new(rect.x, rect.y, rect.w, header_h), "COLLECTIONS");
+	library_panel_header(frame, ui, UiRect::new(rect.x, rect.y, rect.w, header_h), "COLLECTIONS");
 
 	let mut y = rect.y + header_h + 8.0;
 	let row_w = rect.w - 16.0;
@@ -417,11 +410,10 @@ fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 		} else {
 			[0.24, 0.24, 0.27, 1.0]
 		};
-		panel_bg(frame, vw, vh, header_rect, bg);
+		panel_bg(frame, ui, header_rect, bg);
 		add_label(
 			frame,
-			vw,
-			vh,
+			ui,
 			header_rect.centre(),
 			row_w - 16.0,
 			&format!("{arrow} {}", collection.name),
@@ -445,8 +437,8 @@ fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 				} else {
 					[0.22, 0.22, 0.25, 1.0]
 				};
-				panel_bg(frame, vw, vh, row_rect, bg);
-				add_label(frame, vw, vh, row_rect.centre(), row_rect.w - 12.0, chip_name, theme::text_colour_for_background(bg), FONT_SIZE * 0.8);
+				panel_bg(frame, ui, row_rect, bg);
+				add_label(frame, ui, row_rect.centre(), row_rect.w - 12.0, chip_name, theme::text_colour_for_background(bg), FONT_SIZE * 0.8);
 				frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::SelectChipRow { collection: ci, chip: chi }, enabled: true });
 				y += ROW_H * 0.85 + 3.0;
 			}
@@ -456,7 +448,8 @@ fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 }
 
 fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState, mouse: Vec2) {
-	panel_bg(frame, vw, vh, rect, [0.16, 0.16, 0.18, 0.98]);
+	let ui = UiCtx::new(vw, vh, mouse);
+	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let inner_x = rect.x + 12.0;
 	let inner_w = rect.w - 24.0;
 	let mut y = rect.y + 12.0;
@@ -464,8 +457,7 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 	if state.confirming_chip_delete || state.confirming_collection_delete {
 		add_label(
 			frame,
-			vw,
-			vh,
+			ui,
 			Vec2::new(inner_x + inner_w / 2.0, y + 30.0),
 			inner_w,
 			state.delete_confirm_message,
@@ -475,13 +467,11 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 		y += 90.0;
 		y = button_row(
 			frame,
-			vw,
-			vh,
+			ui,
 			inner_x,
 			y,
 			inner_w,
 			&[("CANCEL", EditorAction::CancelLibraryPopup, true), ("DELETE", EditorAction::ConfirmDelete, true)],
-			mouse,
 		);
 		let _ = y;
 		return;
@@ -492,34 +482,23 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 			let Some(collection) = state.collections.get(ci) else { return };
 			let Some(chip_name) = collection.chips.get(chi) else { return };
 
-			add_label(frame, vw, vh, Vec2::new(inner_x + inner_w / 2.0, y + 12.0), inner_w, &collection.name, [0.75, 0.9, 0.8, 1.0], FONT_SIZE * 0.8);
+			add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 12.0), inner_w, &collection.name, [0.75, 0.9, 0.8, 1.0], FONT_SIZE * 0.8);
 			y += 28.0;
-			add_label(frame, vw, vh, Vec2::new(inner_x + inner_w / 2.0, y + 14.0), inner_w, chip_name, [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.75);
+			add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 14.0), inner_w, chip_name, [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.75);
 			y += 34.0;
 
 			let starred = is_starred(state.starred_list, chip_name, false);
 			let star_label = if starred { "REMOVE FROM STARRED" } else { "ADD TO STARRED" };
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
 				&[(star_label, EditorAction::ToggleStarred { name: chip_name.clone(), is_collection: false }, true)],
-				mouse,
 			);
 
-			y = button_row(
-				frame,
-				vw,
-				vh,
-				inner_x,
-				y,
-				inner_w,
-				&[("USE", EditorAction::PlaceChip(chip_name.clone()), !state.selected_chip_would_cycle)],
-				mouse,
-			);
+			y = button_row(frame, ui, inner_x, y, inner_w, &[("USE", EditorAction::PlaceChip(chip_name.clone()), !state.selected_chip_would_cycle)]);
 
 			let can_step_up = chi > 0;
 			let can_step_down = chi < collection.chips.len() - 1;
@@ -527,8 +506,7 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 			let can_jump_down = ci < state.collections.len() - 1;
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
@@ -536,12 +514,10 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 					("MOVE UP", EditorAction::MoveSelectedStep(false), can_step_up || can_jump_up),
 					("MOVE DOWN", EditorAction::MoveSelectedStep(true), can_step_down || can_jump_down),
 				],
-				mouse,
 			);
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
@@ -549,12 +525,10 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 					("JUMP UP", EditorAction::MoveSelectedJump(false), can_jump_up),
 					("JUMP DOWN", EditorAction::MoveSelectedJump(true), can_jump_down),
 				],
-				mouse,
 			);
 			button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
@@ -562,15 +536,13 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 					("OPEN", EditorAction::OpenSelectedChip(chip_name.clone()), state.selected_chip_is_custom),
 					("DELETE", EditorAction::RequestDeleteChip(chip_name.clone()), state.selected_chip_is_custom),
 				],
-				mouse,
 			);
 		}
 		LibrarySelection::Collection(ci) => {
 			let Some(collection) = state.collections.get(ci) else { return };
 			add_label(
 				frame,
-				vw,
-				vh,
+				ui,
 				Vec2::new(inner_x + inner_w / 2.0, y + 14.0),
 				inner_w,
 				&collection.name,
@@ -583,18 +555,15 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 			let star_label = if starred { "REMOVE FROM STARRED" } else { "ADD TO STARRED" };
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
 				&[(star_label, EditorAction::ToggleStarred { name: collection.name.clone(), is_collection: true }, true)],
-				mouse,
 			);
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
@@ -602,39 +571,33 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 					("MOVE UP", EditorAction::MoveSelectedStep(false), ci > 0),
 					("MOVE DOWN", EditorAction::MoveSelectedStep(true), ci < state.collections.len() - 1),
 				],
-				mouse,
 			);
 			let can_edit = !collection.name.eq_ignore_ascii_case("OTHER");
 			button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
 				&[("RENAME", EditorAction::BeginRenameCollection, can_edit), ("DELETE", EditorAction::RequestDeleteCollection, can_edit)],
-				mouse,
 			);
 		}
 		LibrarySelection::Starred(i) => {
 			let Some(item) = state.starred_list.get(i) else { return };
-			add_label(frame, vw, vh, Vec2::new(inner_x + inner_w / 2.0, y + 14.0), inner_w, &item.name, [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.75);
+			add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 14.0), inner_w, &item.name, [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.75);
 			y += 34.0;
 
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
 				&[("REMOVE FROM STARRED", EditorAction::ToggleStarred { name: item.name.clone(), is_collection: item.is_collection }, true)],
-				mouse,
 			);
 			y = button_row(
 				frame,
-				vw,
-				vh,
+				ui,
 				inner_x,
 				y,
 				inner_w,
@@ -642,13 +605,11 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 					("MOVE UP", EditorAction::MoveSelectedStep(false), i > 0),
 					("MOVE DOWN", EditorAction::MoveSelectedStep(true), i < state.starred_list.len() - 1),
 				],
-				mouse,
 			);
 			if !item.is_collection {
 				button_row(
 					frame,
-					vw,
-					vh,
+					ui,
 					inner_x,
 					y,
 					inner_w,
@@ -656,7 +617,6 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 						("OPEN", EditorAction::OpenSelectedChip(item.name.clone()), state.selected_chip_is_custom),
 						("DELETE", EditorAction::RequestDeleteChip(item.name.clone()), state.selected_chip_is_custom),
 					],
-					mouse,
 				);
 			}
 		}
@@ -669,22 +629,20 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 
 	if state.creating_collection || state.renaming_collection {
 		let field_rect = UiRect::new(inner_x, footer_y, inner_w, 30.0);
-		ui_kit::text_field_row(frame, vw, vh, field_rect, state.name_field_text, "", FONT_SIZE, 12.0);
+		ui_kit::text_field_row(frame, ui, field_rect, state.name_field_text, "", FONT_SIZE, 12.0);
 		let confirm_enabled = !state.name_field_text.trim().is_empty();
 		let confirm_label = if state.renaming_collection { "RENAME" } else { "CREATE" };
 		button_row(
 			frame,
-			vw,
-			vh,
+			ui,
 			inner_x,
 			footer_y + 36.0,
 			inner_w,
 			&[("CANCEL", EditorAction::CancelLibraryPopup, true), (confirm_label, EditorAction::ConfirmCollectionName, confirm_enabled)],
-			mouse,
 		);
 	} else {
-		add_button(frame, vw, vh, UiRect::new(inner_x, footer_y, inner_w, 32.0), "NEW COLLECTION", EditorAction::BeginNewCollection, true, mouse);
-		add_button(frame, vw, vh, UiRect::new(inner_x, footer_y + 40.0, inner_w, 32.0), "EXIT LIBRARY", EditorAction::ExitLibrary, true, mouse);
+		add_button(frame, ui, UiRect::new(inner_x, footer_y, inner_w, 32.0), "NEW COLLECTION", EditorAction::BeginNewCollection, true);
+		add_button(frame, ui, UiRect::new(inner_x, footer_y + 40.0, inner_w, 32.0), "EXIT LIBRARY", EditorAction::ExitLibrary, true);
 	}
 }
 
@@ -697,13 +655,14 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 /// containing `query` as a case-insensitive substring, matching
 /// `SearchPopup`'s filtering.
 pub fn build_search_popup(all_chip_names: &[String], query: &str, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = 420.0_f32.min(vw - 80.0);
 	let cx = vw / 2.0;
 	let top = vh * 0.07;
 
 	let field_rect = UiRect::new(cx - panel_w / 2.0, top, panel_w, 36.0);
-	ui_kit::text_field_row(&mut frame, vw, vh, field_rect, query, "Search...", FONT_SIZE, 16.0);
+	ui_kit::text_field_row(&mut frame, ui, field_rect, query, "Search...", FONT_SIZE, 16.0);
 
 	let needle = query.to_lowercase();
 	let filtered: Vec<&String> = all_chip_names.iter().filter(|n| needle.is_empty() || n.to_lowercase().contains(&needle)).collect();
@@ -717,17 +676,17 @@ pub fn build_search_popup(all_chip_names: &[String], query: &str, vw: f32, vh: f
 		}
 		let row_rect = UiRect::new(cx - panel_w / 2.0, y, panel_w, ROW_H - 4.0);
 		let bg = if row_rect.contains(mouse) { [0.32, 0.32, 0.36, 1.0] } else { [0.22, 0.22, 0.25, 1.0] };
-		ui_kit::fill_rect(&mut frame, vw, vh, row_rect, bg);
-		add_label(&mut frame, vw, vh, row_rect.centre(), row_rect.w - 16.0, name, theme::text_colour_for_background(bg), FONT_SIZE * 0.9);
+		ui_kit::fill_rect(&mut frame, ui, row_rect, bg);
+		add_label(&mut frame, ui, row_rect.centre(), row_rect.w - 16.0, name, theme::text_colour_for_background(bg), FONT_SIZE * 0.9);
 		frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::UseChip((*name).clone()), enabled: true });
 		y += ROW_H;
 	}
 
 	if filtered.is_empty() {
-		add_label(&mut frame, vw, vh, Vec2::new(cx, list_top + 20.0), panel_w, "No matching chips", [0.7, 0.7, 0.7, 1.0], FONT_SIZE * 0.9);
+		add_label(&mut frame, ui, Vec2::new(cx, list_top + 20.0), panel_w, "No matching chips", [0.7, 0.7, 0.7, 1.0], FONT_SIZE * 0.9);
 	}
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 // ---------------------------------------------------------------------
@@ -741,6 +700,7 @@ pub fn build_search_popup(all_chip_names: &[String], query: &str, vw: f32, vh: f
 /// `confirm_enabled` mirrors the caller's own validation (e.g. max
 /// length) -- this builder has no opinion on what makes a label valid.
 pub fn build_simple_naming_popup(title: &str, text: &str, confirm_enabled: bool, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = 360.0;
 	let panel_h = 150.0;
@@ -748,21 +708,21 @@ pub fn build_simple_naming_popup(title: &str, text: &str, confirm_enabled: bool,
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
 	if !title.is_empty() {
-		add_label(&mut frame, vw, vh, Vec2::new(cx, panel_rect.y + 26.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 20.0);
+		add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 26.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 20.0);
 	}
 
 	let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 46.0, panel_w - 60.0, 34.0);
-	ui_kit::text_field_row(&mut frame, vw, vh, field_rect, text, "", FONT_SIZE, 16.0);
+	ui_kit::text_field_row(&mut frame, ui, field_rect, text, "", FONT_SIZE, 16.0);
 
 	let confirm_rect = UiRect::new(cx - 186.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0);
 	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0);
-	add_button(&mut frame, vw, vh, confirm_rect, "Confirm", EditorAction::ConfirmName, confirm_enabled, mouse);
-	add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+	add_button(&mut frame, ui, confirm_rect, "Confirm", EditorAction::ConfirmName, confirm_enabled);
+	add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 // ---------------------------------------------------------------------
@@ -776,6 +736,7 @@ pub const KEY_SELECT_ALLOWED_CHARS: &str = "1234567890QWERTYUIOPASDFGHJKLZXCVBNM
 /// this from raw keyboard input using [`KEY_SELECT_ALLOWED_CHARS`] to
 /// filter, same as the original, and re-calls this each frame).
 pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = 320.0;
 	let panel_h = 220.0;
@@ -783,12 +744,11 @@ pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse:
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
 	add_label(
 		&mut frame,
-		vw,
-		vh,
+		ui,
 		Vec2::new(cx, panel_rect.y + 30.0),
 		panel_w - 30.0,
 		"Press a key to rebind\n(alphanumeric only)",
@@ -797,16 +757,16 @@ pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse:
 	);
 
 	let key_box = UiRect::new(cx - 35.0, panel_rect.y + 66.0, 70.0, 70.0);
-	panel_bg(&mut frame, vw, vh, key_box, [0.1, 0.1, 0.1, 1.0]);
+	panel_bg(&mut frame, ui, key_box, [0.1, 0.1, 0.1, 1.0]);
 	let shown = chosen_key.map(|c| c.to_string()).unwrap_or_default();
-	add_label(&mut frame, vw, vh, key_box.centre(), key_box.w, &shown, [1.0, 1.0, 1.0, 1.0], 27.0);
+	add_label(&mut frame, ui, key_box.centre(), key_box.w, &shown, [1.0, 1.0, 1.0, 1.0], 27.0);
 
 	let confirm_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0);
 	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0);
-	add_button(&mut frame, vw, vh, confirm_rect, "Confirm", EditorAction::ConfirmKey, chosen_key.is_some(), mouse);
-	add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+	add_button(&mut frame, ui, confirm_rect, "Confirm", EditorAction::ConfirmKey, chosen_key.is_some());
+	add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 // ---------------------------------------------------------------------
@@ -839,6 +799,7 @@ const ROM_CELL_GAP: f32 = 2.0;
 /// for hex input; displays decimal, to match the plain-number contents
 /// most ROM programs actually use.
 pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 
 	let grid_w = ROM_GRID_COLS as f32 * (ROM_CELL_W + ROM_CELL_GAP) - ROM_CELL_GAP;
@@ -851,19 +812,19 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
-	add_label(&mut frame, vw, vh, Vec2::new(cx, panel_rect.y + 20.0), panel_w - 30.0, "Configure ROM (256 x 16-bit)", [1.0, 1.0, 1.0, 1.0], 20.0);
+	add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 20.0), panel_w - 30.0, "Configure ROM (256 x 16-bit)", [1.0, 1.0, 1.0, 1.0], 20.0);
 
 	let selected = selected.min(ROM_WORD_COUNT - 1);
 	let addr_label = format!("Address {selected} (0x{selected:02X})");
-	add_label(&mut frame, vw, vh, Vec2::new(panel_rect.x + 90.0, panel_rect.y + 52.0), 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
+	add_label(&mut frame, ui, Vec2::new(panel_rect.x + 90.0, panel_rect.y + 52.0), 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
 
 	let field_rect = UiRect::new(panel_rect.x + panel_w - 190.0, panel_rect.y + 38.0, 100.0, 30.0);
-	ui_kit::text_field_row(&mut frame, vw, vh, field_rect, edit_text, "", FONT_SIZE, 10.0);
+	ui_kit::text_field_row(&mut frame, ui, field_rect, edit_text, "", FONT_SIZE, 10.0);
 
 	let set_rect = UiRect::new(panel_rect.x + panel_w - 80.0, panel_rect.y + 38.0, 60.0, 30.0);
-	add_button(&mut frame, vw, vh, set_rect, "Set", EditorAction::RomConfirmCell, true, mouse);
+	add_button(&mut frame, ui, set_rect, "Set", EditorAction::RomConfirmCell, true);
 
 	let grid_origin = Vec2::new(panel_rect.x + (panel_w - grid_w) / 2.0, panel_rect.y + header_h);
 	for row in 0..ROM_GRID_ROWS {
@@ -887,18 +848,18 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 			} else {
 				[0.14, 0.14, 0.16, 1.0]
 			};
-			panel_bg(&mut frame, vw, vh, cell_rect, bg);
-			add_label(&mut frame, vw, vh, cell_rect.centre(), cell_rect.w - 4.0, &value.to_string(), theme::text_colour_for_background(bg), 11.0);
+			panel_bg(&mut frame, ui, cell_rect, bg);
+			add_label(&mut frame, ui, cell_rect.centre(), cell_rect.w - 4.0, &value.to_string(), theme::text_colour_for_background(bg), 11.0);
 			frame.buttons.push(EditorButton { rect: cell_rect, action: EditorAction::RomSelectCell(idx), enabled: true });
 		}
 	}
 
 	let apply_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0);
 	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0);
-	add_button(&mut frame, vw, vh, apply_rect, "Apply", EditorAction::RomApply, true, mouse);
-	add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+	add_button(&mut frame, ui, apply_rect, "Apply", EditorAction::RomApply, true);
+	add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 // ---------------------------------------------------------------------
@@ -937,6 +898,7 @@ pub enum SaveChipMode {
 /// which action buttons to show -- and, for `Replace`, colours it red
 /// since it's destructive to *some other* chip's save file.
 pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = 420.0;
 	let panel_h = 178.0;
@@ -944,12 +906,11 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	panel_bg(&mut frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
 	add_label(
 		&mut frame,
-		vw,
-		vh,
+		ui,
 		Vec2::new(cx, panel_rect.y + 24.0),
 		panel_w - 40.0,
 		&format!("Save chip (currently: {current_name})"),
@@ -958,7 +919,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 	);
 
 	let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 48.0, panel_w - 60.0, 34.0);
-	ui_kit::text_field_row(&mut frame, vw, vh, field_rect, text, "", FONT_SIZE, 16.0);
+	ui_kit::text_field_row(&mut frame, ui, field_rect, text, "", FONT_SIZE, 16.0);
 
 	let hint = match mode {
 		SaveChipMode::Save => "",
@@ -966,7 +927,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		SaveChipMode::SaveAsOrRename => "Name changed -- keep both, or rename?",
 	};
 	if !hint.is_empty() {
-		add_label(&mut frame, vw, vh, Vec2::new(cx, panel_rect.y + 92.0), panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
+		add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 92.0), panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
 	}
 
 	let confirm_enabled = !text.trim().is_empty();
@@ -975,37 +936,27 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		SaveChipMode::Save => {
 			let confirm_rect = UiRect::new(cx - 186.0, button_y, 180.0, 36.0);
 			let cancel_rect = UiRect::new(cx + 6.0, button_y, 180.0, 36.0);
-			add_button(&mut frame, vw, vh, confirm_rect, "Save", EditorAction::SaveChipConfirm, confirm_enabled, mouse);
-			add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+			add_button(&mut frame, ui, confirm_rect, "Save", EditorAction::SaveChipConfirm, confirm_enabled);
+			add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 		}
 		SaveChipMode::Replace => {
 			let confirm_rect = UiRect::new(cx - 186.0, button_y, 180.0, 36.0);
 			let cancel_rect = UiRect::new(cx + 6.0, button_y, 180.0, 36.0);
-			add_button_coloured(
-				&mut frame,
-				vw,
-				vh,
-				confirm_rect,
-				"Replace",
-				EditorAction::SaveChipConfirm,
-				confirm_enabled,
-				mouse,
-				[0.62, 0.18, 0.18, 1.0],
-			);
-			add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+			add_button_coloured(&mut frame, ui, confirm_rect, "Replace", EditorAction::SaveChipConfirm, confirm_enabled, [0.62, 0.18, 0.18, 1.0]);
+			add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 		}
 		SaveChipMode::SaveAsOrRename => {
 			let w = (panel_w - 60.0 - 16.0) / 3.0;
 			let save_as_rect = UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0);
 			let rename_rect = UiRect::new(save_as_rect.x + w + 8.0, button_y, w, 36.0);
 			let cancel_rect = UiRect::new(rename_rect.x + w + 8.0, button_y, w, 36.0);
-			add_button(&mut frame, vw, vh, save_as_rect, "Save As", EditorAction::SaveChipSaveAs, confirm_enabled, mouse);
-			add_button(&mut frame, vw, vh, rename_rect, "Rename", EditorAction::SaveChipRename, confirm_enabled, mouse);
-			add_button(&mut frame, vw, vh, cancel_rect, "Cancel", EditorAction::ClosePopup, true, mouse);
+			add_button(&mut frame, ui, save_as_rect, "Save As", EditorAction::SaveChipSaveAs, confirm_enabled);
+			add_button(&mut frame, ui, rename_rect, "Rename", EditorAction::SaveChipRename, confirm_enabled);
+			add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 		}
 	}
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 // ---------------------------------------------------------------------
@@ -1017,7 +968,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 /// occupies (e.g. to keep it from covering anything else drawn there).
 pub const BOTTOM_BAR_HEIGHT: f32 = 44.0;
 const BOTTOM_BAR_BTN_GAP: f32 = 6.0;
-const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
+pub const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 
 /// Builds the persistent bottom bar of starred chips/collections --
 /// mirrors the chip-button strip half of `BottomBarUI.DrawBottomBar`.
@@ -1025,6 +976,42 @@ const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 /// here since every one of those already has its own keyboard shortcut
 /// in this port (see `bin/app.rs`'s shortcut handling), so the bar's
 /// only new surface is starred access.
+///
+/// `scroll_x` is the bar's horizontal scroll offset in pixels: with more
+/// starred items than fit the window width, the host scrolls the strip
+/// (the UI stack routes wheel events over the bar to it instead of
+/// letting them reach the canvas zoom underneath) and passes the clamped
+/// offset back in here, shifting every button left by that amount.
+///
+/// A plain starred chip's button (left click) picks it up for placement
+/// -- same as the library's "USE" button, see [`EditorAction::PlaceChip`]
+/// -- and mirrors the original's `StartPlacing`. Greyed out (same
+/// treatment a builtin's "Open" gets) when placing it into the currently
+/// open chip would create a recursive cycle -- `cycle_blocked` is a
+/// precomputed, case-insensitive set of such chip names (see
+/// `bin/app.rs`'s `would_create_cycle`; this module has no `ChipLibrary`
+/// access of its own to work it out). Right-clicking it instead opens a
+/// small popup offering "Open" (switch to editing its definition) and
+/// "Un-star", handled by the host the same way it handles every other
+/// right-click popup (`bin/app.rs`'s
+/// `handle_right_mouse_button`/`apply_context_menu_action`) -- this
+/// module only draws/hit-tests the bar itself and has no popup state of
+/// its own. A starred collection's button instead toggles
+/// [`build_starred_collection_popup`] for it, same as clicking a
+/// collection button in the original opens/closes its flyout rather than
+/// acting directly.
+/// Builds the persistent bottom bar of starred chips/collections --
+/// mirrors the chip-button strip half of `BottomBarUI.DrawBottomBar`.
+/// Its "MENU" dropdown (New/Save/Find/Library/Prefs/Quit) isn't ported
+/// here since every one of those already has its own keyboard shortcut
+/// in this port (see `bin/app.rs`'s shortcut handling), so the bar's
+/// only new surface is starred access.
+///
+/// `scroll_x` is the bar's horizontal scroll offset in pixels: with more
+/// starred items than fit the window width, the host scrolls the strip
+/// (the UI stack routes wheel events over the bar to it instead of
+/// letting them reach the canvas zoom underneath) and passes the clamped
+/// offset back in here, shifting every button left by that amount.
 ///
 /// A plain starred chip's button (left click) picks it up for placement
 /// -- same as the library's "USE" button, see [`EditorAction::PlaceChip`]
@@ -1048,15 +1035,17 @@ pub fn build_starred_bottom_bar(
 	open_collection: Option<&str>,
 	enabled: bool,
 	cycle_blocked: &HashSet<String>,
-	vw: f32,
-	vh: f32,
-	mouse: Vec2,
+	scroll_x: f32,
+	ui: UiCtx,
 ) -> EditorFrame {
+	let vw = ui.vw;
+	let vh = ui.vh;
 	let mut frame = EditorFrame::default();
 	let bar_rect = UiRect::new(0.0, vh - BOTTOM_BAR_HEIGHT, vw, BOTTOM_BAR_HEIGHT);
-	panel_bg(&mut frame, vw, vh, bar_rect, [0.13, 0.13, 0.14, 1.0]);
+	frame.panel = Some(bar_rect);
+	panel_bg(&mut frame, ui, bar_rect, [0.13, 0.13, 0.14, 1.0]);
 
-	let mut x = BOTTOM_BAR_BTN_PAD;
+	let mut x = BOTTOM_BAR_BTN_PAD - scroll_x;
 	let y = bar_rect.y + 4.0;
 	let h = BOTTOM_BAR_HEIGHT - 8.0;
 	for item in starred_list {
@@ -1070,14 +1059,14 @@ pub fn build_starred_bottom_bar(
 			(EditorAction::PlaceChip(item.name.clone()), enabled && !cycle_blocked.contains(&item.name.to_ascii_lowercase()))
 		};
 		if is_open {
-			add_button_coloured(&mut frame, vw, vh, rect, &label, action, row_enabled, mouse, [0.3, 0.42, 0.58, 1.0]);
+			add_button_coloured(&mut frame, ui, rect, &label, action, row_enabled, [0.3, 0.42, 0.58, 1.0]);
 		} else {
-			add_button(&mut frame, vw, vh, rect, &label, action, row_enabled, mouse);
+			add_button(&mut frame, ui, rect, &label, action, row_enabled);
 		}
 		x += w + BOTTOM_BAR_BTN_GAP;
 	}
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 /// Builds the flyout listing one starred collection's chips, opened by
@@ -1104,6 +1093,7 @@ pub fn build_starred_collection_popup(
 	vh: f32,
 	mouse: Vec2,
 ) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let w = 180.0_f32.min(vw - 40.0);
 	let row_h = 30.0;
@@ -1112,17 +1102,19 @@ pub fn build_starred_collection_popup(
 
 	let visible_rows = collection.chips.len().min(((bottom - 4.0) / row_h).floor().max(0.0) as usize);
 	let top = bottom - visible_rows as f32 * row_h;
-	panel_bg(&mut frame, vw, vh, UiRect::new(x - 4.0, top, w + 8.0, bottom - top), [0.13, 0.13, 0.14, 0.98]);
+	let panel_rect = UiRect::new(x - 4.0, top, w + 8.0, bottom - top);
+	frame.panel = Some(panel_rect);
+	panel_bg(&mut frame, ui, panel_rect, [0.13, 0.13, 0.14, 0.98]);
 
 	let mut y = bottom - row_h;
 	for chip_name in collection.chips.iter().take(visible_rows) {
 		let rect = UiRect::new(x, y, w, row_h - 4.0);
 		let row_enabled = enabled && !cycle_blocked.contains(&chip_name.to_ascii_lowercase());
-		add_button(&mut frame, vw, vh, rect, chip_name, EditorAction::PlaceChip(chip_name.clone()), row_enabled, mouse);
+		add_button(&mut frame, ui, rect, chip_name, EditorAction::PlaceChip(chip_name.clone()), row_enabled);
 		y -= row_h;
 	}
 
-	finish(frame, mouse)
+	finish(frame, ui)
 }
 
 #[cfg(test)]
@@ -1375,23 +1367,35 @@ mod tests {
 	#[test]
 	fn starred_bottom_bar_has_one_button_per_starred_item() {
 		let starred = vec![StarredItem::new("AND", false), StarredItem::new("Basics", true)];
-		let frame = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
+		let frame = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 0.0, UiCtx::new(1280.0, 800.0, Vec2::ZERO));
 		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::PlaceChip("AND".to_string())));
 		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ToggleStarredCollectionPopup("Basics".to_string())));
+		assert_eq!(frame.panel, Some(UiRect::new(0.0, 800.0 - BOTTOM_BAR_HEIGHT, 1280.0, BOTTOM_BAR_HEIGHT)));
 	}
 
 	#[test]
 	fn starred_bottom_bar_buttons_disabled_when_not_editable() {
 		let starred = vec![StarredItem::new("AND", false)];
-		let frame = build_starred_bottom_bar(&starred, None, false, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
+		let frame = build_starred_bottom_bar(&starred, None, false, &HashSet::new(), 0.0, UiCtx::new(1280.0, 800.0, Vec2::ZERO));
 		assert!(frame.buttons.iter().all(|b| !b.enabled));
+	}
+
+	#[test]
+	fn starred_bottom_bar_scroll_x_shifts_buttons_left() {
+		let starred: Vec<_> = (1..=6).map(|i| StarredItem::new(format!("ChipName{i}"), false)).collect();
+		let unscrolled = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 0.0, UiCtx::new(600.0, 800.0, Vec2::ZERO));
+		let scrolled = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 120.0, UiCtx::new(600.0, 800.0, Vec2::ZERO));
+		for (a, b) in unscrolled.buttons.iter().zip(&scrolled.buttons) {
+			assert!((a.rect.x - 120.0 - b.rect.x).abs() < 1e-3, "every button shifts left by the scroll offset");
+			assert!((a.rect.y - b.rect.y).abs() < 1e-3 && a.rect.w == b.rect.w);
+		}
 	}
 
 	#[test]
 	fn starred_bottom_bar_greys_out_a_chip_that_would_cycle() {
 		let starred = vec![StarredItem::new("AND", false), StarredItem::new("SubCircuit", false)];
 		let blocked: HashSet<String> = ["subcircuit".to_string()].into_iter().collect();
-		let frame = build_starred_bottom_bar(&starred, None, true, &blocked, 1280.0, 800.0, Vec2::ZERO);
+		let frame = build_starred_bottom_bar(&starred, None, true, &blocked, 0.0, UiCtx::new(1280.0, 800.0, Vec2::ZERO));
 		let and_btn = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("AND".to_string())).unwrap();
 		let sub_btn = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("SubCircuit".to_string())).unwrap();
 		assert!(and_btn.enabled);
@@ -1399,11 +1403,19 @@ mod tests {
 	}
 
 	#[test]
-	fn starred_collection_popup_has_one_button_per_chip() {
+	fn starred_collection_popup_has_one_button_per_chip_and_exposes_its_panel() {
 		let collection = ChipCollection::new("Basics", ["AND", "OR", "NOT"]);
 		let frame = build_starred_collection_popup(&collection, 20.0, true, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
 		let names: Vec<_> =
 			frame.buttons.iter().filter_map(|b| if let EditorAction::PlaceChip(n) = &b.action { Some(n.clone()) } else { None }).collect();
 		assert_eq!(names, vec!["AND".to_string(), "OR".to_string(), "NOT".to_string()]);
+
+		// The panel rect is what the host turns into the flyout layer's capture region -- it must
+		// cover every row so clicks on the padding between/around rows belong to the flyout.
+		let panel = frame.panel.expect("the flyout exposes its background rect");
+		for b in &frame.buttons {
+			assert!(panel.x <= b.rect.x && b.rect.x + b.rect.w <= panel.x + panel.w);
+			assert!(panel.y <= b.rect.y && b.rect.y + b.rect.h <= panel.y + panel.h);
+		}
 	}
 }

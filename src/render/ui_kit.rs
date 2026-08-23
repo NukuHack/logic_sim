@@ -19,6 +19,25 @@ pub fn to_world(screen: Vec2, vw: f32, vh: f32) -> Vec2 {
 	Vec2::new(screen.x, vh - screen.y)
 }
 
+/// Per-frame ambient context shared by every draw helper: viewport size
+/// for the px->world mapping plus the current mouse position for hover
+/// styling. Bundled into one [`Copy`] value (rather than threaded through
+/// as three separate trailing parameters) so the drawing primitives keep
+/// short, readable signatures -- callers build it once per frame and
+/// pass it down.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiCtx {
+	pub vw: f32,
+	pub vh: f32,
+	pub mouse: Vec2,
+}
+
+impl UiCtx {
+	pub fn new(vw: f32, vh: f32, mouse: Vec2) -> Self {
+		Self { vw, vh, mouse }
+	}
+}
+
 /// An axis-aligned rectangle in screen pixel space.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct UiRect {
@@ -60,6 +79,10 @@ pub struct Frame<A> {
 	pub buttons: Vec<Button<A>>,
 	/// Hit-box of this frame's text-entry field, if it has one.
 	pub text_field: Option<UiRect>,
+	/// Bounding box of the panel/popup this frame draws (its background rect), if any -- lets a
+	/// host claim clicks on the panel's padding as a [`crate::render::ui_stack::Capture::Rect`]
+	/// without re-deriving the geometry from the individual button rects.
+	pub panel: Option<UiRect>,
 	/// The button currently under the mouse, if any -- see [`hovered_button`] for whether
 	/// disabled buttons count (callers differ, so this isn't filled in automatically).
 	pub hovered: Option<A>,
@@ -69,35 +92,25 @@ pub struct Frame<A> {
 // but action enums have no meaningful default variant -- an empty frame just has `hovered: None`.
 impl<A> Default for Frame<A> {
 	fn default() -> Self {
-		Self { geometry: SceneGeometry::default(), buttons: Vec::new(), text_field: None, hovered: None }
+		Self { geometry: SceneGeometry::default(), buttons: Vec::new(), text_field: None, panel: None, hovered: None }
 	}
 }
 
 /// Solid-fill a rectangle (a popup/panel background, a row highlight, a text field's backing, ...).
-pub fn fill_rect<A>(frame: &mut Frame<A>, vw: f32, vh: f32, rect: UiRect, colour: theme::Rgba) {
-	frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w, rect.h), colour);
+pub fn fill_rect<A>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, colour: theme::Rgba) {
+	frame.geometry.add_rect(to_world(rect.centre(), ui.vw, ui.vh), Vec2::new(rect.w, rect.h), colour);
 }
 
-pub fn add_label<A>(frame: &mut Frame<A>, vw: f32, vh: f32, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
-	frame.geometry.labels.push(TextLabel { pos: to_world(centre, vw, vh), text: text.to_string(), colour, font_size, width });
+pub fn add_label<A>(frame: &mut Frame<A>, ui: UiCtx, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
+	frame.geometry.labels.push(TextLabel { pos: to_world(centre, ui.vw, ui.vh), text: text.to_string(), colour, font_size, width });
 }
 
 /// Draws one button at [`FONT_SIZE`] and appends its hit-box to `frame.buttons`. `base_colour`
 /// overrides the ordinary grey-when-enabled/brighten-on-hover palette -- pass `None` for that
 /// default look, or `Some(colour)` for a differently-tinted button (e.g. editor_ui's destructive
 /// "Replace" button, drawn red so it reads as backing up and overwriting a *different* chip).
-pub fn add_button<A: Clone>(
-	frame: &mut Frame<A>,
-	vw: f32,
-	vh: f32,
-	rect: UiRect,
-	label: &str,
-	action: A,
-	enabled: bool,
-	mouse: Vec2,
-	base_colour: Option<theme::Rgba>,
-) {
-	let hovered = enabled && rect.contains(mouse);
+pub fn add_button<A: Clone>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, label: &str, action: A, enabled: bool, base_colour: Option<theme::Rgba>) {
+	let hovered = enabled && rect.contains(ui.mouse);
 	let bg = if !enabled {
 		theme::PIN_INVALID_COL
 	} else {
@@ -108,18 +121,18 @@ pub fn add_button<A: Clone>(
 			None => theme::CHIP_BODY_COL,
 		}
 	};
-	fill_rect(frame, vw, vh, rect, bg);
-	add_label(frame, vw, vh, rect.centre(), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
+	fill_rect(frame, ui, rect, bg);
+	add_label(frame, ui, rect.centre(), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);
 	frame.buttons.push(Button { rect, action, enabled });
 }
 
 /// Draws the recurring "dark box + typed text + trailing cursor" text-entry field and records its
 /// hit-box as `frame.text_field`. `placeholder` is shown (with the same trailing `|` cursor) when
 /// `text` is empty -- pass `""` for fields with no placeholder copy.
-pub fn text_field_row<A>(frame: &mut Frame<A>, vw: f32, vh: f32, rect: UiRect, text: &str, placeholder: &str, font_size: f32, label_inset: f32) {
-	fill_rect(frame, vw, vh, rect, [0.08, 0.08, 0.09, 1.0]);
+pub fn text_field_row<A>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, text: &str, placeholder: &str, font_size: f32, label_inset: f32) {
+	fill_rect(frame, ui, rect, [0.08, 0.08, 0.09, 1.0]);
 	let shown = if text.is_empty() { format!("{placeholder}|") } else { format!("{text}|") };
-	add_label(frame, vw, vh, rect.centre(), rect.w - label_inset, &shown, [1.0, 1.0, 1.0, 1.0], font_size);
+	add_label(frame, ui, rect.centre(), rect.w - label_inset, &shown, [1.0, 1.0, 1.0, 1.0], font_size);
 	frame.text_field = Some(rect);
 }
 
@@ -164,7 +177,7 @@ mod tests {
 	fn text_field_row_falls_back_to_placeholder_when_empty() {
 		let mut frame: Frame<()> = Frame::default();
 		let rect = UiRect::new(0.0, 0.0, 100.0, 20.0);
-		text_field_row(&mut frame, 200.0, 100.0, rect, "", "Search...", FONT_SIZE, 16.0);
+		text_field_row(&mut frame, UiCtx::new(200.0, 100.0, Vec2::ZERO), rect, "", "Search...", FONT_SIZE, 16.0);
 		assert_eq!(frame.text_field, Some(rect));
 		assert!(frame.geometry.labels.iter().any(|l| l.text == "Search...|"));
 	}

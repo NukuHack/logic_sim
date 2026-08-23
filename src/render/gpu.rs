@@ -306,16 +306,16 @@ impl Renderer {
 	}
 
 	/// Draws one frame from back to front, as an ordered stack of
-	/// `layers` (e.g. `[world, ui_overlay, context_menu]`) -- each
-	/// layer's own triangles *and* text labels are fully drawn (as their
-	/// own submitted GPU pass) before the next layer's are even
-	/// uploaded, so a later layer's triangles reliably paint over an
-	/// earlier layer's text, not just its shapes. Compare the old
-	/// single-`SceneGeometry` `render`, which drew *all* triangles from
-	/// every layer first and *all* text second -- meaning any label, no
-	/// matter which logical layer it belonged to, always rendered on top
-	/// of every triangle, including e.g. a modal popup's own background
-	/// that was meant to cover it.
+	/// `layers` (e.g. `[canvas, bottom_bar, flyout, ..., context_menu,
+	/// toast]` -- see `render::ui_stack`) -- each layer's own triangles
+	/// *and* text labels are fully drawn (as their own submitted GPU
+	/// pass) before the next layer's are even uploaded, so a later
+	/// layer's triangles reliably paint over an earlier layer's text, not
+	/// just its shapes. Compare the old single-`SceneGeometry` `render`,
+	/// which drew *all* triangles from every layer first and *all* text
+	/// second -- meaning any label, no matter which logical layer it
+	/// belonged to, always rendered on top of every triangle, including
+	/// e.g. a modal popup's own background that was meant to cover it.
 	///
 	/// Each layer is deliberately its own `queue.submit()` (rather than
 	/// one shared encoder/pass per frame) precisely so that layer *N*+1's
@@ -327,7 +327,7 @@ impl Renderer {
 	/// `submit()`s alike), so submitting layer *N* fully before even
 	/// preparing layer *N*+1's text guarantees layer *N*'s glyphs are
 	/// already consumed by the time they'd otherwise be overwritten.
-	pub fn render(&mut self, layers: &[SceneGeometry], camera: &Camera, clear_colour: [f32; 4]) -> Result<(), wgpu::SurfaceError> {
+	pub fn render(&mut self, layers: &[&SceneGeometry], camera: &Camera, clear_colour: [f32; 4]) -> Result<(), wgpu::SurfaceError> {
 		let camera_uniform = CameraUniform { view_proj: camera.view_proj_matrix() };
 		self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));
 
@@ -335,7 +335,7 @@ impl Renderer {
 		let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
 		let mut drew_anything = false;
-		for layer in layers {
+		for &layer in layers {
 			if layer.triangles.is_empty() && layer.labels.is_empty() {
 				continue;
 			}

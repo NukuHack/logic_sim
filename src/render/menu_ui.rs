@@ -6,7 +6,7 @@
 
 use crate::render::scene::TextLabel;
 use crate::render::theme;
-use crate::render::ui_kit::{self, Frame};
+use crate::render::ui_kit::{self, Frame, UiCtx};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, MenuScreen, PopupKind};
 
@@ -121,15 +121,16 @@ fn add_title(frame: &mut MenuFrame, vw: f32, vh: f32, y: f32, text: &str) {
 	});
 }
 
-fn add_label(frame: &mut MenuFrame, vw: f32, vh: f32, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
-	ui_kit::add_label(frame, vw, vh, centre, width, text, colour, font_size);
+fn add_label(frame: &mut MenuFrame, ui: UiCtx, centre: Vec2, width: f32, text: &str, colour: theme::Rgba, font_size: f32) {
+	ui_kit::add_label(frame, ui, centre, width, text, colour, font_size);
 }
 
-fn add_button(frame: &mut MenuFrame, vw: f32, vh: f32, rect: UiRect, label: &str, action: UiAction, enabled: bool, mouse: Vec2) {
-	ui_kit::add_button(frame, vw, vh, rect, label, action, enabled, mouse, None);
+fn add_button(frame: &mut MenuFrame, ui: UiCtx, rect: UiRect, label: &str, action: UiAction, enabled: bool) {
+	ui_kit::add_button(frame, ui, rect, label, action, enabled, None);
 }
 
 fn build_main_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
 	add_title(frame, vw, vh, 90.0, "Digital Logic Sim");
 
 	let cx = vw / 2.0;
@@ -144,12 +145,13 @@ fn build_main_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut MenuFrame, m
 	let _ = menu;
 	for (label, action) in entries {
 		let rect = UiRect::new(cx - BUTTON_W / 2.0, y, BUTTON_W, BUTTON_H);
-		add_button(frame, vw, vh, rect, label, action, true, mouse);
+		add_button(frame, ui, rect, label, action, true);
 		y += BUTTON_H + BUTTON_GAP;
 	}
 }
 
 fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
 	add_title(frame, vw, vh, 60.0, "Load Project");
 
 	let list_top = 120.0;
@@ -160,8 +162,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 	if menu.projects().is_empty() {
 		add_label(
 			frame,
-			vw,
-			vh,
+			ui,
 			Vec2::new(cx, list_top + 30.0),
 			row_w,
 			"No projects yet -- create one from the main menu.",
@@ -183,7 +184,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		} else {
 			[0.3, 0.3, 0.33, 1.0]
 		};
-		ui_kit::fill_rect(frame, vw, vh, rect, bg);
+		ui_kit::fill_rect(frame, ui, rect, bg);
 
 		let text_colour = if compatible { theme::text_colour_for_background(bg) } else { [0.9, 0.35, 0.35, 1.0] };
 		let label = if compatible {
@@ -191,7 +192,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		} else {
 			format!("{}   (incompatible project version)", project.project_name)
 		};
-		add_label(frame, vw, vh, rect.centre(), rect.w - 20.0, &label, text_colour, FONT_SIZE * 0.9);
+		add_label(frame, ui, rect.centre(), rect.w - 20.0, &label, text_colour, FONT_SIZE * 0.9);
 
 		frame.buttons.push(UiButton { rect, action: UiAction::SelectProject(i), enabled: true });
 	}
@@ -206,48 +207,40 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		("Delete", UiAction::DeleteSelected, menu.selected_project_index().is_some()),
 	] {
 		let rect = UiRect::new(x, toolbar_y, BUTTON_W / 2.0 - 4.0, BUTTON_H);
-		add_button(frame, vw, vh, rect, label, action, enabled, mouse);
+		add_button(frame, ui, rect, label, action, enabled);
 		x += BUTTON_W / 2.0 + BUTTON_GAP / 2.0;
 	}
 
 	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - BUTTON_H * 1.2, BUTTON_W, BUTTON_H);
-	add_button(frame, vw, vh, back_rect, "Back", UiAction::BackToMain, true, mouse);
+	add_button(frame, ui, back_rect, "Back", UiAction::BackToMain, true);
 }
 
 fn build_settings_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
 	add_title(frame, vw, vh, 60.0, "Settings");
 	let cx = vw / 2.0;
 	let settings = menu.edited_settings();
 
 	let vsync_rect = UiRect::new(cx - BUTTON_W / 2.0, 160.0, BUTTON_W, BUTTON_H);
-	add_button(
-		frame,
-		vw,
-		vh,
-		vsync_rect,
-		&format!("VSync: {}", if settings.vsync_enabled { "On" } else { "Off" }),
-		UiAction::ToggleVsync,
-		true,
-		mouse,
-	);
+	add_button(frame, ui, vsync_rect, &format!("VSync: {}", if settings.vsync_enabled { "On" } else { "Off" }), UiAction::ToggleVsync, true);
 
 	let fs_rect = UiRect::new(cx - BUTTON_W / 2.0, 160.0 + BUTTON_H + BUTTON_GAP, BUTTON_W, BUTTON_H);
-	add_button(frame, vw, vh, fs_rect, &format!("Fullscreen: {:?}", settings.fullscreen_mode), UiAction::CycleFullscreenMode, true, mouse);
+	add_button(frame, ui, fs_rect, &format!("Fullscreen: {:?}", settings.fullscreen_mode), UiAction::CycleFullscreenMode, true);
 
 	let apply_rect = UiRect::new(cx - BUTTON_W / 2.0, 160.0 + 2.0 * (BUTTON_H + BUTTON_GAP), BUTTON_W, BUTTON_H);
-	add_button(frame, vw, vh, apply_rect, "Apply", UiAction::ApplySettings, true, mouse);
+	add_button(frame, ui, apply_rect, "Apply", UiAction::ApplySettings, true);
 
 	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - 30.0, BUTTON_W, BUTTON_H);
-	add_button(frame, vw, vh, back_rect, "Back", UiAction::BackToMain, true, mouse);
+	add_button(frame, ui, back_rect, "Back", UiAction::BackToMain, true);
 }
 
 fn build_about_screen(vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
 	add_title(frame, vw, vh, 60.0, "About");
 	let cx = vw / 2.0;
 	add_label(
 		frame,
-		vw,
-		vh,
+		ui,
 		Vec2::new(cx, 180.0),
 		vw - 160.0,
 		"A Rust port of Sebastian Lague's Digital Logic Sim (rendering + save system + project picker).",
@@ -255,17 +248,18 @@ fn build_about_screen(vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
 		FONT_SIZE,
 	);
 	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - 30.0, BUTTON_W, BUTTON_H);
-	add_button(frame, vw, vh, back_rect, "Back", UiAction::BackToMain, true, mouse);
+	add_button(frame, ui, back_rect, "Back", UiAction::BackToMain, true);
 }
 
 fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut MenuFrame, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
 	let panel_w = 420.0;
 	let panel_h = 200.0;
 	let cx = vw / 2.0;
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	ui_kit::fill_rect(frame, vw, vh, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+	ui_kit::fill_rect(frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
 
 	let (title, is_name_popup) = match menu.popup() {
 		PopupKind::NewProject => ("New Project", true),
@@ -274,30 +268,20 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 		PopupKind::DeleteConfirmation => ("Delete Project?", false),
 		PopupKind::None => ("", false),
 	};
-	add_label(frame, vw, vh, Vec2::new(cx, panel_rect.y + 30.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 22.0);
+	add_label(frame, ui, Vec2::new(cx, panel_rect.y + 30.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 22.0);
 
 	if is_name_popup {
 		let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 70.0, panel_w - 60.0, 36.0);
-		ui_kit::text_field_row(frame, vw, vh, field_rect, text_input, "", FONT_SIZE, 16.0);
+		ui_kit::text_field_row(frame, ui, field_rect, text_input, "", FONT_SIZE, 16.0);
 
 		let valid = menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input);
 		if !valid && !text_input.is_empty() {
-			add_label(
-				frame,
-				vw,
-				vh,
-				Vec2::new(cx, panel_rect.y + 118.0),
-				panel_w - 40.0,
-				"Invalid or already-used name",
-				[0.9, 0.35, 0.35, 1.0],
-				14.0,
-			);
+			add_label(frame, ui, Vec2::new(cx, panel_rect.y + 118.0), panel_w - 40.0, "Invalid or already-used name", [0.9, 0.35, 0.35, 1.0], 14.0);
 		}
 	} else if let Some(project) = menu.selected_project() {
 		add_label(
 			frame,
-			vw,
-			vh,
+			ui,
 			Vec2::new(cx, panel_rect.y + 100.0),
 			panel_w - 40.0,
 			&format!("Delete '{}'? A backup copy will be kept.", project.project_name),
@@ -310,8 +294,8 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 40.0);
 	let confirm_enabled =
 		!is_name_popup || (menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input)) && !text_input.trim().is_empty();
-	add_button(frame, vw, vh, confirm_rect, "Confirm", UiAction::PopupConfirm, confirm_enabled, mouse);
-	add_button(frame, vw, vh, cancel_rect, "Cancel", UiAction::PopupCancel, true, mouse);
+	add_button(frame, ui, confirm_rect, "Confirm", UiAction::PopupConfirm, confirm_enabled);
+	add_button(frame, ui, cancel_rect, "Cancel", UiAction::PopupCancel, true);
 }
 
 /// A status/error line the host app can overlay near the bottom of the
