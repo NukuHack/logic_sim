@@ -713,19 +713,10 @@ fn draw_components(
 	pin_already_hovered: bool,
 ) {
 	for sub in placed {
-		// An LED's body is its indicator: tint it with the saved `InternalData[0]` colour, lit/dimmed/
-		// disconnected like a wire of that colour, driven by the live state of its one input pin.
-		// Falls back to the ordinary body-colour handling below if this instance has no saved colour.
-		let led_colour = (sub.desc.chip_type == ChipType::DisplayLed).then(|| sub.internal_data.first().copied()).flatten().map(|idx| {
-			let colour = Color::from_int(idx as i32);
-			let logic = sub.desc.input_pins.first().and_then(|p| pin_state.logic_state(sub.id, p.id)).unwrap_or(LogicState::Low);
-			theme::state_colour(logic, colour)
-		});
-
 		// Use this chip's saved body colour (alpha 0 means "not saved" --
 		// fall back to the theme default) rather than always drawing every
 		// chip with the same flat grey.
-		let body_colour = led_colour.unwrap_or_else(|| if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL });
+		let body_colour = if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL };
 
 		// 7-segment/RGB/dot displays draw their own live pixel/segment content in place of the plain
 		// body rect (`NameLocation` is `Hidden` because the body is the visualisation). `DisplayLed`
@@ -734,26 +725,14 @@ fn draw_components(
 			ChipType::SevenSegmentDisplay => draw_display_seven_segment(geo, sub, pin_state),
 			ChipType::DisplayRgb => draw_display_pixel_grid(geo, sub, pin_state, true),
 			ChipType::DisplayDot => draw_display_pixel_grid(geo, sub, pin_state, false),
+			ChipType::DisplayLed => draw_display_led(geo, sub, pin_state, body_colour),
+			ChipType::Key => draw_key_component(geo, sub, body_colour),
 			_ => geo.add_rect(sub.centre, sub.size, body_colour),
 		}
 
-		// Draw this subchip's name label, unless explicitly hidden (e.g. display/bus/pin chips, whose
-		// body is the visualisation) -- except the Key chip, which forces its label to show regardless:
-		// the bound key's letter (from saved `InternalData[0]`, capitalised ASCII) is its only visualisation.
-		let key_letter =
-			(sub.desc.chip_type == ChipType::Key).then(|| sub.internal_data.first().copied()).flatten().map(|code| (code as u8 as char).to_string());
-
 		let is_hovered = !pin_already_hovered && hover_world_pos.is_some_and(|p| point_in_rect(p, sub.centre, sub.size));
 		// draw name if options allow
-		if let Some(letter) = key_letter {
-			geo.labels.push(TextLabel {
-				pos: sub.centre,
-				text: letter,
-				colour: theme::text_colour_for_background(body_colour),
-				font_size: theme::FONT_SIZE_CHIP_NAME,
-				width: sub.size.x,
-			});
-		} else if sub.desc.name_location != NameLocation::Hidden {
+		if sub.desc.name_location != NameLocation::Hidden {
 			let name_pos = match sub.desc.name_location {
 				NameLocation::Top => {
 					Vec2::new(sub.centre.x, sub.centre.y + sub.size.y / 2.0 - theme::FONT_SIZE_CHIP_NAME / 2.0 - layout::GRID_SIZE / 2.0)
@@ -835,6 +814,40 @@ fn draw_display_seven_segment(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_
 	geo.add_rect(centre - offset_x - offset_y, vertical_size, e); // bottom-left
 	geo.add_rect(centre + offset_x + offset_y, vertical_size, b); // top-right
 	geo.add_rect(centre + offset_x - offset_y, vertical_size, c); // bottom-right
+}
+
+fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip, body_colour: [f32; 4]) {
+	// Draw this subchip's name label, unless explicitly hidden (e.g. display/bus/pin chips, whose
+	// body is the visualisation) -- except the Key chip, which forces its label to show regardless:
+	// the bound key's letter (from saved `InternalData[0]`, capitalised ASCII) is its only visualisation.
+	let letter = sub.internal_data.first().map(|code| (*code as u8 as char).to_string()).expect("Should have a key");
+	geo.labels.push(TextLabel {
+		pos: sub.centre,
+		text: letter,
+		colour: theme::text_colour_for_background(body_colour),
+		font_size: theme::FONT_SIZE_CHIP_NAME,
+		width: sub.size.x,
+	});
+
+	geo.add_rect(sub.centre, sub.size, body_colour);
+}
+
+fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, body_colour: [f32; 4]) {
+	// An LED's body is its indicator: tint it with the saved `InternalData[0]` colour, lit/dimmed/
+	// disconnected like a wire of that colour, driven by the live state of its one input pin.
+	// Falls back to the ordinary body-colour handling below if this instance has no saved colour.
+	let led_colour = sub.internal_data.first().copied().map(|idx| {
+		let colour = Color::from_int(idx as i32);
+		let logic = sub.desc.input_pins.first().and_then(|p| pin_state.logic_state(sub.id, p.id)).unwrap_or(LogicState::Low);
+		theme::state_colour(logic, colour)
+	});
+
+	// Use this chip's saved body colour (alpha 0 means "not saved" --
+	// fall back to the theme default) rather than always drawing every
+	// chip with the same flat grey.
+	let color = led_colour.unwrap_or(body_colour);
+
+	geo.add_rect(sub.centre, sub.size, color);
 }
 
 /// Draws a `DisplayRgb`/`DisplayDot` subchip's live 16x16 pixel buffer,

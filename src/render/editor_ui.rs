@@ -510,7 +510,16 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 				mouse,
 			);
 
-			y = button_row(frame, vw, vh, inner_x, y, inner_w, &[("USE", EditorAction::PlaceChip(chip_name.clone()), !state.selected_chip_would_cycle)], mouse);
+			y = button_row(
+				frame,
+				vw,
+				vh,
+				inner_x,
+				y,
+				inner_w,
+				&[("USE", EditorAction::PlaceChip(chip_name.clone()), !state.selected_chip_would_cycle)],
+				mouse,
+			);
 
 			let can_step_up = chi > 0;
 			let can_step_down = chi < collection.chips.len() - 1;

@@ -10,6 +10,17 @@ use crate::structs::Vec2;
 
 pub use crate::render::menu_ui::to_world;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextMenuAction {
+	Configure,
+	Delete,
+	Label,
+	Flip,
+	Open,
+	Unstar,
+	Other,
+}
+
 /// One selectable row of a context menu: the label shown to the player,
 /// and an opaque id the host matches on in its own action-handling code
 /// (kept as a plain string, rather than an enum, so this one menu type
@@ -18,7 +29,7 @@ pub use crate::render::menu_ui::to_world;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextMenuItem {
 	pub label: String,
-	pub id: String,
+	pub id: ContextMenuAction,
 	/// Disabled rows still draw (dimmed, no hover highlight) but never
 	/// appear in `ContextMenuFrame::hovered`/`buttons`' hit-testable
 	/// sense -- see `build_context_menu`. Used e.g. to grey out "Open"
@@ -27,12 +38,12 @@ pub struct ContextMenuItem {
 }
 
 impl ContextMenuItem {
-	pub fn new(label: impl Into<String>, id: impl Into<String>) -> Self {
-		Self { label: label.into(), id: id.into(), enabled: true }
+	pub fn new(label: impl Into<String>, id: ContextMenuAction) -> Self {
+		Self { label: label.into(), id, enabled: true }
 	}
 
-	pub fn new_enabled(label: impl Into<String>, id: impl Into<String>, enabled: bool) -> Self {
-		Self { label: label.into(), id: id.into(), enabled }
+	pub fn new_enabled(label: impl Into<String>, id: ContextMenuAction, enabled: bool) -> Self {
+		Self { label: label.into(), id, enabled }
 	}
 }
 
@@ -58,7 +69,7 @@ impl ContextMenuState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextMenuButton {
 	pub rect: UiRect,
-	pub id: String,
+	pub id: ContextMenuAction,
 }
 
 /// One drawn/hit-testable frame of an open context menu. Analogous to
@@ -75,7 +86,7 @@ pub struct ContextMenuFrame {
 	/// elsewhere -> close the popup" without re-deriving it from the
 	/// individual row rects.
 	pub panel_rect: UiRect,
-	pub hovered: Option<String>,
+	pub hovered: Option<ContextMenuAction>,
 }
 
 const ROW_H: f32 = 30.0;
@@ -146,10 +157,10 @@ mod tests {
 
 	#[test]
 	fn builds_one_row_per_item() {
-		let state = ContextMenuState::new("AND", Vec2::new(100.0, 100.0), vec![ContextMenuItem::new("Open", "open")]);
+		let state = ContextMenuState::new("AND", Vec2::new(100.0, 100.0), vec![ContextMenuItem::new("Open", ContextMenuAction::Open)]);
 		let frame = build_context_menu(&state, 1280.0, 800.0, Vec2::ZERO);
 		assert_eq!(frame.buttons.len(), 1);
-		assert_eq!(frame.buttons[0].id, "open");
+		assert_eq!(frame.buttons[0].id, ContextMenuAction::Open);
 		assert!(frame.geometry.labels.iter().any(|l| l.text == "Open"));
 	}
 
@@ -160,7 +171,7 @@ mod tests {
 		let state = ContextMenuState::new(
 			"AND",
 			Vec2::new(1275.0, 795.0),
-			vec![ContextMenuItem::new("Open", "open"), ContextMenuItem::new("Another", "other")],
+			vec![ContextMenuItem::new("Open", ContextMenuAction::Open), ContextMenuItem::new("Another", ContextMenuAction::Other)],
 		);
 		let frame = build_context_menu(&state, 1280.0, 800.0, Vec2::ZERO);
 		assert!(frame.panel_rect.x + frame.panel_rect.w <= 1280.0);
@@ -169,10 +180,10 @@ mod tests {
 
 	#[test]
 	fn hovered_row_is_reported() {
-		let state = ContextMenuState::new("AND", Vec2::new(10.0, 10.0), vec![ContextMenuItem::new("Open", "open")]);
+		let state = ContextMenuState::new("AND", Vec2::new(10.0, 10.0), vec![ContextMenuItem::new("Open", ContextMenuAction::Open)]);
 		let mouse = Vec2::new(20.0, 20.0); // inside the single row
 		let frame = build_context_menu(&state, 1280.0, 800.0, mouse);
-		assert_eq!(frame.hovered, Some("open".to_string()));
+		assert_eq!(frame.hovered, Some(ContextMenuAction::Open));
 	}
 
 	#[test]

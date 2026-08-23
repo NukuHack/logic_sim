@@ -6,14 +6,14 @@
 
 use logic_sim::json::{ChipCollection, ProjectDescription};
 use logic_sim::render::camera::Camera;
-use logic_sim::render::context_menu::{self, ContextMenuButton, ContextMenuItem, ContextMenuState};
+use logic_sim::render::context_menu::{self, ContextMenuAction, ContextMenuButton, ContextMenuItem, ContextMenuState};
 use logic_sim::render::editor_ui::{self, EditorAction, EditorButton, LibrarySelection};
 use logic_sim::render::gpu::Renderer;
 use logic_sim::render::layout;
 use logic_sim::render::menu_ui::{self, UiAction};
 use logic_sim::render::scene::{
-	apply_alpha, bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow,
-	SceneGeometry, SimulatorPinState,
+	apply_alpha, bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip,
+	hit_test_wire, place_sub_chips, AllLow, SceneGeometry, SimulatorPinState,
 };
 use logic_sim::render::theme;
 use logic_sim::sim::key_mods_bits;
@@ -21,8 +21,8 @@ use logic_sim::sim::Simulator;
 use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use logic_sim::{
-	default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, SavePaths, Saver,
-	SubChipDescription, WireDescription,
+	default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress,
+	PinBitCount, SavePaths, Saver, SubChipDescription, WireDescription,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1181,16 +1181,16 @@ impl ContextTarget {
 /// has no wires to cascade-delete and *is* the definition, not an
 /// instance of it, so there's nothing to "open" beyond switching to it).
 fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> Vec<ContextMenuItem> {
-	let mut items = vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(library, chip_name))];
-	items.push(ContextMenuItem::new("Label", "label"));
+	let mut items = vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(library, chip_name))];
+	items.push(ContextMenuItem::new("Label", ContextMenuAction::Label));
 	let chip_type = library.try_get(chip_name).map(|d| d.chip_type);
 	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16)) {
-		items.push(ContextMenuItem::new("Configure", "configure"));
+		items.push(ContextMenuItem::new("Configure", ContextMenuAction::Configure));
 	}
 	if chip_type.unwrap_or_default().is_bus_type() {
-		items.push(ContextMenuItem::new("Flip", "flip"));
+		items.push(ContextMenuItem::new("Flip", ContextMenuAction::Flip));
 	}
-	items.push(ContextMenuItem::new("Delete", "delete"));
+	items.push(ContextMenuItem::new("Delete", ContextMenuAction::Delete));
 	items
 }
 
@@ -1217,28 +1217,28 @@ fn unstar_bottom_bar_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut O
 /// `render::context_menu`) -- `target` is whatever `state.target` was set
 /// to when the popup was opened (parsed back via `ContextTarget::parse`),
 /// `action_id` is the clicked row's `ContextMenuItem::id`.
-fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, target: &str, action_id: &str) {
+fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, target: &str, action_id: ContextMenuAction) {
 	let Some(parsed) = ContextTarget::parse(target) else { return };
 	let root_chip_name = v.root_chip_name.clone();
 
 	match (action_id, parsed) {
-		("open", ContextTarget::Component(id)) => {
+		(ContextMenuAction::Open, ContextTarget::Component(id)) => {
 			let name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
 			if let Some(name) = name {
 				open_chip_by_name(v, paths, status, &name);
 			}
 		}
-		("open", ContextTarget::LibChip(name)) => {
+		(ContextMenuAction::Open, ContextTarget::LibChip(name)) => {
 			open_chip_by_name(v, paths, status, &name);
 			v.overlay = Overlay::None;
 			reset_library_popup_state(v);
 			v.library_selection = LibrarySelection::None;
 		}
-		("open", ContextTarget::BarChip(name)) | ("open", ContextTarget::FlyoutChip(name)) => {
+		(ContextMenuAction::Open, ContextTarget::BarChip(name)) | (ContextMenuAction::Open, ContextTarget::FlyoutChip(name)) => {
 			open_chip_by_name(v, paths, status, &name);
 		}
-		("unstar", ContextTarget::BarChip(name)) => unstar_bottom_bar_chip(v, paths, status, &name),
-		("delete", ContextTarget::LibChip(name)) => {
+		(ContextMenuAction::Unstar, ContextTarget::BarChip(name)) => unstar_bottom_bar_chip(v, paths, status, &name),
+		(ContextMenuAction::Delete, ContextTarget::LibChip(name)) => {
 			v.library_delete_message = chip_delete_confirm_message(v, &name);
 			v.library_confirming_chip_delete = true;
 			// Right-click delete has no row selected yet (only a name), so
@@ -1252,13 +1252,13 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			}
 		}
 
-		("label", ContextTarget::Component(id)) => {
+		(ContextMenuAction::Label, ContextTarget::Component(id)) => {
 			let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
 			v.overlay = Overlay::Naming;
 			v.overlay_text_input = current;
 			v.naming_purpose = NamingPurpose::LabelComponent(id);
 		}
-		("flip", ContextTarget::Component(id)) => {
+		(ContextMenuAction::Flip, ContextTarget::Component(id)) => {
 			if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
 				let mut data = sub.internal_data.clone().unwrap_or_default();
 				if data.len() < 2 {
@@ -1269,7 +1269,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			}
 			v.rebuild_sim();
 		}
-		("label", ContextTarget::DevPin { is_input, id }) => {
+		(ContextMenuAction::Label, ContextTarget::DevPin { is_input, id }) => {
 			let chip = v.library.get(&root_chip_name);
 			let pins = if is_input { &chip.input_pins } else { &chip.output_pins };
 			let current = pins.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
@@ -1278,7 +1278,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			v.naming_purpose = NamingPurpose::LabelDevPin { is_input, id };
 		}
 
-		("configure", ContextTarget::Component(id)) => {
+		(ContextMenuAction::Configure, ContextTarget::Component(id)) => {
 			let sub_chip_name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
 			let chip_type = sub_chip_name.as_deref().and_then(|n| v.library.try_get(n)).map(|d| d.chip_type);
 			let internal_data =
@@ -1305,7 +1305,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			}
 		}
 
-		("delete", ContextTarget::Component(id)) => delete_component(v, id),
+		(ContextMenuAction::Delete, ContextTarget::Component(id)) => delete_component(v, id),
 
 		_ => {}
 	}
@@ -2012,7 +2012,7 @@ impl App {
 					let hit = v.last_context_menu_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).map(|b| b.id.clone());
 					let target = v.context_menu.take().map(|s| s.target);
 					if let (Some(id), Some(target)) = (hit, target) {
-						apply_context_menu_action(v, &self.paths, &mut self.status, &target, &id);
+						apply_context_menu_action(v, &self.paths, &mut self.status, &target, id);
 					}
 					return;
 				}
@@ -2061,7 +2061,6 @@ impl App {
 					}
 					// Handle canvas
 					{
-
 						// A chip picked up for placement claims every click ahead of anything else below,
 						// same "claims the click" priority a wire in progress gets just below -- see
 						// `try_place_pending_chip`'s doc comment for what actually happens with the click.
@@ -2155,7 +2154,10 @@ impl App {
 			});
 			if let Some(name) = hit {
 				let custom = is_custom_chip(&v.library, &name);
-				let items = vec![ContextMenuItem::new_enabled("Open", "open", custom), ContextMenuItem::new_enabled("Delete", "delete", custom)];
+				let items = vec![
+					ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, custom),
+					ContextMenuItem::new_enabled("Delete", ContextMenuAction::Delete, custom),
+				];
 				v.context_menu = Some(ContextMenuState::new(format!("libchip:{name}"), self.mouse_pos, items));
 			}
 			return;
@@ -2175,7 +2177,7 @@ impl App {
 				_ => None,
 			});
 			if let Some(name) = flyout_hit {
-				let items = vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(&v.library, &name))];
+				let items = vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(&v.library, &name))];
 				v.context_menu = Some(ContextMenuState::new(format!("flyoutchip:{name}"), self.mouse_pos, items));
 				return;
 			}
@@ -2185,8 +2187,10 @@ impl App {
 				_ => None,
 			});
 			if let Some(name) = bar_hit {
-				let items =
-					vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(&v.library, &name)), ContextMenuItem::new("Un-star", "unstar")];
+				let items = vec![
+					ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(&v.library, &name)),
+					ContextMenuItem::new("Un-star", ContextMenuAction::Unstar),
+				];
 				v.context_menu = Some(ContextMenuState::new(format!("barchip:{name}"), self.mouse_pos, items));
 				return;
 			}
@@ -2197,7 +2201,7 @@ impl App {
 			let root_desc = v.library.get(&root_chip_name);
 			if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
 				let target = format!("devpin:{}:{}", if is_input { "in" } else { "out" }, pin_id);
-				v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, vec![ContextMenuItem::new("Label", "label")]));
+				v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, vec![ContextMenuItem::new("Label", ContextMenuAction::Label)]));
 				return;
 			}
 		}
