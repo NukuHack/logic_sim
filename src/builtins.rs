@@ -25,9 +25,9 @@ pub fn create_all() -> Vec<ChipDescription> {
 		create_input_or_output_pin(ChipType::Out4Bit),
 		create_input_or_output_pin(ChipType::In8Bit),
 		create_input_or_output_pin(ChipType::Out8Bit),
+		// ---- Basic Chips ----
 		create_input_key_chip(),
 		create_key_mods_chip(),
-		// ---- Basic Chips ----
 		create_nand(),
 		create_tristate_buffer(),
 		create_clock(),
@@ -207,6 +207,25 @@ pub fn create_input_or_output_pin(chip_type: ChipType) -> ChipDescription {
 	builtin(chip_type, inputs, outputs)
 }
 
+/// `(is_input, template_pin)` for `chip_type` if it's one of the boundary
+/// I/O pin types (`In1Bit` .. `Out8Bit`), `None` for every other type. Used
+/// when one of these is placed from the palette: rather than becoming a
+/// placed *subchip* like a real component (NAND, a display, ...), it adds a
+/// fresh boundary dev-pin directly to the current chip's own
+/// `input_pins`/`output_pins` -- the same field a custom chip's boundary
+/// pins are parsed into from `InputPins`/`OutputPins` in its saved JSON (see
+/// `json::to_chip_description`), just built up in code instead of loaded
+/// from disk. The returned pin's `id` is always `0`; callers must overwrite
+/// it with a fresh id scoped to the chip they're adding it to.
+pub fn io_pin_template(chip_type: ChipType) -> Option<(bool, PinDescription)> {
+	let (is_input, is_output, num_bits) = is_input_or_output_pin(chip_type);
+	if !is_input && !is_output {
+		return None;
+	}
+	let name = if is_input { "IN" } else { "OUT" };
+	Some((is_input, pin(name, 0, num_bits)))
+}
+
 fn is_input_or_output_pin(chip_type: ChipType) -> (bool, bool, PinBitCount) {
 	use ChipType::*;
 	match chip_type {
@@ -246,40 +265,40 @@ fn create_bus_terminus(bit_count: PinBitCount) -> ChipDescription {
 /// chip type, also used as its `ChipDescription.name` / library lookup key
 /// for builtins.
 pub fn name_for(chip_type: ChipType) -> String {
-	use ChipType::*;
+	use ChipType as C;
 	let s = match chip_type {
-		Custom => "Custom",
-		Nand => "NAND",
-		Clock => "CLOCK",
-		Pulse => "PULSE",
-		TriStateBuffer => "3-STATE BUFFER",
-		DevRam8Bit => "dev.RAM-8",
-		Rom256x16 => "ROM 256\u{d7}16",
-		Split4To1Bit => "4-1BIT",
-		Split8To1Bit => "8-1BIT",
-		Split8To4Bit => "8-4BIT",
-		Merge4To8Bit => "4-8BIT",
-		Merge1To8Bit => "1-8BIT",
-		Merge1To4Bit => "1-4BIT",
-		DisplayRgb => "RGB DISPLAY",
-		DisplayDot => "DOT DISPLAY",
-		SevenSegmentDisplay => "7-SEGMENT",
-		DisplayLed => "LED",
-		Buzzer => "BUZZER",
-		In1Bit => "IN-1",
-		In4Bit => "IN-4",
-		In8Bit => "IN-8",
-		Out1Bit => "OUT-1",
-		Out4Bit => "OUT-4",
-		Out8Bit => "OUT-8",
-		Key => "KEY",
-		KeyMods => "MOD KEYS",
-		Bus1Bit => "BUS-1",
-		Bus4Bit => "BUS-4",
-		Bus8Bit => "BUS-8",
-		BusTerminus1Bit => "BUS-TERMINUS-1",
-		BusTerminus4Bit => "BUS-TERMINUS-4",
-		BusTerminus8Bit => "BUS-TERMINUS-8",
+		C::Custom => "Custom",
+		C::Nand => "NAND",
+		C::Clock => "CLOCK",
+		C::Pulse => "PULSE",
+		C::TriStateBuffer => "3-STATE BUFFER",
+		C::DevRam8Bit => "dev.RAM-8",
+		C::Rom256x16 => "ROM 256\u{d7}16",
+		C::Split4To1Bit => "4-1BIT",
+		C::Split8To1Bit => "8-1BIT",
+		C::Split8To4Bit => "8-4BIT",
+		C::Merge4To8Bit => "4-8BIT",
+		C::Merge1To8Bit => "1-8BIT",
+		C::Merge1To4Bit => "1-4BIT",
+		C::DisplayRgb => "RGB DISPLAY",
+		C::DisplayDot => "DOT DISPLAY",
+		C::SevenSegmentDisplay => "7-SEGMENT",
+		C::DisplayLed => "LED",
+		C::Buzzer => "BUZZER",
+		C::In1Bit => "IN-1",
+		C::In4Bit => "IN-4",
+		C::In8Bit => "IN-8",
+		C::Out1Bit => "OUT-1",
+		C::Out4Bit => "OUT-4",
+		C::Out8Bit => "OUT-8",
+		C::Key => "KEY",
+		C::KeyMods => "MOD KEYS",
+		C::Bus1Bit => "BUS-1",
+		C::Bus4Bit => "BUS-4",
+		C::Bus8Bit => "BUS-8",
+		C::BusTerminus1Bit => "BUS-TERMINUS-1",
+		C::BusTerminus4Bit => "BUS-TERMINUS-4",
+		C::BusTerminus8Bit => "BUS-TERMINUS-8",
 	};
 	s.to_string()
 }

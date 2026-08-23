@@ -22,7 +22,7 @@ use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use logic_sim::{
 	default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress,
-	PinBitCount, SavePaths, Saver, SubChipDescription, WireDescription,
+	PinBitCount, PinDescription, SavePaths, Saver, SubChipDescription, WireDescription,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -444,11 +444,17 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 /// "not yet placed" without being hard to make out against the canvas.
 const PENDING_PLACEMENT_ALPHA: f32 = 0.75;
 
-/// Next free subchip id for `chip`'s own `sub_chips` list: one past
-/// whatever the highest existing id is, or `1` if it has none yet
-/// (`SubChipDescription::id` docs say IDs are `> 0`).
-fn next_sub_chip_id(chip: &ChipDescription) -> i32 {
-	chip.sub_chips.iter().map(|s| s.id).max().unwrap_or(0) + 1
+/// Next free id for a newly placed subchip or boundary dev-pin on `chip`:
+/// one past whatever the highest existing id is, or `1` if it has none yet
+/// (`SubChipDescription::id` docs say IDs are `> 0`). Dev-pins share this
+/// same id space with subchips -- a wire's `PinOwnerID` is looked up
+/// against both `chip.sub_chips` and `chip.input_pins`/`output_pins`
+/// interchangeably (see `sim::Simulator::find_pin`) -- so every id handed
+/// out here must stay unique across all three lists, not just within
+/// whichever one the caller is about to push into.
+fn next_component_id(chip: &ChipDescription) -> i32 {
+	chip.sub_chips.iter().map(|s| s.id).chain(chip.input_pins.iter().map(|p| p.id)).chain(chip.output_pins.iter().map(|p| p.id)).max().unwrap_or(0)
+		+ 1
 }
 
 /// Attempts to drop `v.pending_place`'s chip (assumed `Some`) at
@@ -459,11 +465,13 @@ fn next_sub_chip_id(chip: &ChipDescription) -> i32 {
 /// just leaves the pending placement active untouched, so the player can
 /// simply try again elsewhere (mirrors `try_continue_pending_wire`'s
 /// "component/wire clicks are ignored outright" behaviour). The new
-/// instance gets a fresh id (`next_sub_chip_id`), no label, no saved
+/// instance gets a fresh id (`next_component_id`), no label, no saved
 /// internal data (chip types that need some, e.g. ROM/Key, start at
 /// their type's default and are configured afterwards via their own
 /// right-click popups, same as today), and no output-pin colour
-/// overrides.
+/// overrides. An "IN/OUT" palette entry is the one exception: it adds a
+/// boundary dev-pin to the current chip instead of a subchip instance --
+/// see the branch below.
 ///
 /// Also defensively re-checks `would_create_cycle` -- unlike a free-space
 /// miss, this can never be resolved by clicking somewhere else, so
@@ -493,9 +501,26 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 		return;
 	}
 
+	// "IN/OUT" palette entries (`In1Bit` .. `Out8Bit`) aren't real placeable components -- they're
+	// the boundary I/O pins a custom chip is parsed with from its saved JSON. Placing one adds a
+	// fresh dev-pin straight to the current chip's boundary instead of a subchip instance.
+	let chip_type = v.library.try_get(&name).map(|d| d.chip_type);
+	let io_template = chip_type.and_then(logic_sim::builtins::io_pin_template);
+
 	let chip = v.library.get_mut(&root_chip_name);
-	let id = next_sub_chip_id(chip);
-	chip.sub_chips.push(SubChipDescription { name, id, internal_data: None, position: world_pos, label: None, pin_colour_info: Vec::new() });
+	let id = next_component_id(chip);
+
+	if let Some((is_input, template)) = io_template {
+		let mut new_pin = PinDescription::new(template.name, id, template.bit_count);
+		new_pin.position = world_pos;
+		if is_input {
+			chip.input_pins.push(new_pin);
+		} else {
+			chip.output_pins.push(new_pin);
+		}
+	} else {
+		chip.sub_chips.push(SubChipDescription { name, id, internal_data: None, position: world_pos, label: None, pin_colour_info: Vec::new() });
+	}
 	v.rebuild_sim();
 }
 
@@ -510,18 +535,34 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 /// Returns `None` if `chip_name` no longer resolves in `library` (e.g. it
 /// was deleted while pending -- shouldn't normally happen, but avoids a
 /// panic in `place_sub_chips` if it somehow does).
+///
+/// An "IN/OUT" palette entry previews as a boundary dev-pin instead (see
+/// `try_place_pending_chip`), so its ghost is built the same way -- a
+/// throwaway chip with the pin added straight to `input_pins`/`output_pins`
+/// -- rather than wrapping it as a subchip, so the preview never shows the
+/// wrong body shape for what's actually about to be placed.
 fn build_pending_place_scene(library: &ChipLibrary, chip_name: &str, cursor_world_pos: Vec2) -> Option<SceneGeometry> {
-	library.try_get(chip_name)?;
+	let chip_type = library.try_get(chip_name)?.chip_type;
 
 	let mut ghost = ChipDescription::new("__pending_placement_ghost__", ChipType::Custom);
-	ghost.sub_chips.push(SubChipDescription {
-		name: chip_name.to_string(),
-		id: 0,
-		internal_data: None,
-		position: cursor_world_pos,
-		label: None,
-		pin_colour_info: Vec::new(),
-	});
+	if let Some((is_input, template)) = logic_sim::builtins::io_pin_template(chip_type) {
+		let mut new_pin = PinDescription::new(template.name, 0, template.bit_count);
+		new_pin.position = cursor_world_pos;
+		if is_input {
+			ghost.input_pins.push(new_pin);
+		} else {
+			ghost.output_pins.push(new_pin);
+		}
+	} else {
+		ghost.sub_chips.push(SubChipDescription {
+			name: chip_name.to_string(),
+			id: 0,
+			internal_data: None,
+			position: cursor_world_pos,
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+	}
 
 	let mut geo = build_scene(&ghost, library, &AllLow, None);
 	apply_alpha(&mut geo, PENDING_PLACEMENT_ALPHA);
@@ -855,9 +896,12 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 		v.prefs.all_custom_chip_names.push(add_name.to_string());
 	}
 	if !v.prefs.chip_collections.iter().any(|c| c.chips.iter().any(|n| n == add_name)) {
-		if let Some(first) = v.prefs.chip_collections.first_mut() {
-			first.chips.push(add_name.to_string());
+		if !v.prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
+			v.prefs.chip_collections.push(ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
 		}
+		let other =
+			v.prefs.chip_collections.iter_mut().find(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
+		other.chips.push(add_name.to_string());
 	}
 
 	let mut desc = v.prefs.clone();
@@ -1277,6 +1321,7 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			v.overlay_text_input = current;
 			v.naming_purpose = NamingPurpose::LabelDevPin { is_input, id };
 		}
+		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => delete_component(v, id),
 
 		(ContextMenuAction::Configure, ContextTarget::Component(id)) => {
 			let sub_chip_name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
@@ -1444,6 +1489,13 @@ fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<String>) {
 /// component's *output* pins to some other, unrelated component is left
 /// completely alone at the far end -- only the segment that touched the
 /// deleted component goes.
+///
+/// `id` may equally be a placed subchip's `SubChipDescription::id` or one of
+/// the current chip's own boundary dev-pins' `PinDescription::id` -- the two
+/// share one id space (see `next_component_id`), and a wire's cascade-delete
+/// above already keys off `pin_owner_id` without caring which kind of thing
+/// it belonged to, so removing the component itself just means checking all
+/// three lists it could actually be sitting in.
 fn delete_component(v: &mut ViewerState, id: i32) {
 	let root_chip_name = v.root_chip_name.clone();
 	let chip = v.library.get_mut(&root_chip_name);
@@ -1459,6 +1511,8 @@ fn delete_component(v: &mut ViewerState, id: i32) {
 	}
 
 	chip.sub_chips.retain(|s| s.id != id);
+	chip.input_pins.retain(|p| p.id != id);
+	chip.output_pins.retain(|p| p.id != id);
 	v.rebuild_sim();
 }
 
@@ -2201,7 +2255,8 @@ impl App {
 			let root_desc = v.library.get(&root_chip_name);
 			if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
 				let target = format!("devpin:{}:{}", if is_input { "in" } else { "out" }, pin_id);
-				v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, vec![ContextMenuItem::new("Label", ContextMenuAction::Label)]));
+				let items = vec![ContextMenuItem::new("Label", ContextMenuAction::Label), ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
+				v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, items));
 				return;
 			}
 		}

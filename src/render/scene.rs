@@ -885,12 +885,13 @@ fn draw_display_pixel_grid(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_sta
 		for x in 0..PIXELS_PER_ROW {
 			let address = y * PIXELS_PER_ROW + x;
 			let col = match internal_state.and_then(|s| s.get(address)) {
-				Some(&pixel_state) if is_rgb => {
-					[unpack_4bit_channel(pixel_state), unpack_4bit_channel(pixel_state >> 4), unpack_4bit_channel(pixel_state >> 8), 1.0]
-				}
 				Some(&pixel_state) => {
-					let v = (pixel_state != 0) as u32 as f32;
-					[v, v, v, 1.0]
+					if is_rgb {
+						[unpack_4bit_channel(pixel_state), unpack_4bit_channel(pixel_state >> 4), unpack_4bit_channel(pixel_state >> 8), 1.0]
+					} else {
+						let v = (pixel_state != 0) as u32 as f32;
+						[v, v, v, 1.0]
+					}
 				}
 				None => OFF_PIXEL_COL,
 			};

@@ -5,24 +5,16 @@ use logic_sim::{
 };
 use std::path::Path;
 
-fn gol_fixture_dir() -> std::path::PathBuf {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Projects/GOL")
-}
-
 fn fixture_dir() -> std::path::PathBuf {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Projects/ZHT90")
+	Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Projects/MainTest")
 }
-
-// ============================================================================
-// DESERIALIZATION TESTS
-// ============================================================================
 
 #[test]
 fn loads_real_project_chips_without_errors() {
 	let (project, library, errors) = load_project(&fixture_dir()).expect("io error");
 
 	assert!(errors.is_empty(), "parse errors: {errors:?}");
-	assert_eq!(project.project_name, "ZHT90");
+	assert_eq!(project.project_name, "MainTest");
 	assert!(library.try_get("NOT").is_some());
 	assert!(library.try_get("NAND").is_none()); // builtin, not a file -- expected
 }
@@ -41,14 +33,47 @@ fn parses_not_chip_structure_correctly() {
 }
 
 #[test]
+fn simulates_the_loaded_not_chip_correctly() {
+	let (_project, mut library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).map(|(lib, errs)| ((), lib, errs)).unwrap();
+	assert!(errors.is_empty());
+
+	// The library doesn't include builtins (NAND) since they aren't saved
+	// as files -- register a minimal NAND description so NOT (which is
+	// built from one NAND) can be resolved.
+	let mut nand = ChipDescription::new("NAND", ChipType::Nand);
+	nand.input_pins.push(PinDescription::new("A", 0, PinBitCount::Bit1));
+	nand.input_pins.push(PinDescription::new("B", 1, PinBitCount::Bit1));
+	nand.output_pins.push(PinDescription::new("OUT", 2, PinBitCount::Bit1));
+	library.add(nand);
+
+	let not_desc = library.get("NOT").clone();
+	let in_pin_id = not_desc.input_pins[0].id;
+	let out_pin_id = not_desc.output_pins[0].id;
+
+	let mut sim = Simulator::build(&not_desc, &library);
+
+	for &input_val in &[0u32, 1] {
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
+		for _ in 0..3 {
+			sim.run_simulation_step(&inputs);
+		}
+
+		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
+		let out_state = sim.pin(out_pin).state & 1;
+
+		assert_eq!(out_state, 1 - input_val, "NOT({input_val}) should invert");
+	}
+}
+
+#[test]
 fn parses_wire_bend_points_from_saved_points_stripping_placeholder_ends() {
-	let (_project, library, errors) = load_chip_library_from_dir(&gol_fixture_dir().join("Chips")).map(|(lib, errs)| ((), lib, errs)).unwrap();
+	let (_project, library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).map(|(lib, errs)| ((), lib, errs)).unwrap();
 	assert!(errors.is_empty(), "parse errors: {errors:?}");
 
-	let cell = library.get("CELL");
+	let cell = library.get("COUNT-8");
 	let bent_wire = cell.wires.iter().find(|w| w.points.len() == 4).expect("expected to find the bent wire with 4 interior points");
 
-	let expected = [(1.625, -1.875), (1.625, -1.0), (-2.875, -1.0), (-2.875, -1.5)];
+	let expected = [(-16.75, -14.875), (-16.75, -14.625), (-13.5, -14.625), (-13.5, -12.125)];
 	for (p, (ex, ey)) in bent_wire.points.iter().zip(expected.iter()) {
 		assert!((p.x - ex).abs() < 1e-4 && (p.y - ey).abs() < 1e-4, "point {p:?} != ({ex}, {ey})");
 	}
@@ -827,7 +852,7 @@ fn roundtrip_chip_with_all_enum_variants() {
 // ============================================================================
 
 #[test]
-fn simulates_the_loaded_not_chip_correctly() {
+fn simulates_the_loaded_not_chip_correctly2() {
 	let (_project, mut library, errors) = load_chip_library_from_dir(&fixture_dir().join("Chips")).map(|(lib, errs)| ((), lib, errs)).unwrap();
 	assert!(errors.is_empty());
 
