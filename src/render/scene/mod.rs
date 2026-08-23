@@ -9,6 +9,7 @@
 //! [`build_scene`] on top of [`crate::render::foundation`]'s primitives.
 
 pub mod components;
+pub mod displays;
 pub mod grid;
 pub mod lookup;
 pub mod pin_hits;
@@ -27,6 +28,7 @@ use std::collections::HashMap;
 pub use crate::render::foundation::{
 	apply_alpha, bounding_box, point_in_circle, point_in_rect, point_in_rounded_rect, RoundCorners, SceneGeometry, SceneVertex, TextLabel,
 };
+pub use displays::{display_base_size, is_display_type};
 pub use grid::build_grid;
 pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
 pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
@@ -57,12 +59,17 @@ pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dy
 	// land on a subchip (as opposed to one of this chip's own dev-pins).
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 
-	// Draw order is a simple three-layer stack, back to front (no depth buffer, so draw order is z-order):
-	// wires, then pins, then component bodies + name labels on top. Name labels are hover-gated to
-	// whichever thing `hover_world_pos` lands on; pins are checked first so an edge-hover shows the pin.
+	// Draw order is a simple four-layer stack, back to front (no depth buffer, so draw order is z-order):
+	// wires, then pins, then component bodies + name labels on top, then any
+	// display surfaces those components embed inside their own bodies (the
+	// "customize" feature -- a display must cover its host's body, never the
+	// other way around). Name labels are hover-gated to whichever thing
+	// `hover_world_pos` lands on; pins are checked first so an edge-hover
+	// shows the pin.
 	wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
 	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, hover_world_pos);
 	components::draw_components(&mut geo, &placed, pin_state, hover_world_pos, hovered_pin_name.is_some());
+	displays::draw_placed_displays(&mut geo, &placed, library, pin_state);
 	if let Some((pos, name)) = hovered_pin_name {
 		push_hover_label(&mut geo, pos, name);
 	}

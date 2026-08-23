@@ -12,8 +12,8 @@ pub mod viewer;
 
 pub use builtins::{create_all as create_all_builtins, register_all as register_all_builtins};
 pub use description::{
-	ChipDescription, ChipLibrary, ChipType, Color, NameLocation, PinAddress, PinBitCount, PinDescription, SubChipDescription, ValueDisplayMode,
-	WireConnectionType, WireDescription,
+	ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, NameLocation, PinAddress, PinBitCount, PinDescription, SubChipDescription,
+	ValueDisplayMode, WireConnectionType, WireDescription,
 };
 pub use json::{
 	load_chip_library_from_dir, load_project, parse_chip_description, parse_project_description, serialize_chip_description,

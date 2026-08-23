@@ -5,8 +5,8 @@
 //! are kept as plain structs so a chip file can be re-saved without losing editor layout data.
 
 use crate::description::{
-	ChipDescription, ChipLibrary, ChipType, Color, NameLocation, PinAddress, PinBitCount, PinDescription, SubChipDescription, ValueDisplayMode,
-	WireConnectionType, WireDescription,
+	ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, NameLocation, PinAddress, PinBitCount, PinDescription, SubChipDescription,
+	ValueDisplayMode, WireConnectionType, WireDescription,
 };
 use crate::structs::Vec2;
 use serde::{Deserialize, Serialize};
@@ -215,6 +215,13 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 		})
 		.collect();
 
+	desc.displays = raw
+		.displays
+		.iter()
+		.flatten()
+		.map(|d| DisplayDescription::new(d.id, d.position, d.scale))
+		.collect();
+
 	desc
 }
 
@@ -287,7 +294,16 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 					.collect(),
 			})
 			.collect(),
-		displays: None,
+		displays: if desc.displays.is_empty() {
+			None
+		} else {
+			Some(
+				desc.displays
+					.iter()
+					.map(|d| JsonDisplayDescription { id: d.sub_chip_id, position: d.position, scale: d.scale })
+					.collect(),
+			)
+		},
 	};
 
 	// The original C# implementation pretty-prints; compact output is used here instead to keep file size down.

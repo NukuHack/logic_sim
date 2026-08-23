@@ -1,7 +1,7 @@
 use logic_sim::{
 	load_chip_library_from_dir, load_project, parse_chip_description, serialize_chip_description, ChipCollection, ChipDescription, ChipLibrary,
-	ChipType, Color, ExternalInput, NameLocation, PinAddress, PinBitCount, PinDescription, ProjectDescription, Simulator, StarredItem,
-	SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
+	ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount, PinDescription, ProjectDescription, Simulator,
+	StarredItem, SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
 };
 use std::path::Path;
 
@@ -79,6 +79,52 @@ fn parses_wire_bend_points_from_saved_points_stripping_placeholder_ends() {
 	}
 
 	assert!(cell.wires.iter().any(|w| w.points.is_empty()), "expected at least one unbent wire");
+}
+
+#[test]
+fn parses_chip_with_displays() {
+	let json = r#"{
+        "Name": "DisplayPanel",
+        "ChipType": 0,
+        "InputPins": [],
+        "OutputPins": [],
+        "SubChips": [],
+        "Wires": [],
+        "Displays": [
+            { "SubChipID": 5, "Position": { "x": 0.5, "y": -0.25 }, "Scale": 1.5 },
+            { "SubChipID": 9, "Position": { "x": -1.0, "y": 0.0 }, "Scale": 0.75 }
+        ]
+    }"#;
+
+	let desc = parse_chip_description(json).unwrap();
+	assert_eq!(desc.displays.len(), 2);
+
+	let first = &desc.displays[0];
+	assert_eq!(first.sub_chip_id, 5);
+	assert_eq!(first.position, Vec2::new(0.5, -0.25));
+	assert_eq!(first.scale, 1.5);
+
+	let second = &desc.displays[1];
+	assert_eq!(second.sub_chip_id, 9);
+	assert_eq!(second.scale, 0.75);
+}
+
+#[test]
+fn parses_missing_displays_as_empty() {
+	// The original saves `"Displays": null` for chips without any -- must
+	// parse to an empty vec, not an error.
+	let json = r#"{
+        "Name": "NoDisplays",
+        "ChipType": 0,
+        "InputPins": [],
+        "OutputPins": [],
+        "SubChips": [],
+        "Wires": [],
+        "Displays": null
+    }"#;
+
+	let desc = parse_chip_description(json).unwrap();
+	assert!(desc.displays.is_empty());
 }
 
 #[test]
@@ -610,6 +656,30 @@ fn roundtrip_basic_chip() {
 	assert_eq!(roundtrip.output_pins.len(), 0);
 	assert_eq!(roundtrip.sub_chips.len(), 0);
 	assert_eq!(roundtrip.wires.len(), 0);
+}
+
+#[test]
+fn roundtrip_chip_with_displays() {
+	let mut original = ChipDescription::new("DisplayPanel", ChipType::Custom);
+	original.displays.push(DisplayDescription::new(5, Vec2::new(0.5, -0.25), 1.5));
+	original.displays.push(DisplayDescription::new(9, Vec2::new(-1.0, 0.0), 0.75));
+
+	let json = serialize_chip_description(&original).unwrap();
+	let roundtrip = parse_chip_description(&json).unwrap();
+
+	assert_eq!(roundtrip.displays, original.displays);
+}
+
+#[test]
+fn serializes_empty_displays_as_null() {
+	// Matches the original's save format: chips without displays write
+	// `"Displays": null`, not an empty array.
+	let desc = ChipDescription::new("Plain", ChipType::Custom);
+
+	let json = serialize_chip_description(&desc).unwrap();
+	let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+	assert!(parsed["Displays"].is_null());
 }
 
 #[test]

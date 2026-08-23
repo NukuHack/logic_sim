@@ -3,13 +3,14 @@
 //! with chip-type-specific renderers for the visualisation chips (7-
 //! segment / RGB / dot / LED displays, key bindings).
 
-use crate::description::{ChipType, Color, NameLocation};
+use crate::description::{ChipType, NameLocation};
 use crate::pin_state::LogicState;
 use crate::render::foundation::{point_in_rect, SceneGeometry, TextLabel};
 use crate::render::layout;
+use crate::render::scene::displays::{self, ClipRect};
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::placed::PlacedSubChip;
-use crate::render::theme::{self, Rgba};
+use crate::render::theme;
 use crate::structs::Vec2;
 
 /// Layer 3 (top): every subchip's body rectangle, drawn last so a
@@ -83,57 +84,14 @@ pub(crate) fn draw_components(
 	}
 }
 
-/// Draws a `SevenSegmentDisplay` subchip's live segment pattern, reading
-/// segment states straight from its own input pins (`A`..`G` = pin ids
-/// `0`..`6`) via `pin_state`, plus the `COL` pin (id `7`) which swaps in
-/// an alternate (blue) palette when high. Mirrors
-/// `DevSceneDrawer.DrawDisplay_SevenSegment`/its `ChipType.SevenSegmentDisplay`
-/// case, except segments are drawn as plain rectangles rather than the
-/// original's pointed-end "diamond" shape -- a cosmetic simplification,
-/// not a functional one: on/off state and colour per segment are exact.
+/// Draws a `SevenSegmentDisplay` subchip's live segment pattern by
+/// delegating to the shared embedded-display painter
+/// (`scene::displays`) at a scale derived from this body's own size --
+/// see that module's docs for the exact segment layout/colour rules.
 fn draw_display_seven_segment(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup) {
 	const TARGET_HEIGHT_ASPECT: f32 = 1.75;
-	const SEGMENT_THICKNESS_FRAC: f32 = 0.165;
-	const SEGMENT_VERTICAL_SPACING_FRAC: f32 = 0.07;
-	const DISPLAY_INSET_FRAC: f32 = 0.2;
-
-	let centre = sub.centre;
-	// The body is sized to fit this display, so derive the display's own "scale" from whichever body
-	// dimension is the tighter fit for the fixed 1:1.75 aspect, rather than assuming a saved
-	// `DisplayDescription::Scale` (which this port's builtin chip descriptions don't carry).
 	let scale = sub.size.x.min(sub.size.y / TARGET_HEIGHT_ASPECT);
-
-	let bounds_width = scale;
-	let bounds_height = bounds_width * TARGET_HEIGHT_ASPECT;
-	let segment_thickness = scale * SEGMENT_THICKNESS_FRAC;
-	let segment_width = bounds_width - segment_thickness - scale * DISPLAY_INSET_FRAC;
-	let segment_region_height = bounds_height - segment_thickness - scale * DISPLAY_INSET_FRAC;
-	let segment_height = segment_region_height / 2.0 - scale * SEGMENT_VERTICAL_SPACING_FRAC;
-
-	// Black backing behind the segments, same as the original's
-	// `Draw.Quad(centre, boundsSize, Color.black)`.
-	geo.add_rect(centre, Vec2::new(bounds_width, bounds_height), theme::STATE_DISCONNECTED_COL);
-
-	let col_offset = if pin_state.logic_state(sub.id, 7) == Some(LogicState::High) { 3 } else { 0 };
-	let seg_col = |pin_id: i32| {
-		let on = pin_state.logic_state(sub.id, pin_id) == Some(LogicState::High);
-		theme::SEVEN_SEG_COLS[(if on { 1 } else { 0 }) + col_offset]
-	};
-
-	let (a, b, c, d, e, f, g) = (seg_col(0), seg_col(1), seg_col(2), seg_col(3), seg_col(4), seg_col(5), seg_col(6));
-
-	let offset_x = Vec2::new(segment_width / 2.0, 0.0);
-	let offset_y = Vec2::new(0.0, segment_region_height / 4.0);
-	let vertical_size = Vec2::new(segment_thickness, segment_height);
-	let horizontal_size = Vec2::new(segment_width, segment_thickness);
-
-	geo.add_rect(centre, horizontal_size, g); // middle
-	geo.add_rect(centre + Vec2::new(0.0, segment_region_height / 2.0), horizontal_size, a); // top
-	geo.add_rect(centre - Vec2::new(0.0, segment_region_height / 2.0), horizontal_size, d); // bottom
-	geo.add_rect(centre - offset_x + offset_y, vertical_size, f); // top-left
-	geo.add_rect(centre - offset_x - offset_y, vertical_size, e); // bottom-left
-	geo.add_rect(centre + offset_x + offset_y, vertical_size, b); // top-right
-	geo.add_rect(centre + offset_x - offset_y, vertical_size, c); // bottom-right
+	displays::draw_seven_segment(geo, ClipRect::OPEN, sub.centre, scale, sub.id, pin_state);
 }
 
 fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip, body_colour: [f32; 4]) {
@@ -152,74 +110,18 @@ fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip, body_colour:
 	geo.add_rect(sub.centre, sub.size, body_colour);
 }
 
-fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, body_colour: [f32; 4]) {
-	// An LED's body is its indicator: tint it with the saved `InternalData[0]` colour, lit/dimmed/
-	// disconnected like a wire of that colour, driven by the live state of its one input pin.
-	// Falls back to the ordinary body-colour handling below if this instance has no saved colour.
-	let led_colour = sub.internal_data.first().copied().map(|idx| {
-		let colour = Color::from_int(idx as i32);
-		let logic = sub.desc.input_pins.first().and_then(|p| pin_state.logic_state(sub.id, p.id)).unwrap_or(LogicState::Low);
-		theme::state_colour(logic, colour)
-	});
-
-	// Use this chip's saved body colour (alpha 0 means "not saved" --
-	// fall back to the theme default) rather than always drawing every
-	// chip with the same flat grey.
-	let color = led_colour.unwrap_or(body_colour);
-
-	geo.add_rect(sub.centre, sub.size, color);
+fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, _body_colour: [f32; 4]) {
+	// An LED's body is its indicator; the shared painter draws the black
+	// backing plus the tinted inner square (lit/dim by the input pin,
+	// coloured by `internal_data[0]`'s palette index).
+	displays::draw_led(geo, ClipRect::OPEN, sub.centre, sub.size.x.min(sub.size.y), sub.id, pin_state);
 }
 
-/// Draws a `DisplayRgb`/`DisplayDot` subchip's live 16x16 pixel buffer,
-/// reading each pixel from `pin_state.internal_state(sub.id)` (the same
-/// front-buffer layout `Simulator::process_display_rgb`/
-/// `process_display_dot` write: address `y * 16 + x`, packed as
-/// `R | G<<4 | B<<8` nibbles for RGB, or a plain 0/1 value for the dot
-/// display). Mirrors `DevSceneDrawer.DrawDisplay_RGB`/`DrawDisplay_Dot`.
-/// Falls back to a uniform dim grid (no live sim, e.g. in a chip-picker
-/// preview) exactly like the original's `useSim == false` branch.
+/// Draws a `DisplayRgb`/`DisplayDot` subchip's live 16x16 pixel buffer by
+/// delegating to the shared embedded-display painter -- see
+/// `scene::displays::draw_pixel_grid` for the buffer layout/decode rules.
 fn draw_display_pixel_grid(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, is_rgb: bool) {
-	const PIXELS_PER_ROW: usize = 16;
-	const BORDER_FRAC: f32 = 0.95;
-	const PIXEL_SIZE_FRAC: f32 = 0.925;
-	const OFF_PIXEL_COL: Rgba = [0.1, 0.1, 0.1, 1.0];
-
-	let centre = sub.centre;
-	let scale = sub.size.x.min(sub.size.y);
-
-	// Black backing behind the pixel grid.
-	geo.add_rect(centre, Vec2::new(scale, scale), theme::STATE_DISCONNECTED_COL);
-
-	let size = scale * BORDER_FRAC;
-	let pixel_size = size / PIXELS_PER_ROW as f32;
-	let pixel_draw_size = Vec2::new(pixel_size, pixel_size) * PIXEL_SIZE_FRAC;
-	let bottom_left = centre - Vec2::new(size, size) * 0.5;
-
-	let internal_state = pin_state.internal_state(sub.id);
-
-	fn unpack_4bit_channel(raw: u32) -> f32 {
-		(raw & 0b1111) as f32 / 15.0
-	}
-
-	for y in 0..PIXELS_PER_ROW {
-		for x in 0..PIXELS_PER_ROW {
-			let address = y * PIXELS_PER_ROW + x;
-			let col = match internal_state.and_then(|s| s.get(address)) {
-				Some(&pixel_state) => {
-					if is_rgb {
-						[unpack_4bit_channel(pixel_state), unpack_4bit_channel(pixel_state >> 4), unpack_4bit_channel(pixel_state >> 8), 1.0]
-					} else {
-						let v = (pixel_state != 0) as u32 as f32;
-						[v, v, v, 1.0]
-					}
-				}
-				None => OFF_PIXEL_COL,
-			};
-
-			let pos = bottom_left + Vec2::new(pixel_size, pixel_size) * 0.5 + Vec2::new(pixel_size * x as f32, pixel_size * y as f32);
-			geo.add_rect(pos, pixel_draw_size, col);
-		}
-	}
+	displays::draw_pixel_grid(geo, ClipRect::OPEN, sub.centre, sub.size.x.min(sub.size.y), sub.id, pin_state, is_rgb);
 }
 
 #[cfg(test)]

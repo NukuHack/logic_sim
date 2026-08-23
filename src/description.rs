@@ -349,6 +349,30 @@ impl SubChipDescription {
 	}
 }
 
+/// One display surface embedded in a chip's body ("customize" feature):
+/// a live view of one of the chip's own subchips that is itself a
+/// display-type builtin (`SevenSegmentDisplay` / `DisplayRgb` /
+/// `DisplayDot` / `DisplayLed`). Mirrors `DLS.Description.DisplayDescription`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DisplayDescription {
+	/// Id of the subchip (within the owning chip's own `sub_chips`) whose
+	/// content this display shows.
+	pub sub_chip_id: i32,
+	/// Display centre relative to the parent chip body's centre, in world
+	/// units (scaled by the parent's own scale when nested -- see
+	/// `render::scene::displays`).
+	pub position: Vec2,
+	/// World size multiplier applied to the displayed content's natural
+	/// footprint (see `display_base_size`).
+	pub scale: f32,
+}
+
+impl DisplayDescription {
+	pub fn new(sub_chip_id: i32, position: Vec2, scale: f32) -> Self {
+		Self { sub_chip_id, position, scale }
+	}
+}
+
 /// How a wire's source/target end attaches to the rest of the scene.
 /// Mirrors `DLS.Description.WireConnectionType`. Most wires attach both
 /// ends directly to a pin (`ToPins`), but a wire can instead be "tapped"
@@ -470,6 +494,10 @@ pub struct ChipDescription {
 	pub output_pins: Vec<PinDescription>,
 	pub sub_chips: Vec<SubChipDescription>,
 	pub wires: Vec<WireDescription>,
+	/// Display surfaces embedded in this chip's body, as saved on disk
+	/// (`Displays`). Empty for chips without any (the original saves
+	/// `null` in that case, which parses as empty here).
+	pub displays: Vec<DisplayDescription>,
 	/// This chip's body colour as saved on disk (`Colour`), RGBA in 0..1.
 	/// Alpha 0 (the default) means "no colour was saved" -- renderers
 	/// should fall back to their own default body colour in that case.
@@ -500,6 +528,7 @@ impl ChipDescription {
 			output_pins: Vec::new(),
 			sub_chips: Vec::new(),
 			wires: Vec::new(),
+			displays: Vec::new(),
 			colour: [0.0, 0.0, 0.0, 0.0],
 			name_location: NameLocation::default(),
 			size: Vec2::default(),

@@ -46,6 +46,18 @@ pub trait PinStateLookup {
 	fn internal_state(&self, _owner_id: i32) -> Option<&[u32]> {
 		None
 	}
+
+	/// Descends into the simulation scope of the direct subchip identified
+	/// by `owner_id`, so addresses that were resolved against the *parent*
+	/// scope can keep resolving one level deeper (used when walking into a
+	/// custom chip's own embedded displays -- see
+	/// `render::scene::displays`). `None` means this lookup can't (or the
+	/// simulator doesn't) model that sub-scope; callers fall back to
+	/// drawing the nested content blank, mirroring the original's
+	/// `sim == null` branches.
+	fn enter_scope(&self, _owner_id: i32) -> Option<Box<dyn PinStateLookup + '_>> {
+		None
+	}
 }
 
 /// Trivial lookup that always reports every pin as low -- useful for static
@@ -91,6 +103,11 @@ impl<'a> PinStateLookup for SimulatorPinState<'a> {
 	fn internal_state(&self, owner_id: i32) -> Option<&[u32]> {
 		let chip_idx = self.sim.find_sub_chip(self.scope, owner_id)?;
 		Some(&self.sim.chip(chip_idx).internal_state)
+	}
+
+	fn enter_scope(&self, owner_id: i32) -> Option<Box<dyn PinStateLookup + '_>> {
+		let chip_idx = self.sim.find_sub_chip(self.scope, owner_id)?;
+		Some(Box::new(SimulatorPinState { sim: self.sim, scope: chip_idx }))
 	}
 }
 
