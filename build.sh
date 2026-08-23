@@ -65,19 +65,22 @@ else
     done
   fi
 
-  # Unit tests (always in -y and -q)
-  echo "==> Running pure-logic tests (cargo test --lib)..."
-  set +e
-  cargo test --lib
-  LIB_TEST_STATUS=$?
-  set -e
-  if [ "$LIB_TEST_STATUS" -ne 0 ]; then
-    echo "==> WARNING: pure-logic tests failed (exit $LIB_TEST_STATUS). Continuing anyway."
+  # Quick mode: unit tests only. Full mode (-y) covers them in the complete
+  # suite below, so don't run them twice.
+  if ! $RUN_ALL; then
+    echo "==> Running pure-logic tests (cargo test --lib)..."
+    set +e
+    cargo test --lib
+    LIB_TEST_STATUS=$?
+    set -e
+    if [ "$LIB_TEST_STATUS" -ne 0 ]; then
+      echo "==> WARNING: pure-logic tests failed (exit $LIB_TEST_STATUS). Continuing anyway."
+    fi
   fi
 
-  # Integration / doc tests (only in -y)
+  # Full test suite + Miri (only in -y, best-effort)
   if $RUN_ALL; then
-    echo "==> Running all tests (cargo test)..."
+    echo "==> Running all tests (unit, integration, docs)..."
     set +e
     cargo test
     ALL_TEST_STATUS=$?
@@ -85,10 +88,6 @@ else
     if [ "$ALL_TEST_STATUS" -ne 0 ]; then
       echo "==> WARNING: full test suite failed (exit $ALL_TEST_STATUS). Continuing anyway."
     fi
-  fi
-
-  # Miri (only in -y, best-effort)
-  if $RUN_ALL; then
     if command -v cargo-miri >/dev/null 2>&1 || cargo +nightly miri --version >/dev/null 2>&1; then
       echo "==> Running cargo miri test --lib"
       if ! cargo +nightly miri test --lib; then
@@ -104,4 +103,4 @@ fi
 echo "==> Building release..."
 cargo build --release
 
-echo "==> Build complete. Binary available at target/release/logic_sim (or library if crate type = lib)."
+echo "==> Build complete. Binary available at target/release/app."
