@@ -519,9 +519,33 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 			chip.output_pins.push(new_pin);
 		}
 	} else {
-		chip.sub_chips.push(SubChipDescription { name, id, internal_data: None, position: world_pos, label: None, pin_colour_info: Vec::new() });
+		let internal_data = default_internal_data(chip_type);
+		chip.sub_chips.push(SubChipDescription { name, id, internal_data, position: world_pos, label: None, pin_colour_info: Vec::new() });
 	}
 	v.rebuild_sim();
+}
+
+/// Sensible starting `SubChipDescription::internal_data` for a freshly-placed subchip of
+/// `chip_type`, so the chip is immediately simulate-able (and shows a sane value in its own
+/// configuration popup) without the player having to open and confirm that popup first. Chip
+/// types that don't need any persistent internal data -- or that already tolerate a missing one
+/// (e.g. a boundary `KEY`-less lookup defaulting to "unbound") -- get `None`, same as before.
+fn default_internal_data(chip_type: Option<ChipType>) -> Option<Vec<u32>> {
+	match chip_type {
+		// `Rom256x16`'s internal_state is indexed directly by the live 0..256 address bus with no
+		// bounds check (see `sim::process_builtin_chip`'s `Rom256x16` arm), so it needs the full
+		// `ROM_WORD_COUNT`-length contents up front, not just whatever's been configured so far --
+		// an absent/short one is exactly what caused the placement-time panic this fixes.
+		Some(ChipType::Rom256x16) => Some(vec![0u32; editor_ui::ROM_WORD_COUNT]),
+		// Bound to 'A' by default, so a freshly-placed KEY chip responds to a keypress right away
+		// instead of silently sitting bound to the (unpressable) null character until configured.
+		Some(ChipType::Key) => Some(vec![b'A' as u32]),
+		// [duration, ticks_remaining, input_old] -- see `sim::process_builtin_chip`'s `Pulse` arm,
+		// which indexes all three unconditionally. 200 simulation ticks is a short but visible
+		// default pulse length; the other two are just-started runtime state, always zero.
+		Some(ChipType::Pulse) => Some(vec![200, 0, 0]),
+		_ => None,
+	}
 }
 
 /// Builds the translucent "ghost" preview of the chip currently pending

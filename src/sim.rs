@@ -800,6 +800,35 @@ fn build_internal_state(chip_type: ChipType, override_state: Option<&[u32]>) -> 
 			}
 			state
 		}
+		// Indexed directly by the live 0..256 address bus with no bounds check (see
+		// `process_builtin_chip`'s `Rom256x16` arm), so -- like the display/RAM types above -- it
+		// always needs the full `ADDRESS_SIZE_8BIT` words, regardless of whether (or how much of)
+		// `override_state` was actually saved. Missing words default to 0, same as an unwritten
+		// RAM/display cell would if it started zeroed instead of random.
+		ChipType::Rom256x16 => {
+			let mut state = vec![0u32; ADDRESS_SIZE_8BIT];
+			if let Some(saved) = override_state {
+				for (slot, &v) in state.iter_mut().zip(saved) {
+					*slot = v;
+				}
+			}
+			state
+		}
+		// `[duration, ticks_remaining, input_old]`, all three indexed unconditionally by
+		// `process_builtin_chip`'s `Pulse` arm -- a shorter (or absent) `override_state` needs
+		// padding out to that length rather than being used as-is.
+		ChipType::Pulse => {
+			const DEFAULT: [u32; 3] = [200, 0, 0];
+			match override_state {
+				Some(saved) if saved.len() >= DEFAULT.len() => saved.to_vec(),
+				Some(saved) => {
+					let mut state = DEFAULT.to_vec();
+					state[..saved.len()].copy_from_slice(saved);
+					state
+				}
+				None => DEFAULT.to_vec(),
+			}
+		}
 		_ => match override_state {
 			Some(s) if !s.is_empty() => s.to_vec(),
 			_ => Vec::new(),
