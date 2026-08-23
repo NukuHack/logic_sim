@@ -17,13 +17,12 @@ impl Default for Vec2 {
 impl Vec2 {
 	pub const ZERO: Vec2 = Vec2 { x: 0.0, y: 0.0 };
 
-	pub fn new<X: Into<f32>, Y: Into<f32>>(x: X, y: Y) -> Self {
-		Self { x: x.into(), y: y.into() }
+	pub fn new(x: f32, y: f32) -> Self {
+		Self { x, y }
 	}
 
-	pub fn splat<X: Into<f32>>(both: X) -> Self {
-		let temp: f32 = both.into();
-		Self { x: temp, y: temp }
+	pub fn splat(both: f32) -> Self {
+		Self { x: both, y: both }
 	}
 
 	pub fn max(&self, other: Self) -> Self {
