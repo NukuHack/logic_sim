@@ -104,7 +104,7 @@ mod tests {
 
 	#[test]
 	fn to_int_matches_original_packed_formula() {
-		assert_eq!(Version::new(2, 1, 6).to_int(), 2 * 100_000 + 1 * 1_000 + 6);
+		assert_eq!(Version::new(2, 1, 6).to_int(), 2 * 100_000 + 1_000 + 6);
 	}
 
 	#[test]

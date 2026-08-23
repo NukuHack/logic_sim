@@ -105,7 +105,11 @@ pub fn copy_directory(source_dir: &Path, destination_dir: &Path, recursive: bool
 
 		if file_type.is_file() {
 			let target = destination_dir.join(entry.file_name());
-			std::fs::copy(&path, &target)?;
+			// Read+write instead of `std::fs::copy`: these are always small
+			// JSON documents, and glibc implements fs::copy via the
+			// copy_file_range syscall, which isn't available everywhere
+			// (e.g. under Miri's syscall shims).
+			std::fs::write(&target, std::fs::read(&path)?)?;
 		} else if file_type.is_dir() && recursive {
 			let target = destination_dir.join(entry.file_name());
 			copy_directory(&path, &target, true)?;

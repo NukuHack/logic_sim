@@ -130,8 +130,7 @@ mod tests {
 		let paths = SavePaths::new(&root);
 		assert!(!Loader::project_exists(&paths, "GOL"));
 
-		let mut desc = ProjectDescription::default();
-		desc.project_name = "GOL".to_string();
+		let mut desc = ProjectDescription { project_name: "GOL".to_string(), ..Default::default() };
 		Saver::save_project_description(&paths, &mut desc).unwrap();
 
 		assert!(Loader::project_exists(&paths, "GOL"));
@@ -149,8 +148,7 @@ mod tests {
 	fn load_project_description_enforces_name_matches_directory() {
 		let root = temp_dir("load_project_desc_name_enforced");
 		let paths = SavePaths::new(&root);
-		let mut desc = ProjectDescription::default();
-		desc.project_name = "Original Name".to_string();
+		let mut desc = ProjectDescription { project_name: "Original Name".to_string(), ..Default::default() };
 		Saver::save_project_description(&paths, &mut desc).unwrap();
 
 		// Simulate the player renaming the folder by hand without updating
@@ -169,9 +167,7 @@ mod tests {
 		let paths = SavePaths::new(&root);
 
 		for (name, last_save) in [("A", "2024-01-01T00:00:00.000Z"), ("B", "2025-06-01T00:00:00.000Z"), ("C", "2024-06-01T00:00:00.000Z")] {
-			let mut desc = ProjectDescription::default();
-			desc.project_name = name.to_string();
-			desc.last_save_time = last_save.to_string();
+			let desc = ProjectDescription { project_name: name.to_string(), last_save_time: last_save.to_string(), ..Default::default() };
 			let data = crate::json::serialize_project_description(&desc).unwrap();
 			SavePaths::ensure_directory_exists(&paths.project_path(name)).unwrap();
 			std::fs::write(paths.project_description_path(name), data).unwrap();
@@ -205,9 +201,7 @@ mod tests {
 		custom.input_pins.push(crate::description::PinDescription::new("A", 0, crate::description::PinBitCount::Bit1));
 		Saver::save_chip(&paths, "P", &custom).unwrap();
 
-		let mut desc = ProjectDescription::default();
-		desc.project_name = "P".to_string();
-		desc.all_custom_chip_names = vec!["MY GATE".to_string()];
+		let mut desc = ProjectDescription { project_name: "P".to_string(), all_custom_chip_names: vec!["MY GATE".to_string()], ..Default::default() };
 		Saver::save_project_description(&paths, &mut desc).unwrap();
 
 		let project = Loader::load_project(&paths, "P").unwrap();
@@ -229,9 +223,7 @@ mod tests {
 		custom.input_pins.push(crate::description::PinDescription::new("MyInput", 0, crate::description::PinBitCount::Bit1));
 		Saver::save_chip(&paths, "P", &custom).unwrap();
 
-		let mut desc = ProjectDescription::default();
-		desc.project_name = "P".to_string();
-		desc.all_custom_chip_names = vec!["NAND".to_string()];
+		let mut desc = ProjectDescription { project_name: "P".to_string(), all_custom_chip_names: vec!["NAND".to_string()], ..Default::default() };
 		Saver::save_project_description(&paths, &mut desc).unwrap();
 
 		let project = Loader::load_project(&paths, "P").unwrap();

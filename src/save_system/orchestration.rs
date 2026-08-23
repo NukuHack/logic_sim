@@ -80,15 +80,13 @@ mod tests {
 
 	#[test]
 	fn can_open_project_accepts_projects_within_the_supported_version_range() {
-		let mut desc = ProjectDescription::default();
-		desc.dls_version_earliest_compatible = "2.0.0".to_string();
+		let desc = ProjectDescription { dls_version_earliest_compatible: "2.0.0".to_string(), ..Default::default() };
 		assert_eq!(can_open_project(&desc), Ok(()));
 	}
 
 	#[test]
 	fn can_open_project_rejects_projects_from_a_newer_version() {
-		let mut desc = ProjectDescription::default();
-		desc.dls_version_earliest_compatible = "99.0.0".to_string();
+		let desc = ProjectDescription { dls_version_earliest_compatible: "99.0.0".to_string(), ..Default::default() };
 		let result = can_open_project(&desc);
 		assert!(result.is_err());
 		assert!(result.unwrap_err().contains("99.0.0"));
@@ -96,16 +94,14 @@ mod tests {
 
 	#[test]
 	fn can_open_project_rejects_unparseable_version_strings() {
-		let mut desc = ProjectDescription::default();
-		desc.dls_version_earliest_compatible = "not-a-version".to_string();
+		let desc = ProjectDescription { dls_version_earliest_compatible: "not-a-version".to_string(), ..Default::default() };
 		assert_eq!(can_open_project(&desc), Err("Unrecognized project format".to_string()));
 	}
 
 	#[test]
 	fn can_open_project_accepts_all_four_sample_projects() {
 		// Every uploaded ProjectDescription.json declared EarliestCompatible = 2.0.0.
-		let mut desc = ProjectDescription::default();
-		desc.dls_version_earliest_compatible = "2.0.0".to_string();
+		let desc = ProjectDescription { dls_version_earliest_compatible: "2.0.0".to_string(), ..Default::default() };
 		assert_eq!(can_open_project(&desc), Ok(()));
 	}
 

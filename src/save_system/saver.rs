@@ -110,8 +110,7 @@ mod tests {
 	use crate::save_system::test_util::temp_dir;
 
 	fn sample_description(name: &str) -> ProjectDescription {
-		let mut d = ProjectDescription::default();
-		d.project_name = name.to_string();
+		let mut d = ProjectDescription { project_name: name.to_string(), ..Default::default() };
 		d.creation_time = "2025-01-01T00:00:00.000Z".to_string();
 		d
 	}

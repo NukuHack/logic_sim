@@ -565,8 +565,7 @@ fn serializes_chip_with_wires() {
 
 #[test]
 fn serializes_project_description() {
-	let mut project = ProjectDescription::default();
-	project.project_name = "TestProject".to_string();
+	let mut project = ProjectDescription { project_name: "TestProject".to_string(), ..Default::default() };
 	project.dls_version_last_saved = "0.8.2".to_string();
 	project.dls_version_earliest_compatible = "0.8.0".to_string();
 	project.prefs_sim_target_steps_per_second = 120;
@@ -743,8 +742,7 @@ fn roundtrip_chip_with_all_features() {
 
 #[test]
 fn roundtrip_project_description() {
-	let mut original = ProjectDescription::default();
-	original.project_name = "RoundtripProject".to_string();
+	let mut original = ProjectDescription { project_name: "RoundtripProject".to_string(), ..Default::default() };
 	original.dls_version_last_saved = "0.8.2".to_string();
 	original.dls_version_earliest_compatible = "0.8.0".to_string();
 	original.creation_time = "2024-01-01T00:00:00".to_string();
@@ -925,8 +923,8 @@ fn simulates_loaded_not_chip_with_serialization_roundtrip() {
 
 #[test]
 fn chip_library_is_starred_functionality() {
-	let mut project = ProjectDescription::default();
-	project.starred_list = vec![StarredItem::new("NOT", false), StarredItem::new("Collection", true)];
+	let project =
+		ProjectDescription { starred_list: vec![StarredItem::new("NOT", false), StarredItem::new("Collection", true)], ..Default::default() };
 
 	assert!(project.is_starred("NOT", false));
 	assert!(!project.is_starred("AND", false));
