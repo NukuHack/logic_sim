@@ -12,8 +12,8 @@ use logic_sim::render::gpu::Renderer;
 use logic_sim::render::layout;
 use logic_sim::render::menu_ui::{self, UiAction};
 use logic_sim::render::scene::{
-	bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, SceneGeometry,
-	SimulatorPinState,
+	apply_alpha, bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow,
+	SceneGeometry, SimulatorPinState,
 };
 use logic_sim::render::theme;
 use logic_sim::sim::key_mods_bits;
@@ -22,7 +22,7 @@ use logic_sim::structs::Vec2;
 use logic_sim::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use logic_sim::{
 	default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, SavePaths, Saver,
-	WireDescription,
+	SubChipDescription, WireDescription,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -255,6 +255,17 @@ struct ViewerState {
 	/// `wire_index`/subchip id would otherwise silently refer to
 	/// whatever now happens to sit at that index in the new chip.
 	pending_wire: Option<PendingWire>,
+
+	/// The name of a chip currently picked up for placement (the
+	/// library's "USE" button, `EditorAction::PlaceChip`), if any --
+	/// drawn as a translucent preview following the cursor
+	/// (`build_pending_place_scene`) and dropped as a real
+	/// `SubChipDescription` on the next canvas click that lands on free
+	/// space (`try_place_pending_chip`). Mutually exclusive with
+	/// `pending_wire` in practice (starting one clears the other), and
+	/// cleared on the same triggers `pending_wire` is: Escape, a
+	/// right-click, or the root chip changing.
+	pending_place: Option<String>,
 }
 
 impl ViewerState {
@@ -428,6 +439,95 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	pending.bend_points.push(world_pos);
 }
 
+/// Alpha applied to a chip's translucent placement preview (see
+/// `build_pending_place_scene`) -- 75%, so the ghost reads clearly as
+/// "not yet placed" without being hard to make out against the canvas.
+const PENDING_PLACEMENT_ALPHA: f32 = 0.75;
+
+/// Next free subchip id for `chip`'s own `sub_chips` list: one past
+/// whatever the highest existing id is, or `1` if it has none yet
+/// (`SubChipDescription::id` docs say IDs are `> 0`).
+fn next_sub_chip_id(chip: &ChipDescription) -> i32 {
+	chip.sub_chips.iter().map(|s| s.id).max().unwrap_or(0) + 1
+}
+
+/// Attempts to drop `v.pending_place`'s chip (assumed `Some`) at
+/// `world_pos`. Only actually places it -- and clears `v.pending_place`
+/// -- when the click lands on genuinely free canvas space: not a
+/// subchip's pin, one of the current chip's own boundary dev-pins, an
+/// existing placed component's body, or a wire. Landing on any of those
+/// just leaves the pending placement active untouched, so the player can
+/// simply try again elsewhere (mirrors `try_continue_pending_wire`'s
+/// "component/wire clicks are ignored outright" behaviour). The new
+/// instance gets a fresh id (`next_sub_chip_id`), no label, no saved
+/// internal data (chip types that need some, e.g. ROM/Key, start at
+/// their type's default and are configured afterwards via their own
+/// right-click popups, same as today), and no output-pin colour
+/// overrides.
+///
+/// Also defensively re-checks `would_create_cycle` -- unlike a free-space
+/// miss, this can never be resolved by clicking somewhere else, so
+/// (unlike the free-space case) it cancels the pending placement outright
+/// and reports why via `status`, rather than leaving it dangling for a
+/// retry that could never succeed.
+fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
+	let root_chip_name = v.root_chip_name.clone();
+	let root_desc = v.library.get(&root_chip_name);
+	let placed = place_sub_chips(root_desc, &v.library);
+
+	let max_dist = wire_click_tolerance(&v.camera);
+	let blocked = hit_test_any_pin(root_desc, &placed, world_pos).is_some()
+		|| hit_test_dev_pin(root_desc, world_pos).is_some()
+		|| hit_test_sub_chip(&placed, world_pos).is_some()
+		|| hit_test_wire(root_desc, &v.library, world_pos, max_dist).is_some();
+	if blocked {
+		return;
+	}
+
+	// Defensive re-check: the "USE"/bottom-bar buttons that set `pending_place` in the first
+	// place are already greyed out for a chip that would cycle (see `would_create_cycle`'s
+	// docs), but a click always gets the final say rather than trusting that alone.
+	let name = v.pending_place.take().expect("caller only calls this with a pending placement");
+	if would_create_cycle(&v.library, &root_chip_name, &name) {
+		*status = Some(format!("Can't place '{name}' inside '{root_chip_name}' -- it would contain itself"));
+		return;
+	}
+
+	let chip = v.library.get_mut(&root_chip_name);
+	let id = next_sub_chip_id(chip);
+	chip.sub_chips.push(SubChipDescription { name, id, internal_data: None, position: world_pos, label: None, pin_colour_info: Vec::new() });
+	v.rebuild_sim();
+}
+
+/// Builds the translucent "ghost" preview of the chip currently pending
+/// placement, floating at the cursor's live world position. Reuses the
+/// exact same `build_scene` pipeline a real placed component draws
+/// through -- body, pins, name label, and any type-specific rendering
+/// (a Key's bound letter, an LED's tint, a display's live pixels, ...)
+/// -- by wrapping the chip in a throwaway single-subchip `ChipDescription`,
+/// so the preview can never drift out of sync with what actually gets
+/// placed. Faded to `PENDING_PLACEMENT_ALPHA` via `scene::apply_alpha`.
+/// Returns `None` if `chip_name` no longer resolves in `library` (e.g. it
+/// was deleted while pending -- shouldn't normally happen, but avoids a
+/// panic in `place_sub_chips` if it somehow does).
+fn build_pending_place_scene(library: &ChipLibrary, chip_name: &str, cursor_world_pos: Vec2) -> Option<SceneGeometry> {
+	library.try_get(chip_name)?;
+
+	let mut ghost = ChipDescription::new("__pending_placement_ghost__", ChipType::Custom);
+	ghost.sub_chips.push(SubChipDescription {
+		name: chip_name.to_string(),
+		id: 0,
+		internal_data: None,
+		position: cursor_world_pos,
+		label: None,
+		pin_colour_info: Vec::new(),
+	});
+
+	let mut geo = build_scene(&ghost, library, &AllLow, None);
+	apply_alpha(&mut geo, PENDING_PLACEMENT_ALPHA);
+	Some(geo)
+}
+
 /// Draws the in-progress wire preview: a line from its start endpoint,
 /// through any turn points placed so far, to the cursor's current world
 /// position -- so the player can see what they're about to connect
@@ -510,6 +610,37 @@ fn reset_all_driven_inputs(library: &mut ChipLibrary) {
 /// act on one even if somehow invoked anyway.
 fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
 	library.try_get(name).map(|d| d.chip_type == ChipType::Custom).unwrap_or(false)
+}
+
+/// True if placing `chip_to_place` as a new subchip inside `root_chip_name` would create a
+/// recursive cycle -- either because it *is* `root_chip_name` itself, or because its own
+/// definition, directly or transitively through its own subchips, already contains
+/// `root_chip_name` somewhere inside it. In the latter case placing it back into
+/// `root_chip_name` would close the loop (`root_chip_name` -> `chip_to_place` -> ... ->
+/// `root_chip_name`), which `sim::build_recursive` has no cycle guard for and would recurse
+/// forever trying to flatten. Gates the "USE"/bottom-bar placement buttons
+/// (`editor_ui::ChipLibraryState::selected_chip_would_cycle`,
+/// `build_starred_bottom_bar`/`build_starred_collection_popup`'s `cycle_blocked`) and is checked
+/// again defensively in `try_place_pending_chip` itself, so a click can never place a cycle even
+/// if the UI's greyed-out state somehow gets out of sync with what's actually open.
+fn would_create_cycle(library: &ChipLibrary, root_chip_name: &str, chip_to_place: &str) -> bool {
+	if chip_to_place.eq_ignore_ascii_case(root_chip_name) {
+		return true;
+	}
+	let mut visited = std::collections::HashSet::new();
+	chip_contains(library, chip_to_place, root_chip_name, &mut visited)
+}
+
+/// True if `chip_name`'s own definition includes `target` anywhere inside it, directly or via any
+/// of its subchips recursively. `visited` (chip names already expanded, lower-cased) guards
+/// against looping forever if `library` somehow already describes a cycle (e.g. a hand-edited
+/// save) -- same defensive purpose as `scene::draw_pending_wire_preview`'s own recursion guard.
+fn chip_contains(library: &ChipLibrary, chip_name: &str, target: &str, visited: &mut std::collections::HashSet<String>) -> bool {
+	if !visited.insert(chip_name.to_ascii_lowercase()) {
+		return false;
+	}
+	let Some(desc) = library.try_get(chip_name) else { return false };
+	desc.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(target) || chip_contains(library, &s.name, target, visited))
 }
 
 /// Mandatory catch-all collection every project's library falls back to
@@ -946,6 +1077,7 @@ fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<St
 	v.rebuild_sim();
 	v.camera_fitted = false;
 	v.pending_wire = None;
+	v.pending_place = None;
 	*status = Some(format!("New chip '{name}'"));
 }
 
@@ -984,6 +1116,7 @@ fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 		if switching {
 			v.camera_fitted = false;
 			v.pending_wire = None;
+			v.pending_place = None;
 		}
 	} else if v.library.try_get(name).is_some() {
 		*status = Some(format!("Chip '{}' is a builtin component", name));
@@ -1005,6 +1138,14 @@ enum ContextTarget {
 	DevPin { is_input: bool, id: i32 },
 	/// A row in the chip library sidebar, by chip name.
 	LibChip(String),
+	/// A plain chip's own button directly in the starred bottom bar (not
+	/// one listed inside a collection's flyout) -- by chip name. Distinct
+	/// from `FlyoutChip` only in which right-click rows it's offered
+	/// (this one also gets "Un-star"; see `handle_right_mouse_button`).
+	BarChip(String),
+	/// A chip row inside an *open collection's* flyout
+	/// (`build_starred_collection_popup`), by chip name.
+	FlyoutChip(String),
 }
 
 impl ContextTarget {
@@ -1020,6 +1161,10 @@ impl ContextTarget {
 			rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: false, id })
 		} else if let Some(rest) = target.strip_prefix("libchip:") {
 			Some(ContextTarget::LibChip(rest.to_string()))
+		} else if let Some(rest) = target.strip_prefix("barchip:") {
+			Some(ContextTarget::BarChip(rest.to_string()))
+		} else if let Some(rest) = target.strip_prefix("flyoutchip:") {
+			Some(ContextTarget::FlyoutChip(rest.to_string()))
 		} else {
 			None
 		}
@@ -1042,8 +1187,30 @@ fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> V
 	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16)) {
 		items.push(ContextMenuItem::new("Configure", "configure"));
 	}
+	if chip_type.unwrap_or_default().is_bus_type() {
+		items.push(ContextMenuItem::new("Flip", "flip"));
+	}
 	items.push(ContextMenuItem::new("Delete", "delete"));
 	items
+}
+
+/// Un-stars `name` (a plain chip, never a collection -- see
+/// `ContextTarget::BarChip`'s docs) from the right-click popup on its own
+/// bottom-bar button, and immediately persists the change. Unlike
+/// `EditorAction::ToggleStarred` (which only mutates `v.prefs` in memory,
+/// relying on the library overlay's own exit/Tab handling to save when
+/// the player eventually leaves it), this has no such exit event to
+/// piggyback on -- the bottom bar is usable with the library closed --
+/// so it saves right away, the same way `EditorAction::PlaceChip` does
+/// for the same reason.
+fn unstar_bottom_bar_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
+	v.prefs.set_starred(name, false, false);
+	let mut desc = v.prefs.clone();
+	if let Err(e) = Saver::save_project_description(paths, &mut desc) {
+		*status = Some(format!("Failed to save chip library: {e}"));
+	} else {
+		v.prefs = desc;
+	}
 }
 
 /// Applies a click on the currently-open right-click popup (see
@@ -1067,6 +1234,10 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			reset_library_popup_state(v);
 			v.library_selection = LibrarySelection::None;
 		}
+		("open", ContextTarget::BarChip(name)) | ("open", ContextTarget::FlyoutChip(name)) => {
+			open_chip_by_name(v, paths, status, &name);
+		}
+		("unstar", ContextTarget::BarChip(name)) => unstar_bottom_bar_chip(v, paths, status, &name),
 		("delete", ContextTarget::LibChip(name)) => {
 			v.library_delete_message = chip_delete_confirm_message(v, &name);
 			v.library_confirming_chip_delete = true;
@@ -1086,6 +1257,17 @@ fn apply_context_menu_action(v: &mut ViewerState, paths: &SavePaths, status: &mu
 			v.overlay = Overlay::Naming;
 			v.overlay_text_input = current;
 			v.naming_purpose = NamingPurpose::LabelComponent(id);
+		}
+		("flip", ContextTarget::Component(id)) => {
+			if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
+				let mut data = sub.internal_data.clone().unwrap_or_default();
+				if data.len() < 2 {
+					data.resize(2, 0);
+				}
+				data[1] ^= 1;
+				sub.internal_data = Some(data);
+			}
+			v.rebuild_sim();
 		}
 		("label", ContextTarget::DevPin { is_input, id }) => {
 			let chip = v.library.get(&root_chip_name);
@@ -1396,6 +1578,19 @@ fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			}
 			reset_library_popup_state(v);
 		}
+		EditorAction::PlaceChip(name) => {
+			let mut desc = v.prefs.clone();
+			if let Err(e) = Saver::save_project_description(paths, &mut desc) {
+				*status = Some(format!("Failed to save chip library: {e}"));
+			} else {
+				v.prefs = desc;
+			}
+			v.overlay = Overlay::None;
+			reset_library_popup_state(v);
+			v.library_selection = LibrarySelection::None;
+			v.pending_wire = None;
+			v.pending_place = Some(name);
+		}
 		EditorAction::ExitLibrary => {
 			let mut desc = v.prefs.clone();
 			if let Err(e) = Saver::save_project_description(paths, &mut desc) {
@@ -1564,6 +1759,7 @@ impl App {
 					context_menu: None,
 					last_context_menu_buttons: Vec::new(),
 					pending_wire: None,
+					pending_place: None,
 				});
 				self.status = None;
 				self.set_window_title();
@@ -1833,6 +2029,7 @@ impl App {
 				}
 
 				if btn_state == ElementState::Pressed {
+					let world_pos = v.camera.screen_to_world(self.mouse_pos);
 					// handle UI
 					{
 						// The bottom bar's starred-collection flyout, if one's
@@ -1861,17 +2058,17 @@ impl App {
 						// click anywhere else closes the flyout, same as the
 						// original's "click outside" dismissal.
 						v.bottom_bar_open_collection = None;
-
-						let root_desc = v.library.get(&v.root_chip_name);
-						let world_pos = v.camera.screen_to_world(self.mouse_pos);
-						if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
-							let root_chip_name = v.root_chip_name.clone();
-							toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
-						}
 					}
 					// Handle canvas
 					{
-						let world_pos = v.camera.screen_to_world(self.mouse_pos);
+
+						// A chip picked up for placement claims every click ahead of anything else below,
+						// same "claims the click" priority a wire in progress gets just below -- see
+						// `try_place_pending_chip`'s doc comment for what actually happens with the click.
+						if v.pending_place.is_some() {
+							try_place_pending_chip(v, world_pos, &mut self.status);
+							return;
+						}
 
 						// A wire already being placed claims every click ahead of anything else below --
 						// including the input-pin toggle, so clicking a switch's pin finishes/bends the
@@ -1880,7 +2077,6 @@ impl App {
 							try_continue_pending_wire(v, world_pos, &mut self.status);
 							return;
 						}
-
 						if try_start_pending_wire(v, world_pos) {
 							return;
 						}
@@ -1913,15 +2109,16 @@ impl App {
 	///    `scene::hit_test_wire`/`delete_wire`'s docs for the "shortest
 	///    possible section" semantics), taking priority over the popup
 	///    path entirely;
-	///  - on a placed component, a dev-pin of the current root chip, or a
-	///    library row, opens the generic context-menu popup from
-	///    `render::context_menu` with whichever rows apply (see
-	///    `context_menu_items_for_component`);
+	///  - on a placed component, a dev-pin of the current root chip, a
+	///    library row, or a starred bottom-bar chip button (bar itself or
+	///    an open collection's flyout), opens the generic context-menu
+	///    popup from `render::context_menu` with whichever rows apply
+	///    (see `context_menu_items_for_component`);
 	///  - anywhere else, just closes whatever popup was already open.
 	/// Hit-tests run in the same order things are actually drawn on top
-	/// of each other (library row > dev-pin > component > wire), so a
-	/// click that could plausibly land on more than one resolves to
-	/// whichever one the player can actually see.
+	/// of each other (library row > bottom bar > dev-pin > component >
+	/// wire), so a click that could plausibly land on more than one
+	/// resolves to whichever one the player can actually see.
 	fn handle_right_mouse_button(&mut self, btn_state: ElementState) {
 		if btn_state != ElementState::Pressed {
 			return;
@@ -1933,8 +2130,10 @@ impl App {
 		// replaces the previous context menu rather than stacking).
 		v.context_menu = None;
 		// Also the standard "cancel" gesture for an in-progress wire
-		// placement, same as Escape (see the keyboard handler).
+		// placement or a chip pending placement, same as Escape (see
+		// the keyboard handler).
 		v.pending_wire = None;
+		v.pending_place = None;
 
 		// A right click while a *modal* overlay is open (anything but
 		// the library sidebar) has nothing sensible to attach to, so
@@ -1965,7 +2164,35 @@ impl App {
 		let root_chip_name = v.root_chip_name.clone();
 		let world_pos = v.camera.screen_to_world(self.mouse_pos);
 
-		// 2) One of the current root chip's own boundary dev-pins.
+		// 2) A chip button in the starred bottom bar -- either directly in the bar itself, or
+		// listed inside an open collection's flyout (checked first, same "top layer first"
+		// priority the flyout gets over the bar in `handle_mouse_button`'s left-click handling).
+		// Both are screen-space, not world-space, so they're hit-tested against last frame's
+		// button rects rather than `world_pos` like everything below.
+		{
+			let flyout_hit = v.last_bottom_bar_popup_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
+				EditorAction::PlaceChip(name) => Some(name.clone()),
+				_ => None,
+			});
+			if let Some(name) = flyout_hit {
+				let items = vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(&v.library, &name))];
+				v.context_menu = Some(ContextMenuState::new(format!("flyoutchip:{name}"), self.mouse_pos, items));
+				return;
+			}
+
+			let bar_hit = v.last_bottom_bar_buttons.iter().find(|b| b.rect.contains(self.mouse_pos)).and_then(|b| match &b.action {
+				EditorAction::PlaceChip(name) => Some(name.clone()),
+				_ => None,
+			});
+			if let Some(name) = bar_hit {
+				let items =
+					vec![ContextMenuItem::new_enabled("Open", "open", is_custom_chip(&v.library, &name)), ContextMenuItem::new("Un-star", "unstar")];
+				v.context_menu = Some(ContextMenuState::new(format!("barchip:{name}"), self.mouse_pos, items));
+				return;
+			}
+		}
+
+		// 3) One of the current root chip's own boundary dev-pins.
 		{
 			let root_desc = v.library.get(&root_chip_name);
 			if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
@@ -1975,7 +2202,7 @@ impl App {
 			}
 		}
 
-		// 3) A placed component on the canvas.
+		// 4) A placed component on the canvas.
 		{
 			let root_desc = v.library.get(&root_chip_name);
 			let placed = place_sub_chips(root_desc, &v.library);
@@ -1988,7 +2215,7 @@ impl App {
 			}
 		}
 
-		// 4) A wire -- deleted immediately, no popup (see this method's
+		// 5) A wire -- deleted immediately, no popup (see this method's
 		// doc comment).
 		{
 			let root_desc = v.library.get(&root_chip_name);
@@ -2178,8 +2405,9 @@ impl App {
 						v.rom_editor = None;
 						reset_library_popup_state(v);
 						v.library_selection = LibrarySelection::None;
-					} else if v.pending_wire.is_some() {
+					} else if v.pending_wire.is_some() || v.pending_place.is_some() {
 						v.pending_wire = None;
+						v.pending_place = None;
 					} else if v.bottom_bar_open_collection.is_some() {
 						v.bottom_bar_open_collection = None;
 					} else {
@@ -2251,6 +2479,12 @@ impl App {
 				if let Some(pending) = &v.pending_wire {
 					draw_pending_wire_preview(&mut scene, pending, hover_world_pos.expect("just set above"));
 				}
+				if let Some(chip_name) = &v.pending_place {
+					if let Some(ghost) = build_pending_place_scene(&v.library, chip_name, hover_world_pos.expect("just set above")) {
+						scene.triangles.extend(ghost.triangles);
+						scene.labels.extend(ghost.labels);
+					}
+				}
 				world_layer = scene;
 
 				// Bottom bar of starred chips/collections is always drawn (mirrors `BottomBarUI`
@@ -2258,10 +2492,18 @@ impl App {
 				// see `EditorAction::ToggleStarredCollectionPopup`'s docs for what its "MENU" button
 				// equivalent deliberately doesn't do here.
 				let bar_enabled = v.overlay == Overlay::None;
+				let bar_cycle_blocked: std::collections::HashSet<String> = v
+					.prefs
+					.starred_list
+					.iter()
+					.filter(|it| !it.is_collection && would_create_cycle(&v.library, &v.root_chip_name, &it.name))
+					.map(|it| it.name.to_ascii_lowercase())
+					.collect();
 				let bar_frame = editor_ui::build_starred_bottom_bar(
 					&v.prefs.starred_list,
 					v.bottom_bar_open_collection.as_deref(),
 					bar_enabled,
+					&bar_cycle_blocked,
 					vw,
 					vh,
 					self.mouse_pos,
@@ -2278,7 +2520,14 @@ impl App {
 								.find(|b| matches!(&b.action, EditorAction::ToggleStarredCollectionPopup(n) if n.eq_ignore_ascii_case(&open_name)))
 								.map(|b| b.rect.x)
 								.unwrap_or(8.0);
-							let popup_frame = editor_ui::build_starred_collection_popup(collection, anchor_x, true, vw, vh, self.mouse_pos);
+							let flyout_cycle_blocked: std::collections::HashSet<String> = collection
+								.chips
+								.iter()
+								.filter(|n| would_create_cycle(&v.library, &v.root_chip_name, n))
+								.map(|n| n.to_ascii_lowercase())
+								.collect();
+							let popup_frame =
+								editor_ui::build_starred_collection_popup(collection, anchor_x, true, &flyout_cycle_blocked, vw, vh, self.mouse_pos);
 							v.last_bottom_bar_popup_buttons = popup_frame.buttons;
 							bar_geometry.triangles.extend(popup_frame.geometry.triangles);
 							bar_geometry.labels.extend(popup_frame.geometry.labels);
@@ -2301,20 +2550,20 @@ impl App {
 				if v.overlay != Overlay::None {
 					let overlay_frame = match v.overlay {
 						Overlay::Library => {
-							let selected_chip_is_custom = match v.library_selection {
-								LibrarySelection::Chip(ci, chi) => {
-									v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).is_some_and(|n| is_custom_chip(&v.library, n))
-								}
-								LibrarySelection::Starred(i) => {
-									v.prefs.starred_list.get(i).filter(|it| !it.is_collection).is_some_and(|it| is_custom_chip(&v.library, &it.name))
-								}
-								_ => false,
+							let selected_chip_name = match v.library_selection {
+								LibrarySelection::Chip(ci, chi) => v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).cloned(),
+								LibrarySelection::Starred(i) => v.prefs.starred_list.get(i).filter(|it| !it.is_collection).map(|it| it.name.clone()),
+								_ => None,
 							};
+							let selected_chip_is_custom = selected_chip_name.as_deref().is_some_and(|n| is_custom_chip(&v.library, n));
+							let selected_chip_would_cycle =
+								selected_chip_name.as_deref().is_some_and(|n| would_create_cycle(&v.library, &v.root_chip_name, n));
 							let state = editor_ui::ChipLibraryState {
 								collections: &v.prefs.chip_collections,
 								starred_list: &v.prefs.starred_list,
 								selection: v.library_selection,
 								selected_chip_is_custom,
+								selected_chip_would_cycle,
 								creating_collection: v.library_creating_collection,
 								renaming_collection: v.library_renaming_collection,
 								name_field_text: &v.overlay_text_input,

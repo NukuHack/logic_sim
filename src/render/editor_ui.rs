@@ -10,6 +10,7 @@ use crate::json::StarredItem;
 use crate::render::theme;
 use crate::render::ui_kit::{self, Frame, UiRect};
 use crate::structs::Vec2;
+use std::collections::HashSet;
 
 pub use crate::render::ui_kit::to_world;
 
@@ -51,10 +52,15 @@ pub enum EditorAction {
 	/// collection's chip list.
 	MoveSelectedJump(bool),
 	/// Chip library: open the selected chip for editing (mirrors the
-	/// original's "OPEN"; this port has no separate subchip-placement
-	/// system for a distinct "USE" action to hook into, so there's just
-	/// the one button here -- see `build_chip_library_panel`'s docs).
+	/// original's "OPEN").
 	OpenSelectedChip(String),
+	/// Chip library: pick up the selected chip for placement (mirrors the
+	/// original's "USE") -- the host attaches it to the cursor as a
+	/// translucent preview, dropped as a real subchip on the next canvas
+	/// click that lands on free space. Unlike `OpenSelectedChip`/
+	/// `RequestDeleteChip`, offered for builtins too, since any chip type
+	/// (not just custom ones) can be placed on the canvas.
+	PlaceChip(String),
 	/// Chip library: ask to delete the selected chip -- opens the inline
 	/// confirmation panel, doesn't delete anything itself.
 	RequestDeleteChip(String),
@@ -277,6 +283,17 @@ pub struct ChipLibraryState<'a> {
 	/// `!ChipLibrary.IsBuiltinChip`. Ignored unless `selection` is a
 	/// [`LibrarySelection::Chip`] or a non-collection starred row.
 	pub selected_chip_is_custom: bool,
+	/// Whether placing the selected chip as a new subchip inside the
+	/// chip currently open on the canvas would create a recursive cycle
+	/// -- it either *is* that chip, or already contains it somewhere
+	/// inside its own definition. Precomputed by the host (same reason
+	/// as `selected_chip_is_custom`'s docs -- this module has no
+	/// `ChipLibrary` access to walk the dependency tree itself; see
+	/// `bin/app.rs`'s `would_create_cycle`). Gates the "USE" button the
+	/// same way `selected_chip_is_custom` gates OPEN/DELETE. Ignored
+	/// unless `selection` is a [`LibrarySelection::Chip`] or a
+	/// non-collection starred row.
+	pub selected_chip_would_cycle: bool,
 	pub creating_collection: bool,
 	pub renaming_collection: bool,
 	/// Live text of the new/rename-collection input field.
@@ -321,17 +338,12 @@ fn library_panel_header(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect,
 /// Builds the "real" three-panel chip library overlay: a STARRED list on
 /// the left, a COLLECTIONS tree (headers + their chips, when open) in the
 /// middle, and a detail panel on the right showing whatever row is
-/// currently selected -- star/unstar, reorder, and open/delete (chips) or
-/// rename/delete (collections) actions for it. Mirrors
-/// `ChipLibraryMenu.DrawMenu`'s three side-by-side panels; the delete
-/// confirmation and new/rename-collection name field are drawn inline at
-/// the bottom of the detail column, same as the original.
-///
-/// Deviates from the original in one place: there's no separate "USE"
-/// button next to "OPEN", since this port has no subchip-placement system
-/// for "USE" (drop a new instance on the canvas) to mean anything
-/// different from "OPEN" (switch to editing that chip's definition) --
-/// see [`EditorAction::OpenSelectedChip`].
+/// currently selected -- star/unstar, reorder, a "USE" action that picks
+/// the chip up for placement, and open/delete (chips) or rename/delete
+/// (collections) actions for it. Mirrors `ChipLibraryMenu.DrawMenu`'s
+/// three side-by-side panels; the delete confirmation and new/rename-collection
+/// name field are drawn inline at the bottom of the detail column, same
+/// as the original.
 pub fn build_chip_library_panel(state: &ChipLibraryState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let mut frame = EditorFrame::default();
 	panel_bg(&mut frame, vw, vh, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
@@ -497,6 +509,8 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 				&[(star_label, EditorAction::ToggleStarred { name: chip_name.clone(), is_collection: false }, true)],
 				mouse,
 			);
+
+			y = button_row(frame, vw, vh, inner_x, y, inner_w, &[("USE", EditorAction::PlaceChip(chip_name.clone()), !state.selected_chip_would_cycle)], mouse);
 
 			let can_step_up = chi > 0;
 			let can_step_down = chi < collection.chips.len() - 1;
@@ -1003,17 +1017,28 @@ const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 /// in this port (see `bin/app.rs`'s shortcut handling), so the bar's
 /// only new surface is starred access.
 ///
-/// A plain starred chip's button opens that chip for editing -- see
-/// [`EditorAction::OpenSelectedChip`]'s docs for why there's no separate
-/// "place a new instance on the canvas" action for it to trigger
-/// instead, unlike the original's `StartPlacing`. A starred collection's
-/// button instead toggles [`build_starred_collection_popup`] for it,
-/// same as clicking a collection button in the original opens/closes its
-/// flyout rather than acting directly.
+/// A plain starred chip's button (left click) picks it up for placement
+/// -- same as the library's "USE" button, see [`EditorAction::PlaceChip`]
+/// -- and mirrors the original's `StartPlacing`. Greyed out (same
+/// treatment a builtin's "Open" gets) when placing it into the currently
+/// open chip would create a recursive cycle -- `cycle_blocked` is a
+/// precomputed, case-insensitive set of such chip names (see
+/// `bin/app.rs`'s `would_create_cycle`; this module has no `ChipLibrary`
+/// access of its own to work it out). Right-clicking it instead opens a
+/// small popup offering "Open" (switch to editing its definition) and
+/// "Un-star", handled by the host the same way it handles every other
+/// right-click popup (`bin/app.rs`'s
+/// `handle_right_mouse_button`/`apply_context_menu_action`) -- this
+/// module only draws/hit-tests the bar itself and has no popup state of
+/// its own. A starred collection's button instead toggles
+/// [`build_starred_collection_popup`] for it, same as clicking a
+/// collection button in the original opens/closes its flyout rather than
+/// acting directly.
 pub fn build_starred_bottom_bar(
 	starred_list: &[StarredItem],
 	open_collection: Option<&str>,
 	enabled: bool,
+	cycle_blocked: &HashSet<String>,
 	vw: f32,
 	vh: f32,
 	mouse: Vec2,
@@ -1030,15 +1055,15 @@ pub fn build_starred_bottom_bar(
 		let label = if item.is_collection { format!("{} v", item.name) } else { item.name.clone() };
 		let w = (label.chars().count() as f32 * 8.5 + 24.0).clamp(60.0, 220.0);
 		let rect = UiRect::new(x, y, w, h);
-		let action = if item.is_collection {
-			EditorAction::ToggleStarredCollectionPopup(item.name.clone())
+		let (action, row_enabled) = if item.is_collection {
+			(EditorAction::ToggleStarredCollectionPopup(item.name.clone()), enabled)
 		} else {
-			EditorAction::OpenSelectedChip(item.name.clone())
+			(EditorAction::PlaceChip(item.name.clone()), enabled && !cycle_blocked.contains(&item.name.to_ascii_lowercase()))
 		};
 		if is_open {
-			add_button_coloured(&mut frame, vw, vh, rect, &label, action, enabled, mouse, [0.3, 0.42, 0.58, 1.0]);
+			add_button_coloured(&mut frame, vw, vh, rect, &label, action, row_enabled, mouse, [0.3, 0.42, 0.58, 1.0]);
 		} else {
-			add_button(&mut frame, vw, vh, rect, &label, action, enabled, mouse);
+			add_button(&mut frame, vw, vh, rect, &label, action, row_enabled, mouse);
 		}
 		x += w + BOTTOM_BAR_BTN_GAP;
 	}
@@ -1055,8 +1080,21 @@ pub fn build_starred_bottom_bar(
 /// `build_search_popup` already makes elsewhere in this module. Anchored
 /// to grow upward from just above the bar, at `anchor_x` (the left edge
 /// of the collection's own button in the bar, so the flyout lines up
-/// under/over it).
-pub fn build_starred_collection_popup(collection: &ChipCollection, anchor_x: f32, enabled: bool, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+/// under/over it). Each row is a chip picked up for placement on left
+/// click (`EditorAction::PlaceChip`, same as the bar's own plain-chip
+/// buttons) -- greyed out under the same `cycle_blocked` rule
+/// [`build_starred_bottom_bar`] uses -- with a right-click "Open" popup,
+/// but, being *inside* a collection rather than a bare starred chip, no
+/// "Un-star" option (see [`build_starred_bottom_bar`]'s docs).
+pub fn build_starred_collection_popup(
+	collection: &ChipCollection,
+	anchor_x: f32,
+	enabled: bool,
+	cycle_blocked: &HashSet<String>,
+	vw: f32,
+	vh: f32,
+	mouse: Vec2,
+) -> EditorFrame {
 	let mut frame = EditorFrame::default();
 	let w = 180.0_f32.min(vw - 40.0);
 	let row_h = 30.0;
@@ -1070,7 +1108,8 @@ pub fn build_starred_collection_popup(collection: &ChipCollection, anchor_x: f32
 	let mut y = bottom - row_h;
 	for chip_name in collection.chips.iter().take(visible_rows) {
 		let rect = UiRect::new(x, y, w, row_h - 4.0);
-		add_button(&mut frame, vw, vh, rect, chip_name, EditorAction::OpenSelectedChip(chip_name.clone()), enabled, mouse);
+		let row_enabled = enabled && !cycle_blocked.contains(&chip_name.to_ascii_lowercase());
+		add_button(&mut frame, vw, vh, rect, chip_name, EditorAction::PlaceChip(chip_name.clone()), row_enabled, mouse);
 		y -= row_h;
 	}
 
@@ -1118,6 +1157,7 @@ mod tests {
 			starred_list: starred,
 			selection,
 			selected_chip_is_custom: true,
+			selected_chip_would_cycle: false,
 			creating_collection: false,
 			renaming_collection: false,
 			name_field_text: "",
@@ -1304,26 +1344,57 @@ mod tests {
 	}
 
 	#[test]
+	fn chip_library_detail_panel_offers_use_for_both_custom_and_builtin_chips() {
+		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into()] }];
+		let state = ChipLibraryState { selected_chip_is_custom: false, ..sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0)) };
+		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
+
+		let use_button = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("AND".to_string())).unwrap();
+		assert!(use_button.enabled, "USE should place builtins too, unlike OPEN/DELETE");
+	}
+
+	#[test]
+	fn chip_library_detail_panel_greys_out_use_for_a_chip_that_would_cycle() {
+		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["SubCircuit".into()] }];
+		let state = ChipLibraryState { selected_chip_would_cycle: true, ..sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0)) };
+		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
+
+		let use_button = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("SubCircuit".to_string())).unwrap();
+		assert!(!use_button.enabled);
+	}
+
+	#[test]
 	fn starred_bottom_bar_has_one_button_per_starred_item() {
 		let starred = vec![StarredItem::new("AND", false), StarredItem::new("Basics", true)];
-		let frame = build_starred_bottom_bar(&starred, None, true, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::OpenSelectedChip("AND".to_string())));
+		let frame = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
+		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::PlaceChip("AND".to_string())));
 		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ToggleStarredCollectionPopup("Basics".to_string())));
 	}
 
 	#[test]
 	fn starred_bottom_bar_buttons_disabled_when_not_editable() {
 		let starred = vec![StarredItem::new("AND", false)];
-		let frame = build_starred_bottom_bar(&starred, None, false, 1280.0, 800.0, Vec2::ZERO);
+		let frame = build_starred_bottom_bar(&starred, None, false, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
 		assert!(frame.buttons.iter().all(|b| !b.enabled));
+	}
+
+	#[test]
+	fn starred_bottom_bar_greys_out_a_chip_that_would_cycle() {
+		let starred = vec![StarredItem::new("AND", false), StarredItem::new("SubCircuit", false)];
+		let blocked: HashSet<String> = ["subcircuit".to_string()].into_iter().collect();
+		let frame = build_starred_bottom_bar(&starred, None, true, &blocked, 1280.0, 800.0, Vec2::ZERO);
+		let and_btn = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("AND".to_string())).unwrap();
+		let sub_btn = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("SubCircuit".to_string())).unwrap();
+		assert!(and_btn.enabled);
+		assert!(!sub_btn.enabled);
 	}
 
 	#[test]
 	fn starred_collection_popup_has_one_button_per_chip() {
 		let collection = ChipCollection::new("Basics", ["AND", "OR", "NOT"]);
-		let frame = build_starred_collection_popup(&collection, 20.0, true, 1280.0, 800.0, Vec2::ZERO);
+		let frame = build_starred_collection_popup(&collection, 20.0, true, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
 		let names: Vec<_> =
-			frame.buttons.iter().filter_map(|b| if let EditorAction::OpenSelectedChip(n) = &b.action { Some(n.clone()) } else { None }).collect();
+			frame.buttons.iter().filter_map(|b| if let EditorAction::PlaceChip(n) = &b.action { Some(n.clone()) } else { None }).collect();
 		assert_eq!(names, vec!["AND".to_string(), "OR".to_string(), "NOT".to_string()]);
 	}
 }

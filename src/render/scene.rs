@@ -563,6 +563,18 @@ fn push_hover_label(geo: &mut SceneGeometry, pos: Vec2, name: String) {
 	});
 }
 
+/// Scales every triangle vertex's and label's alpha channel by `alpha`, leaving RGB untouched --
+/// used to fade an already-built scene (e.g. a chip pending placement, floating translucently at
+/// the cursor) without needing a second draw path just for blending.
+pub fn apply_alpha(geo: &mut SceneGeometry, alpha: f32) {
+	for v in &mut geo.triangles {
+		v.colour[3] *= alpha;
+	}
+	for l in &mut geo.labels {
+		l.colour[3] *= alpha;
+	}
+}
+
 /// Layer 1 (bottom): every wire in `chip.wires`, resolved to world-space
 /// polylines and drawn as thick lines. See the inline comments below for
 /// how an individual wire's two endpoints are resolved.
@@ -1639,6 +1651,19 @@ mod tests {
 		let mut geo = SceneGeometry::default();
 		geo.add_rect(Vec2::ZERO, Vec2::new(2.0, 1.0), theme::CHIP_BODY_COL);
 		assert_eq!(geo.triangles.len(), 6);
+	}
+
+	#[test]
+	fn apply_alpha_scales_triangle_and_label_alpha_leaving_rgb_untouched() {
+		let mut geo = SceneGeometry::default();
+		geo.add_rect(Vec2::ZERO, Vec2::new(2.0, 1.0), [0.5, 0.4, 0.3, 1.0]);
+		geo.labels.push(TextLabel { pos: Vec2::ZERO, text: "AND".into(), colour: [0.1, 0.2, 0.3, 0.8], font_size: 12.0, width: 20.0 });
+
+		apply_alpha(&mut geo, 0.75);
+
+		assert!(geo.triangles.iter().all(|v| v.colour[0] == 0.5 && v.colour[1] == 0.4 && v.colour[2] == 0.3 && (v.colour[3] - 0.75).abs() < 1e-6));
+		let label_colour = geo.labels[0].colour;
+		assert!(label_colour[0] == 0.1 && label_colour[1] == 0.2 && label_colour[2] == 0.3 && (label_colour[3] - 0.6).abs() < 1e-6);
 	}
 
 	#[test]
