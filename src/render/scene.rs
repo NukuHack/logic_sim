@@ -43,6 +43,21 @@ pub struct TextLabel {
 	pub width: f32,
 }
 
+/// Which of a rounded rectangle's left/right vertical edges get rounded
+/// corners (see [`SceneGeometry::add_rounded_rect`]). Bundled into a
+/// struct so the call reads as a single "corners" concept instead of two
+/// loose booleans.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct RoundCorners {
+	pub left: bool,
+	pub right: bool,
+}
+
+impl RoundCorners {
+	pub const NONE: Self = Self { left: false, right: false };
+	pub const BOTH: Self = Self { left: true, right: true };
+}
+
 /// Flat triangle-list geometry ready to upload as a vertex buffer
 /// (`triangles.len()` is always a multiple of 3), plus any text labels to
 /// be drawn on top of it (e.g. gate/chip names).
@@ -92,8 +107,8 @@ impl SceneGeometry {
 
 	/// A rectangle of `size` centred on `centre`, with its corners rounded
 	/// to `radius` on whichever of its left/right vertical edges
-	/// `round_left`/`round_right` request (either, both, or neither -- the
-	/// other edge's corners stay sharp). Used to draw a chip's own
+	/// `corners` selects (either, both, or neither -- the other edge's
+	/// corners stay sharp). Used to draw a chip's own
 	/// boundary dev-pins as a "partially rounded rectangle": rounded on
 	/// the side facing outward (away from the chip body) and square on
 	/// the side facing in, so they read visually distinct from a regular
@@ -106,16 +121,7 @@ impl SceneGeometry {
 	/// triangulation strategy `add_circle` uses -- valid here because a
 	/// rounded rect (with radius capped to half the smaller dimension) is
 	/// always convex/star-shaped from its own centre.
-	pub fn add_rounded_rect(
-		&mut self,
-		centre: Vec2,
-		size: Vec2,
-		colour: Rgba,
-		radius: f32,
-		round_left: bool,
-		round_right: bool,
-		corner_segments: u32,
-	) {
+	pub fn add_rounded_rect(&mut self, centre: Vec2, size: Vec2, colour: Rgba, radius: f32, corners: RoundCorners, corner_segments: u32) {
 		let hw = size.x / 2.0;
 		let hh = size.y / 2.0;
 		if hw <= 0.0 || hh <= 0.0 {
@@ -124,25 +130,76 @@ impl SceneGeometry {
 		let r = radius.max(0.0).min(hw).min(hh);
 		let segs = corner_segments.max(1);
 
-		fn push_corner(points: &mut Vec<Vec2>, cx: f32, cy: f32, arc_cx: f32, arc_cy: f32, start: f32, end: f32, r: f32, segs: u32, rounded: bool) {
-			if rounded && r > 1e-6 {
+		struct CornerSpec {
+			centre: Vec2,
+			arc_centre: Vec2,
+			start: f32,
+			end: f32,
+			rounded: bool,
+		}
+		fn push_corner(points: &mut Vec<Vec2>, spec: &CornerSpec, r: f32, segs: u32) {
+			if spec.rounded && r > 1e-6 {
 				for i in 0..=segs {
 					let t = i as f32 / segs as f32;
-					let a = start + t * (end - start);
-					points.push(Vec2::new(arc_cx + a.cos() * r, arc_cy + a.sin() * r));
+					let a = spec.start + t * (spec.end - spec.start);
+					points.push(Vec2::new(spec.arc_centre.x + a.cos() * r, spec.arc_centre.y + a.sin() * r));
 				}
 			} else {
-				points.push(Vec2::new(cx, cy));
+				points.push(spec.centre);
 			}
 		}
 
 		use std::f32::consts::PI;
 		let mut points: Vec<Vec2> = Vec::new();
 		// Bottom-right -> top-right -> top-left -> bottom-left (CCW).
-		push_corner(&mut points, centre.x + hw, centre.y - hh, centre.x + hw - r, centre.y - hh + r, -PI / 2.0, 0.0, r, segs, round_right);
-		push_corner(&mut points, centre.x + hw, centre.y + hh, centre.x + hw - r, centre.y + hh - r, 0.0, PI / 2.0, r, segs, round_right);
-		push_corner(&mut points, centre.x - hw, centre.y + hh, centre.x - hw + r, centre.y + hh - r, PI / 2.0, PI, r, segs, round_left);
-		push_corner(&mut points, centre.x - hw, centre.y - hh, centre.x - hw + r, centre.y - hh + r, PI, 3.0 * PI / 2.0, r, segs, round_left);
+		push_corner(
+			&mut points,
+			&CornerSpec {
+				centre: Vec2::new(centre.x + hw, centre.y - hh),
+				arc_centre: Vec2::new(centre.x + hw - r, centre.y - hh + r),
+				start: -PI / 2.0,
+				end: 0.0,
+				rounded: corners.right,
+			},
+			r,
+			segs,
+		);
+		push_corner(
+			&mut points,
+			&CornerSpec {
+				centre: Vec2::new(centre.x + hw, centre.y + hh),
+				arc_centre: Vec2::new(centre.x + hw - r, centre.y + hh - r),
+				start: 0.0,
+				end: PI / 2.0,
+				rounded: corners.right,
+			},
+			r,
+			segs,
+		);
+		push_corner(
+			&mut points,
+			&CornerSpec {
+				centre: Vec2::new(centre.x - hw, centre.y + hh),
+				arc_centre: Vec2::new(centre.x - hw + r, centre.y + hh - r),
+				start: PI / 2.0,
+				end: PI,
+				rounded: corners.left,
+			},
+			r,
+			segs,
+		);
+		push_corner(
+			&mut points,
+			&CornerSpec {
+				centre: Vec2::new(centre.x - hw, centre.y - hh),
+				arc_centre: Vec2::new(centre.x - hw + r, centre.y - hh + r),
+				start: PI,
+				end: 3.0 * PI / 2.0,
+				rounded: corners.left,
+			},
+			r,
+			segs,
+		);
 
 		let n = points.len();
 		for i in 0..n {
@@ -588,10 +645,11 @@ fn draw_wires(
 	// Resolve each wire's two endpoints to world positions and draw a polyline through any
 	// player-authored bend points. `ToPins` resolves straight from the pin's world position;
 	// `ToWireSource`/`ToWireTarget` re-projects onto the other wire's segment instead, to stay in sync with authored bends.
+	let wire_ctx = WireCtx { chip, placed, owner_to_placed, wires: &chip.wires };
 	let mut wire_point_cache: WirePointCache = HashMap::new();
 	for (wire_idx, wire) in chip.wires.iter().enumerate() {
-		let src = resolve_wire_endpoint(chip, placed, owner_to_placed, &chip.wires, wire_idx, false, &mut wire_point_cache, 0);
-		let dst = resolve_wire_endpoint(chip, placed, owner_to_placed, &chip.wires, wire_idx, true, &mut wire_point_cache, 0);
+		let src = wire_ctx.endpoint(wire_idx, false, &mut wire_point_cache, 0);
+		let dst = wire_ctx.endpoint(wire_idx, true, &mut wire_point_cache, 0);
 
 		if let (Some(src), Some(dst)) = (src, dst) {
 			// Colour/bit-count always trace back to the wire's real originating pin, regardless of
@@ -1008,11 +1066,12 @@ pub fn closest_wire_hit(chip: &ChipDescription, library: &ChipLibrary, world_pos
 	let placed = place_sub_chips(chip, library);
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 
+	let wire_ctx = WireCtx { chip, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip.wires };
 	let mut cache: WirePointCache = HashMap::new();
 	let mut best: Option<(WireTapHit, f32)> = None;
 	for wire_idx in 0..chip.wires.len() {
-		let src = resolve_wire_endpoint(chip, &placed, &owner_to_placed, &chip.wires, wire_idx, false, &mut cache, 0);
-		let dst = resolve_wire_endpoint(chip, &placed, &owner_to_placed, &chip.wires, wire_idx, true, &mut cache, 0);
+		let src = wire_ctx.endpoint(wire_idx, false, &mut cache, 0);
+		let dst = wire_ctx.endpoint(wire_idx, true, &mut cache, 0);
 		let (Some(src), Some(dst)) = (src, dst) else { continue };
 
 		let mut centreline = Vec::with_capacity(chip.wires[wire_idx].points.len() + 2);
@@ -1266,7 +1325,7 @@ fn draw_pin_shape(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, co
 		PinBitCount::Bit4 | PinBitCount::Bit8 => {
 			let size = layout::pin_visual_shape_size(bit_count);
 			let radius = size.y / 2.0;
-			geo.add_rounded_rect(pos, size, colour, radius, true, true, layout::PIN_SEGMENTS / 4);
+			geo.add_rounded_rect(pos, size, colour, radius, RoundCorners::BOTH, layout::PIN_SEGMENTS / 4);
 		}
 	}
 }
@@ -1286,13 +1345,27 @@ fn draw_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount,
 	let fill_colour = theme::state_colour(logic.unwrap_or(LogicState::Low), colour);
 
 	// Border first (drawn full-size, in the grey-ish outline colour)...
-	geo.add_rounded_rect(pos, size, theme::CHIP_OUTLINE_COL, radius, round_left, !round_left, layout::DEV_PIN_SEGMENTS / 4);
+	geo.add_rounded_rect(
+		pos,
+		size,
+		theme::CHIP_OUTLINE_COL,
+		radius,
+		RoundCorners { left: round_left, right: !round_left },
+		layout::DEV_PIN_SEGMENTS / 4,
+	);
 
 	// ...then the pin-coloured fill on top, inset by the border width so
 	// the border reads as an outline rather than being fully covered.
 	let inner_size = Vec2::new((size.x - border * 2.0).max(0.0), (size.y - border * 2.0).max(0.0));
 	let inner_radius = (radius - border).max(0.0);
-	geo.add_rounded_rect(pos, inner_size, fill_colour, inner_radius, round_left, !round_left, layout::DEV_PIN_SEGMENTS / 4);
+	geo.add_rounded_rect(
+		pos,
+		inner_size,
+		fill_colour,
+		inner_radius,
+		RoundCorners { left: round_left, right: !round_left },
+		layout::DEV_PIN_SEGMENTS / 4,
+	);
 }
 
 /// Draws one of a chip's own boundary *input* dev-pins as a grid of
@@ -1358,91 +1431,87 @@ fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
 	Vec2::new(a.x + ab.x * t, a.y + ab.y * t)
 }
 
-/// Resolves world-space point index `point_index` along wire `wire_idx`'s
-/// own polyline, i.e. `[source-endpoint, ...bends..., target-endpoint]`.
-/// Interior indices are just that wire's saved bend points (already in
-/// world space, no resolution needed); the two endpoint indices recurse
-/// into `resolve_wire_endpoint`, since either one might itself be a tap on
-/// yet another wire. Mirrors `WireInstance.GetWirePoint`.
-fn resolve_wire_point(
-	chip: &ChipDescription,
-	placed: &[PlacedSubChip],
-	owner_to_placed: &HashMap<i32, usize>,
-	wires: &[WireDescription],
-	wire_idx: usize,
-	point_index: usize,
-	cache: &mut WirePointCache,
-	depth: u32,
-) -> Option<Vec2> {
-	let wire = wires.get(wire_idx)?;
-	let last_index = wire.points.len() + 1; // bends.len() interior points + 2 endpoints
-	if point_index == 0 {
-		resolve_wire_endpoint(chip, placed, owner_to_placed, wires, wire_idx, false, cache, depth)
-	} else if point_index == last_index {
-		resolve_wire_endpoint(chip, placed, owner_to_placed, wires, wire_idx, true, cache, depth)
-	} else {
-		wire.points.get(point_index - 1).copied()
-	}
+/// Bundles the chip-definition context the wire-endpoint resolvers need
+/// (the chip itself, its sub-chips laid out into world positions, the
+/// sub-chip-id -> layout-index map, and the wire list) so call sites pass
+/// one borrow instead of four parallel parameters -- these always travel
+/// together and every caller has all four on hand.
+struct WireCtx<'a> {
+	chip: &'a ChipDescription,
+	placed: &'a [PlacedSubChip<'a>],
+	owner_to_placed: &'a HashMap<i32, usize>,
+	wires: &'a [WireDescription],
 }
 
-/// Resolves one end of wire `wire_idx` (`is_target`: false = source, true =
-/// target) to a world-space position.
-///
-/// A plain pin-attached end (`WireConnectionType::ToPins`, or the
-/// non-tapped end of a partially-tapped wire) resolves straight from the
-/// pin's own live position via `resolve_pin_position`, same as always. A
-/// wire-attached end (`ToWireSource` for the source end, `ToWireTarget` for
-/// the target end) instead re-projects that end's last cached attachment
-/// point onto the referenced wire's segment (`connected_wire_index`,
-/// `connected_wire_segment_index`) -- mirroring
-/// `WireInstance.GetAttachmentPoint` / `WireLayoutHelper.GetClosestPointOnWire`
-/// in the original. This is the fix for wire-tap endpoints resolving to the
-/// wrong place (and thus producing visibly wrong bends): they were
-/// previously always resolved as if `ToPins`.
-fn resolve_wire_endpoint(
-	chip: &ChipDescription,
-	placed: &[PlacedSubChip],
-	owner_to_placed: &HashMap<i32, usize>,
-	wires: &[WireDescription],
-	wire_idx: usize,
-	is_target: bool,
-	cache: &mut WirePointCache,
-	depth: u32,
-) -> Option<Vec2> {
-	if let Some(&cached) = cache.get(&(wire_idx, is_target)) {
-		return cached;
-	}
-	if depth > MAX_WIRE_CONNECTION_DEPTH {
-		return None;
-	}
-	let wire = wires.get(wire_idx)?;
-
-	let attaches_to_wire =
-		matches!((is_target, wire.connection_type), (false, WireConnectionType::ToWireSource) | (true, WireConnectionType::ToWireTarget));
-
-	let result = if attaches_to_wire {
-		if wire.connected_wire_index < 0 {
-			None
+impl<'a> WireCtx<'a> {
+	/// Resolves world-space point index `point_index` along wire `wire_idx`'s
+	/// own polyline, i.e. `[source-endpoint, ...bends..., target-endpoint]`.
+	/// Interior indices are just that wire's saved bend points (already in
+	/// world space, no resolution needed); the two endpoint indices recurse
+	/// into [`WireCtx::endpoint`], since either one might itself be a tap on
+	/// yet another wire. Mirrors `WireInstance.GetWirePoint`.
+	fn point(&self, wire_idx: usize, point_index: usize, cache: &mut WirePointCache, depth: u32) -> Option<Vec2> {
+		let wire = self.wires.get(wire_idx)?;
+		let last_index = wire.points.len() + 1; // bends.len() interior points + 2 endpoints
+		if point_index == 0 {
+			self.endpoint(wire_idx, false, cache, depth)
+		} else if point_index == last_index {
+			self.endpoint(wire_idx, true, cache, depth)
 		} else {
-			let target_wire_idx = wire.connected_wire_index as usize;
-			let seg = wire.connected_wire_segment_index.max(0) as usize;
-			let a = resolve_wire_point(chip, placed, owner_to_placed, wires, target_wire_idx, seg, cache, depth + 1);
-			let b = resolve_wire_point(chip, placed, owner_to_placed, wires, target_wire_idx, seg + 1, cache, depth + 1);
-			match (a, b) {
-				(Some(a), Some(b)) => {
-					let cached_point = if is_target { wire.cached_target_point } else { wire.cached_source_point };
-					Some(closest_point_on_segment(cached_point, a, b))
-				}
-				_ => None,
-			}
+			wire.points.get(point_index - 1).copied()
 		}
-	} else {
-		let addr = if is_target { &wire.target_pin_address } else { &wire.source_pin_address };
-		resolve_pin_position(chip, placed, owner_to_placed, addr.pin_owner_id, addr.pin_id, is_target)
-	};
+	}
 
-	cache.insert((wire_idx, is_target), result);
-	result
+	/// Resolves one end of wire `wire_idx` (`is_target`: false = source, true =
+	/// target) to a world-space position.
+	///
+	/// A plain pin-attached end (`WireConnectionType::ToPins`, or the
+	/// non-tapped end of a partially-tapped wire) resolves straight from the
+	/// pin's own live position via `resolve_pin_position`, same as always. A
+	/// wire-attached end (`ToWireSource` for the source end, `ToWireTarget` for
+	/// the target end) instead re-projects that end's last cached attachment
+	/// point onto the referenced wire's segment (`connected_wire_index`,
+	/// `connected_wire_segment_index`) -- mirroring
+	/// `WireInstance.GetAttachmentPoint` / `WireLayoutHelper.GetClosestPointOnWire`
+	/// in the original. This is the fix for wire-tap endpoints resolving to the
+	/// wrong place (and thus producing visibly wrong bends): they were
+	/// previously always resolved as if `ToPins`.
+	fn endpoint(&self, wire_idx: usize, is_target: bool, cache: &mut WirePointCache, depth: u32) -> Option<Vec2> {
+		if let Some(&cached) = cache.get(&(wire_idx, is_target)) {
+			return cached;
+		}
+		if depth > MAX_WIRE_CONNECTION_DEPTH {
+			return None;
+		}
+		let wire = self.wires.get(wire_idx)?;
+
+		let attaches_to_wire =
+			matches!((is_target, wire.connection_type), (false, WireConnectionType::ToWireSource) | (true, WireConnectionType::ToWireTarget));
+
+		let result = if attaches_to_wire {
+			if wire.connected_wire_index < 0 {
+				None
+			} else {
+				let target_wire_idx = wire.connected_wire_index as usize;
+				let seg = wire.connected_wire_segment_index.max(0) as usize;
+				let a = self.point(target_wire_idx, seg, cache, depth + 1);
+				let b = self.point(target_wire_idx, seg + 1, cache, depth + 1);
+				match (a, b) {
+					(Some(a), Some(b)) => {
+						let cached_point = if is_target { wire.cached_target_point } else { wire.cached_source_point };
+						Some(closest_point_on_segment(cached_point, a, b))
+					}
+					_ => None,
+				}
+			}
+		} else {
+			let addr = if is_target { &wire.target_pin_address } else { &wire.source_pin_address };
+			resolve_pin_position(self.chip, self.placed, self.owner_to_placed, addr.pin_owner_id, addr.pin_id, is_target)
+		};
+
+		cache.insert((wire_idx, is_target), result);
+		result
+	}
 }
 
 /// How many grid lines to skip between each one actually drawn, based on
@@ -2038,14 +2107,13 @@ mod tests {
 
 		let placed = place_sub_chips(&chip, &lib);
 		let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+		let wire_ctx = WireCtx { chip: &chip, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip.wires };
 		let mut cache: WirePointCache = HashMap::new();
 
-		let wire0_src = resolve_wire_endpoint(&chip, &placed, &owner_to_placed, &chip.wires, 0, false, &mut cache, 0)
-			.expect("wire 0's source should resolve via NAND1's output pin");
+		let wire0_src = wire_ctx.endpoint(0, false, &mut cache, 0).expect("wire 0's source should resolve via NAND1's output pin");
 		let wire0_bend = chip.wires[0].points[0];
 
-		let wire1_src = resolve_wire_endpoint(&chip, &placed, &owner_to_placed, &chip.wires, 1, false, &mut cache, 0)
-			.expect("wire 1's tapped source should resolve via wire 0's segment");
+		let wire1_src = wire_ctx.endpoint(1, false, &mut cache, 0).expect("wire 1's tapped source should resolve via wire 0's segment");
 
 		let expected = closest_point_on_segment(chip.wires[1].cached_source_point, wire0_src, wire0_bend);
 		assert_eq!(wire1_src, expected);
@@ -2091,7 +2159,8 @@ mod tests {
 		let placed = place_sub_chips(&chip, &lib);
 		let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 		let mut cache: WirePointCache = HashMap::new();
-		let wire0_src = resolve_wire_endpoint(&chip, &placed, &owner_to_placed, &chip.wires, 0, false, &mut cache, 0).unwrap();
+		let wire_ctx = WireCtx { chip: &chip, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip.wires };
+		let wire0_src = wire_ctx.endpoint(0, false, &mut cache, 0).unwrap();
 		let wire0_bend = chip.wires[0].points[0];
 		let expected_tap_point = closest_point_on_segment(chip.wires[1].cached_source_point, wire0_src, wire0_bend);
 
@@ -2235,7 +2304,7 @@ mod tests {
 			fn bit_logic_state(&self, _pin_owner_id: i32, _pin_id: i32, bit_index: u32) -> Option<LogicState> {
 				// Alternate low/high by bit index, so adjacent strands
 				// must visibly differ if per-bit colouring is wired up.
-				Some(if bit_index % 2 == 0 { LogicState::Low } else { LogicState::High })
+				Some(if bit_index.is_multiple_of(2) { LogicState::Low } else { LogicState::High })
 			}
 		}
 
@@ -2639,7 +2708,7 @@ mod tests {
 	#[test]
 	fn add_rounded_rect_with_no_rounded_side_is_a_plain_rectangle() {
 		let mut geo = SceneGeometry::default();
-		geo.add_rounded_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), theme::PIN_COL, 0.3, false, false, 8);
+		geo.add_rounded_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), theme::PIN_COL, 0.3, RoundCorners::NONE, 8);
 		assert_eq!(geo.triangles.len(), 4 * 3);
 	}
 
@@ -2650,7 +2719,7 @@ mod tests {
 	fn add_rounded_rect_with_one_rounded_side_has_expected_triangle_count() {
 		let mut geo = SceneGeometry::default();
 		let segments = 8;
-		geo.add_rounded_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), theme::PIN_COL, 0.3, true, false, segments);
+		geo.add_rounded_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), theme::PIN_COL, 0.3, RoundCorners { left: true, right: false }, segments);
 		let expected_points = 2 * (segments + 1) + 2;
 		assert_eq!(geo.triangles.len(), expected_points as usize * 3);
 	}
@@ -3005,7 +3074,7 @@ mod tests {
 	#[test]
 	fn add_rounded_rect_clamps_radius_larger_than_shape() {
 		let mut geo = SceneGeometry::default();
-		geo.add_rounded_rect(Vec2::ZERO, Vec2::new(0.2, 0.2), theme::PIN_COL, 5.0, true, true, 8);
+		geo.add_rounded_rect(Vec2::ZERO, Vec2::new(0.2, 0.2), theme::PIN_COL, 5.0, RoundCorners::BOTH, 8);
 		assert!(!geo.triangles.is_empty());
 		assert_eq!(geo.triangles.len() % 3, 0);
 	}
