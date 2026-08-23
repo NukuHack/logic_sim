@@ -334,38 +334,6 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn single_1bit_pin_centres_on_chip_middle() {
-		let (height, ys) = calculate_default_pin_layout(&[PinBitCount::Bit1]);
-		assert_eq!(ys.len(), 1);
-		// Raw (pre-centring) offset is -1, total stack is 2 grid units ->
-		// shift by +1 to centre -> 0, i.e. dead centre of the chip body.
-		assert_eq!(ys[0], 0.0);
-		assert_eq!(height, 2.0 * GRID_SIZE);
-	}
-
-	#[test]
-	fn two_1bit_pins_stack_without_overlap() {
-		let (height, ys) = calculate_default_pin_layout(&[PinBitCount::Bit1, PinBitCount::Bit1]);
-		// Raw offsets [-1, -3], total stack 4 grid units -> shift by +2 ->
-		// [1, -1]: symmetric around the chip's centre, matching a body
-		// rect that spans [-2, +2].
-		assert_eq!(ys, vec![1.0, -1.0]);
-		assert_eq!(height, 4.0 * GRID_SIZE);
-	}
-
-	#[test]
-	fn mixed_bit_widths_use_correct_grid_heights() {
-		// 1-bit (h=2), 4-bit (h=3), 8-bit (h=4); raw offsets before
-		// centring are [-1, -3.5, -7], total stack 9 grid units -> shift
-		// by +4.5.
-		let (height, ys) = calculate_default_pin_layout(&[PinBitCount::Bit1, PinBitCount::Bit4, PinBitCount::Bit8]);
-		assert_eq!(ys[0], 3.5);
-		assert_eq!(ys[1], 1.0);
-		assert_eq!(ys[2], -2.5);
-		assert_eq!(height, 9.0 * GRID_SIZE);
-	}
-
-	#[test]
 	fn pin_stack_is_symmetric_about_zero_matching_centred_body_rect() {
 		// For any pin list, since the chip body rect is drawn centred on (0,0) spanning
 		// [-height/2, height/2], the topmost pin's outer edge and the bottommost pin's outer edge
@@ -379,48 +347,6 @@ mod tests {
 		assert_eq!(bottom_pin_outer_edge, -half);
 	}
 
-	#[test]
-	fn min_chip_height_takes_the_taller_stack() {
-		let inputs = [PinBitCount::Bit1];
-		let outputs = [PinBitCount::Bit1, PinBitCount::Bit1, PinBitCount::Bit1];
-		let h = min_chip_height_for_pins(&inputs, &outputs);
-		assert_eq!(h, calculate_default_pin_layout(&outputs).0);
-	}
-
-	#[test]
-	fn chip_with_no_pins_has_grid_size_minimum() {
-		let size = calculate_min_chip_size_for_pins(&[], &[]);
-		assert_eq!(size, Vec2::new(GRID_SIZE, GRID_SIZE));
-	}
-
-	#[test]
-	fn chip_with_pins_gets_double_grid_min_width() {
-		let size = calculate_min_chip_size_for_pins(&[PinBitCount::Bit1], &[]);
-		assert_eq!(size.x, GRID_SIZE * 2.0);
-	}
-
-	#[test]
-	fn input_pin_sits_left_of_chip_output_right() {
-		let centre = Vec2::new(0.0, 0.0);
-		let size = Vec2::new(2.0, 1.0);
-		let input_pos = pin_world_position(centre, size, 0.0, true);
-		let output_pos = pin_world_position(centre, size, 0.0, false);
-		assert!(input_pos.x < centre.x);
-		assert!(output_pos.x > centre.x);
-		assert_eq!(input_pos.x, -1.0 - SUB_CHIP_PIN_INSET);
-		assert_eq!(output_pos.x, 1.0 + SUB_CHIP_PIN_INSET);
-	}
-
-	#[test]
-	fn estimate_text_width_scales_with_length_and_font_size() {
-		assert_eq!(estimate_text_width("", 0.25), 0.0);
-		let short = estimate_text_width("AB", 0.25);
-		let long = estimate_text_width("ABCDEFGH", 0.25);
-		assert!(long > short);
-		assert_eq!(long, "ABCDEFGH".chars().count() as f32 * 0.25 * AVG_CHAR_WIDTH_RATIO);
-		// Doubling font size should double the estimated width.
-		assert_eq!(estimate_text_width("AB", 0.5), short * 2.0);
-	}
 	/*
 		#[test]
 		fn min_chip_size_widens_for_a_name_longer_than_the_pin_bounds() {
@@ -460,42 +386,4 @@ mod tests {
 			assert_eq!(size, calculate_min_chip_size_for_pins(&[], &[]));
 		}
 	*/
-	#[test]
-	fn grid_line_thickness_stays_at_base_constant_when_zoomed_in() {
-		// At a high zoom the base GRID_THICKNESS is already several
-		// screen pixels wide, so no widening should occur.
-		assert_eq!(grid_line_thickness(1000.0), GRID_THICKNESS);
-	}
-
-	#[test]
-	fn grid_line_thickness_widens_when_zoomed_out() {
-		let zoom = 2.0;
-		let thickness = grid_line_thickness(zoom);
-		assert!(thickness > GRID_THICKNESS, "should widen past the sub-pixel base thickness");
-		// The widened thickness should render at exactly the configured
-		// minimum pixel width, not something inconsistent.
-		assert!((thickness * zoom - GRID_MIN_PIXEL_THICKNESS).abs() < 1e-4);
-	}
-
-	#[test]
-	fn grid_line_thickness_never_renders_thinner_than_the_pixel_minimum() {
-		for &zoom in &[0.05, 0.5, 1.0, 5.0, 50.0, 500.0, 4096.0] {
-			let thickness = grid_line_thickness(zoom);
-			let screen_px = thickness * zoom;
-			assert!(screen_px >= GRID_MIN_PIXEL_THICKNESS - 1e-4, "zoom {zoom}: {screen_px}px thick, below the {GRID_MIN_PIXEL_THICKNESS}px minimum");
-		}
-	}
-
-	#[test]
-	fn grid_line_thickness_handles_non_positive_zoom_without_panicking_or_nan() {
-		assert_eq!(grid_line_thickness(0.0), GRID_THICKNESS);
-		assert_eq!(grid_line_thickness(-5.0), GRID_THICKNESS);
-	}
-
-	#[test]
-	fn snapping_rounds_to_nearest_grid_line() {
-		assert_eq!(snap_to_grid_scalar(0.05), 0.0);
-		assert_eq!(snap_to_grid_scalar(0.07), GRID_SIZE);
-		assert_eq!(snap_to_grid(Vec2::new(0.2, 0.3)), Vec2::new(GRID_SIZE * 2.0, GRID_SIZE * 2.0));
-	}
 }

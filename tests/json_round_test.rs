@@ -932,3 +932,15 @@ fn chip_library_is_starred_functionality() {
 	assert!(!project.is_starred("Collection", false));
 	assert!(project.is_starred("not", false)); // Case insensitive
 }
+
+// Moved from `src/json.rs`: exercised via the public API.
+#[test]
+fn load_chip_library_from_dir_returns_empty_library_when_dir_missing() {
+	let dir = std::env::temp_dir().join(format!("logic_sim_missing_chips_dir_{}", std::process::id()));
+	let _ = std::fs::remove_dir_all(&dir); // make sure it really doesn't exist
+	assert!(!dir.exists());
+
+	let (library, errors) = load_chip_library_from_dir(&dir).unwrap();
+	assert!(errors.is_empty());
+	assert!(library.try_get("nand").is_none(), "a missing dir should yield an empty library, not an error");
+}

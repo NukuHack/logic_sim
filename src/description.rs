@@ -543,7 +543,7 @@ impl ChipLibrary {
 	/// Removes a chip from the library (by name, same case-insensitive
 	/// lookup as everything else here), returning it if it was present.
 	/// Used by the viewer's save/rename/replace flow (see
-	/// `bin/app.rs`'s `finish_save_chip`) to drop an in-memory entry
+	/// `viewer::save_flow`'s save flows) to drop an in-memory entry
 	/// that's being superseded -- e.g. the chip being backed-up-then-
 	/// overwritten by a `Replace`, or an old identity that's being
 	/// renamed away entirely.
@@ -561,40 +561,9 @@ impl ChipLibrary {
 	/// Iterate mutably over every chip currently in the library (builtin +
 	/// custom). Used to reset every input dev-pin's `driven_state` in one
 	/// pass when the viewer switches which chip it's simulating (see
-	/// `reset_all_driven_inputs` in `bin/app.rs`) -- a toggled switch's
+	/// `reset_all_driven_inputs` in `viewer::library`) -- a toggled switch's
 	/// state shouldn't outlive the simulation run it was set in.
 	pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut ChipDescription> {
 		self.by_name.values_mut()
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn new_wire_attaches_both_ends_directly_to_pins() {
-		let wire = WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0));
-		assert_eq!(wire.connection_type, WireConnectionType::ToPins);
-		assert_eq!(wire.connected_wire_index, -1);
-		assert_eq!(wire.connected_wire_segment_index, -1);
-		assert!(wire.points.is_empty());
-	}
-
-	#[test]
-	fn new_tapped_source_records_the_tap_and_keeps_the_real_source_address() {
-		let tapped_source = PinAddress::new(1, 0);
-		let target = PinAddress::new(3, 1);
-		let tap_point = Vec2::new(2.5, 1.5);
-
-		let wire = WireDescription::new_tapped_source(tapped_source, target, 0, 1, tap_point);
-
-		assert_eq!(wire.connection_type, WireConnectionType::ToWireSource);
-		assert_eq!(wire.source_pin_address, tapped_source);
-		assert_eq!(wire.target_pin_address, target);
-		assert_eq!(wire.connected_wire_index, 0);
-		assert_eq!(wire.connected_wire_segment_index, 1);
-		assert_eq!(wire.cached_source_point, tap_point);
-		assert!(wire.points.is_empty());
 	}
 }

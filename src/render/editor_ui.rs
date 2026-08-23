@@ -71,7 +71,7 @@ pub enum EditorAction {
 	/// Chip library: ask to delete the selected collection -- opens the
 	/// inline confirmation panel (or, for an already-empty collection,
 	/// the host deletes it immediately without one -- see
-	/// `apply_editor_action`'s handling of this in `bin/app.rs`).
+	/// `viewer::actions`'s handling of this).
 	RequestDeleteCollection,
 	/// Chip library: commit whatever's typed in the new/rename-collection
 	/// text field.
@@ -88,7 +88,7 @@ pub enum EditorAction {
 	/// Bottom bar: click a starred collection's button -- opens (or, if
 	/// it's already open, closes) [`build_starred_collection_popup`] for
 	/// it. `String` is that collection's name, matching how the popup
-	/// itself is keyed (see `bin/app.rs`'s bottom-bar state).
+	/// itself is keyed (see `ViewerState::bottom_bar_open_collection`).
 	ToggleStarredCollectionPopup(String),
 	/// Bottom bar: close whatever starred-collection flyout is open,
 	/// without opening a different one -- a click outside it, or Esc.
@@ -279,7 +279,7 @@ pub struct ChipLibraryState<'a> {
 	/// inside its own definition. Precomputed by the host (same reason
 	/// as `selected_chip_is_custom`'s docs -- this module has no
 	/// `ChipLibrary` access to walk the dependency tree itself; see
-	/// `bin/app.rs`'s `would_create_cycle`). Gates the "USE" button the
+	/// `viewer::library::would_create_cycle`). Gates the "USE" button the
 	/// same way `selected_chip_is_custom` gates OPEN/DELETE. Ignored
 	/// unless `selection` is a [`LibrarySelection::Chip`] or a
 	/// non-collection starred row.
@@ -974,7 +974,7 @@ pub const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 /// mirrors the chip-button strip half of `BottomBarUI.DrawBottomBar`.
 /// Its "MENU" dropdown (New/Save/Find/Library/Prefs/Quit) isn't ported
 /// here since every one of those already has its own keyboard shortcut
-/// in this port (see `bin/app.rs`'s shortcut handling), so the bar's
+/// in this port (see `viewer::input`'s shortcut handling), so the bar's
 /// only new surface is starred access.
 ///
 /// `scroll_x` is the bar's horizontal scroll offset in pixels: with more
@@ -989,12 +989,12 @@ pub const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 /// treatment a builtin's "Open" gets) when placing it into the currently
 /// open chip would create a recursive cycle -- `cycle_blocked` is a
 /// precomputed, case-insensitive set of such chip names (see
-/// `bin/app.rs`'s `would_create_cycle`; this module has no `ChipLibrary`
+/// `viewer::library::would_create_cycle`; this module has no `ChipLibrary`
 /// access of its own to work it out). Right-clicking it instead opens a
 /// small popup offering "Open" (switch to editing its definition) and
 /// "Un-star", handled by the host the same way it handles every other
-/// right-click popup (`bin/app.rs`'s
-/// `handle_right_mouse_button`/`apply_context_menu_action`) -- this
+/// right-click popup (the app's right-click handler and
+/// `viewer::context_menu::apply_context_menu_action`) -- this
 /// module only draws/hit-tests the bar itself and has no popup state of
 /// its own. A starred collection's button instead toggles
 /// [`build_starred_collection_popup`] for it, same as clicking a
@@ -1004,7 +1004,7 @@ pub const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 /// mirrors the chip-button strip half of `BottomBarUI.DrawBottomBar`.
 /// Its "MENU" dropdown (New/Save/Find/Library/Prefs/Quit) isn't ported
 /// here since every one of those already has its own keyboard shortcut
-/// in this port (see `bin/app.rs`'s shortcut handling), so the bar's
+/// in this port (see `viewer::input`'s shortcut handling), so the bar's
 /// only new surface is starred access.
 ///
 /// `scroll_x` is the bar's horizontal scroll offset in pixels: with more
@@ -1019,12 +1019,12 @@ pub const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 /// treatment a builtin's "Open" gets) when placing it into the currently
 /// open chip would create a recursive cycle -- `cycle_blocked` is a
 /// precomputed, case-insensitive set of such chip names (see
-/// `bin/app.rs`'s `would_create_cycle`; this module has no `ChipLibrary`
+/// `viewer::library::would_create_cycle`; this module has no `ChipLibrary`
 /// access of its own to work it out). Right-clicking it instead opens a
 /// small popup offering "Open" (switch to editing its definition) and
 /// "Un-star", handled by the host the same way it handles every other
-/// right-click popup (`bin/app.rs`'s
-/// `handle_right_mouse_button`/`apply_context_menu_action`) -- this
+/// right-click popup (the app's right-click handler and
+/// `viewer::context_menu::apply_context_menu_action`) -- this
 /// module only draws/hit-tests the bar itself and has no popup state of
 /// its own. A starred collection's button instead toggles
 /// [`build_starred_collection_popup`] for it, same as clicking a
@@ -1115,307 +1115,4 @@ pub fn build_starred_collection_popup(
 	}
 
 	finish(frame, ui)
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::structs::Vec2;
-
-	fn sample_desc() -> ProjectDescription {
-		ProjectDescription {
-			prefs_main_pin_names_display_mode: 1,
-			prefs_chip_pin_names_display_mode: 0,
-			prefs_grid_display_mode: 1,
-			prefs_snapping: 2,
-			prefs_straight_wires: 0,
-			prefs_sim_paused: true,
-			..Default::default()
-		}
-	}
-
-	#[test]
-	fn preferences_panel_has_one_cycle_button_per_row_plus_apply_and_close() {
-		let frame = build_preferences_panel(&sample_desc(), 1280.0, 800.0, Vec2::ZERO);
-		let cycle_count = frame.buttons.iter().filter(|b| matches!(b.action, EditorAction::CyclePref(_))).count();
-		assert_eq!(cycle_count, 6);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ApplyPreferences));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
-	}
-
-	#[test]
-	fn preferences_panel_shows_currently_selected_option_text() {
-		let frame = build_preferences_panel(&sample_desc(), 1280.0, 800.0, Vec2::ZERO);
-		// Row 0 is "Show I/O pin names" with mode 1 => "On Hover".
-		assert!(frame.geometry.labels.iter().any(|l| l.text == "On Hover"));
-		// Row 5 is "Sim status" with prefs_sim_paused = true => "Paused".
-		assert!(frame.geometry.labels.iter().any(|l| l.text == "Paused"));
-	}
-
-	fn sample_library_state<'a>(collections: &'a [ChipCollection], starred: &'a [StarredItem], selection: LibrarySelection) -> ChipLibraryState<'a> {
-		ChipLibraryState {
-			collections,
-			starred_list: starred,
-			selection,
-			selected_chip_is_custom: true,
-			selected_chip_would_cycle: false,
-			creating_collection: false,
-			renaming_collection: false,
-			name_field_text: "",
-			confirming_chip_delete: false,
-			confirming_collection_delete: false,
-			delete_confirm_message: "",
-		}
-	}
-
-	#[test]
-	fn chip_library_panel_only_lists_chips_for_open_collections() {
-		let collections = vec![
-			ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into(), "OR".into()] },
-			ChipCollection { name: "CLOSED".into(), is_toggled_open: false, chips: vec!["XOR".into()] },
-		];
-		let state = sample_library_state(&collections, &[], LibrarySelection::None);
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-
-		let select_actions: Vec<_> = frame
-			.buttons
-			.iter()
-			.filter_map(|b| if let EditorAction::SelectChipRow { collection, chip } = &b.action { Some((*collection, *chip)) } else { None })
-			.collect();
-		assert_eq!(select_actions, vec![(0, 0), (0, 1)]);
-
-		let toggle_count = frame.buttons.iter().filter(|b| matches!(b.action, EditorAction::SelectCollection(_))).count();
-		assert_eq!(toggle_count, 2);
-	}
-
-	#[test]
-	fn chip_library_panel_shows_open_and_delete_for_the_selected_chip() {
-		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into()] }];
-		let state = sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0));
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-		let open_btn = frame.buttons.iter().find(|b| b.action == EditorAction::OpenSelectedChip("AND".to_string())).unwrap();
-		assert!(open_btn.enabled);
-		let delete_btn = frame.buttons.iter().find(|b| b.action == EditorAction::RequestDeleteChip("AND".to_string())).unwrap();
-		assert!(delete_btn.enabled);
-	}
-
-	#[test]
-	fn search_popup_filters_case_insensitively() {
-		let names = vec!["AND".to_string(), "OR".to_string(), "NAND".to_string()];
-		let frame = build_search_popup(&names, "an", 1280.0, 800.0, Vec2::ZERO);
-		let shown: Vec<_> =
-			frame.buttons.iter().filter_map(|b| if let EditorAction::UseChip(n) = &b.action { Some(n.clone()) } else { None }).collect();
-		assert_eq!(shown, vec!["AND".to_string(), "NAND".to_string()]);
-	}
-
-	#[test]
-	fn search_popup_with_empty_query_lists_everything() {
-		let names = vec!["AND".to_string(), "OR".to_string()];
-		let frame = build_search_popup(&names, "", 1280.0, 800.0, Vec2::ZERO);
-		assert_eq!(frame.buttons.len(), 2);
-		assert!(frame.text_field.is_some());
-	}
-
-	#[test]
-	fn search_popup_shows_a_message_when_nothing_matches() {
-		let names = vec!["AND".to_string()];
-		let frame = build_search_popup(&names, "zzz", 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.iter().all(|b| !matches!(b.action, EditorAction::UseChip(_))));
-		assert!(frame.geometry.labels.iter().any(|l| l.text.contains("No matching")));
-	}
-
-	#[test]
-	fn simple_naming_popup_exposes_a_text_field_and_respects_confirm_enabled() {
-		let frame = build_simple_naming_popup("Rename", "My Label", false, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.text_field.is_some());
-		let confirm = frame.buttons.iter().find(|b| b.action == EditorAction::ConfirmName).unwrap();
-		assert!(!confirm.enabled);
-
-		let frame_ok = build_simple_naming_popup("Rename", "My Label", true, 1280.0, 800.0, Vec2::ZERO);
-		let confirm_ok = frame_ok.buttons.iter().find(|b| b.action == EditorAction::ConfirmName).unwrap();
-		assert!(confirm_ok.enabled);
-	}
-
-	#[test]
-	fn key_select_popup_disables_confirm_until_a_key_is_chosen() {
-		let frame_none = build_key_select_popup(None, 1280.0, 800.0, Vec2::ZERO);
-		let confirm_none = frame_none.buttons.iter().find(|b| b.action == EditorAction::ConfirmKey).unwrap();
-		assert!(!confirm_none.enabled);
-		assert!(frame_none.text_field.is_none());
-
-		let frame_some = build_key_select_popup(Some('Q'), 1280.0, 800.0, Vec2::ZERO);
-		let confirm_some = frame_some.buttons.iter().find(|b| b.action == EditorAction::ConfirmKey).unwrap();
-		assert!(confirm_some.enabled);
-		assert!(frame_some.geometry.labels.iter().any(|l| l.text == "Q"));
-	}
-
-	#[test]
-	fn rom_editor_has_one_selectable_cell_per_word() {
-		let data = vec![0u32; ROM_WORD_COUNT];
-		let frame = build_rom_editor_popup(&data, 0, "0", 1280.0, 800.0, Vec2::ZERO);
-		let cell_count = frame.buttons.iter().filter(|b| matches!(b.action, EditorAction::RomSelectCell(_))).count();
-		assert_eq!(cell_count, ROM_WORD_COUNT);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::RomApply));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
-		assert!(frame.text_field.is_some());
-	}
-
-	#[test]
-	fn rom_editor_shows_selected_cells_value_in_its_text_field() {
-		let mut data = vec![0u32; ROM_WORD_COUNT];
-		data[5] = 1234;
-		let frame = build_rom_editor_popup(&data, 5, "1234", 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.geometry.labels.iter().any(|l| l.text.contains("1234")));
-		assert!(frame.geometry.labels.iter().any(|l| l.text.contains("Address 5")));
-	}
-
-	#[test]
-	fn save_chip_mode_save_shows_single_confirm_button() {
-		let frame = build_save_chip_popup("Full Adder", "Full Adder", SaveChipMode::Save, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SaveChipConfirm));
-		assert!(!frame.buttons.iter().any(|b| matches!(b.action, EditorAction::SaveChipSaveAs | EditorAction::SaveChipRename)));
-	}
-
-	#[test]
-	fn save_chip_mode_save_as_or_rename_shows_both_options() {
-		let frame = build_save_chip_popup("Full Adder", "Full Adder 2", SaveChipMode::SaveAsOrRename, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SaveChipSaveAs));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SaveChipRename));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
-	}
-
-	#[test]
-	fn save_chip_confirm_disabled_for_empty_name() {
-		let frame = build_save_chip_popup("Full Adder", "", SaveChipMode::Save, 1280.0, 800.0, Vec2::ZERO);
-		let confirm = frame.buttons.iter().find(|b| b.action == EditorAction::SaveChipConfirm).unwrap();
-		assert!(!confirm.enabled);
-	}
-
-	#[test]
-	fn key_select_allowed_chars_are_alphanumeric_uppercase() {
-		assert!(KEY_SELECT_ALLOWED_CHARS.chars().all(|c| c.is_ascii_alphanumeric() && (c.is_ascii_digit() || c.is_ascii_uppercase())));
-	}
-
-	#[test]
-	fn chip_library_star_button_reads_add_or_remove_depending_on_starred_state() {
-		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into()] }];
-		let starred = vec![StarredItem::new("AND", false)];
-		let state = sample_library_state(&collections, &starred, LibrarySelection::Chip(0, 0));
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ToggleStarred { name: "AND".to_string(), is_collection: false }));
-		assert!(frame.geometry.labels.iter().any(|l| l.text == "REMOVE FROM STARRED"));
-	}
-
-	#[test]
-	fn chip_library_move_buttons_disabled_at_the_ends_of_a_collection() {
-		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into(), "OR".into()] }];
-		let state = sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0));
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-		let up = frame.buttons.iter().find(|b| b.action == EditorAction::MoveSelectedStep(false)).unwrap();
-		assert!(!up.enabled, "first chip in the only collection can't move up or jump");
-		let down = frame.buttons.iter().find(|b| b.action == EditorAction::MoveSelectedStep(true)).unwrap();
-		assert!(down.enabled, "second chip in the collection is still below it");
-	}
-
-	#[test]
-	fn chip_library_new_collection_footer_shows_a_text_field_when_creating() {
-		let state = ChipLibraryState {
-			creating_collection: true,
-			name_field_text: "My Collection",
-			..sample_library_state(&[], &[], LibrarySelection::None)
-		};
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.text_field.is_some());
-		let confirm = frame.buttons.iter().find(|b| b.action == EditorAction::ConfirmCollectionName).unwrap();
-		assert!(confirm.enabled);
-	}
-
-	#[test]
-	fn chip_library_delete_confirmation_hides_the_normal_detail_buttons() {
-		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into()] }];
-		let state = ChipLibraryState {
-			confirming_chip_delete: true,
-			delete_confirm_message: "Are you sure?",
-			..sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0))
-		};
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ConfirmDelete));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::CancelLibraryPopup));
-		assert!(!frame.buttons.iter().any(|b| matches!(b.action, EditorAction::OpenSelectedChip(_))));
-	}
-
-	#[test]
-	fn chip_library_detail_panel_offers_use_for_both_custom_and_builtin_chips() {
-		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["AND".into()] }];
-		let state = ChipLibraryState { selected_chip_is_custom: false, ..sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0)) };
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-
-		let use_button = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("AND".to_string())).unwrap();
-		assert!(use_button.enabled, "USE should place builtins too, unlike OPEN/DELETE");
-	}
-
-	#[test]
-	fn chip_library_detail_panel_greys_out_use_for_a_chip_that_would_cycle() {
-		let collections = vec![ChipCollection { name: "OPEN".into(), is_toggled_open: true, chips: vec!["SubCircuit".into()] }];
-		let state = ChipLibraryState { selected_chip_would_cycle: true, ..sample_library_state(&collections, &[], LibrarySelection::Chip(0, 0)) };
-		let frame = build_chip_library_panel(&state, 1280.0, 800.0, Vec2::ZERO);
-
-		let use_button = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("SubCircuit".to_string())).unwrap();
-		assert!(!use_button.enabled);
-	}
-
-	#[test]
-	fn starred_bottom_bar_has_one_button_per_starred_item() {
-		let starred = vec![StarredItem::new("AND", false), StarredItem::new("Basics", true)];
-		let frame = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 0.0, UiCtx::new(1280.0, 800.0, Vec2::ZERO));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::PlaceChip("AND".to_string())));
-		assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ToggleStarredCollectionPopup("Basics".to_string())));
-		assert_eq!(frame.panel, Some(UiRect::new(0.0, 800.0 - BOTTOM_BAR_HEIGHT, 1280.0, BOTTOM_BAR_HEIGHT)));
-	}
-
-	#[test]
-	fn starred_bottom_bar_buttons_disabled_when_not_editable() {
-		let starred = vec![StarredItem::new("AND", false)];
-		let frame = build_starred_bottom_bar(&starred, None, false, &HashSet::new(), 0.0, UiCtx::new(1280.0, 800.0, Vec2::ZERO));
-		assert!(frame.buttons.iter().all(|b| !b.enabled));
-	}
-
-	#[test]
-	fn starred_bottom_bar_scroll_x_shifts_buttons_left() {
-		let starred: Vec<_> = (1..=6).map(|i| StarredItem::new(format!("ChipName{i}"), false)).collect();
-		let unscrolled = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 0.0, UiCtx::new(600.0, 800.0, Vec2::ZERO));
-		let scrolled = build_starred_bottom_bar(&starred, None, true, &HashSet::new(), 120.0, UiCtx::new(600.0, 800.0, Vec2::ZERO));
-		for (a, b) in unscrolled.buttons.iter().zip(&scrolled.buttons) {
-			assert!((a.rect.x - 120.0 - b.rect.x).abs() < 1e-3, "every button shifts left by the scroll offset");
-			assert!((a.rect.y - b.rect.y).abs() < 1e-3 && a.rect.w == b.rect.w);
-		}
-	}
-
-	#[test]
-	fn starred_bottom_bar_greys_out_a_chip_that_would_cycle() {
-		let starred = vec![StarredItem::new("AND", false), StarredItem::new("SubCircuit", false)];
-		let blocked: HashSet<String> = ["subcircuit".to_string()].into_iter().collect();
-		let frame = build_starred_bottom_bar(&starred, None, true, &blocked, 0.0, UiCtx::new(1280.0, 800.0, Vec2::ZERO));
-		let and_btn = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("AND".to_string())).unwrap();
-		let sub_btn = frame.buttons.iter().find(|b| b.action == EditorAction::PlaceChip("SubCircuit".to_string())).unwrap();
-		assert!(and_btn.enabled);
-		assert!(!sub_btn.enabled);
-	}
-
-	#[test]
-	fn starred_collection_popup_has_one_button_per_chip_and_exposes_its_panel() {
-		let collection = ChipCollection::new("Basics", ["AND", "OR", "NOT"]);
-		let frame = build_starred_collection_popup(&collection, 20.0, true, &HashSet::new(), 1280.0, 800.0, Vec2::ZERO);
-		let names: Vec<_> =
-			frame.buttons.iter().filter_map(|b| if let EditorAction::PlaceChip(n) = &b.action { Some(n.clone()) } else { None }).collect();
-		assert_eq!(names, vec!["AND".to_string(), "OR".to_string(), "NOT".to_string()]);
-
-		// The panel rect is what the host turns into the flyout layer's capture region -- it must
-		// cover every row so clicks on the padding between/around rows belong to the flyout.
-		let panel = frame.panel.expect("the flyout exposes its background rect");
-		for b in &frame.buttons {
-			assert!(panel.x <= b.rect.x && b.rect.x + b.rect.w <= panel.x + panel.w);
-			assert!(panel.y <= b.rect.y && b.rect.y + b.rect.h <= panel.y + panel.h);
-		}
-	}
 }

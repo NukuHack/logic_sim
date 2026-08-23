@@ -48,18 +48,3 @@ pub fn default_chip_collections() -> Vec<ChipCollection> {
 fn collection(name: &str, chip_types: &[ChipType]) -> ChipCollection {
 	ChipCollection::new(name, chip_types.iter().map(|t| name_for(*t)))
 }
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn default_starred_list_matches_original() {
-		let list = default_starred_list();
-		assert_eq!(list.len(), 2);
-		assert_eq!(list[0].name, "IN/OUT");
-		assert!(list[0].is_collection);
-		assert_eq!(list[1].name, "NAND");
-		assert!(!list[1].is_collection);
-	}
-}

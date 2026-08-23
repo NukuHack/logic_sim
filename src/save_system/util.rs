@@ -122,7 +122,6 @@ pub fn copy_directory(source_dir: &Path, destination_dir: &Path, recursive: bool
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::save_system::test_util::temp_dir;
 
 	#[test]
 	fn forbidden_chars_are_detected() {
@@ -132,108 +131,5 @@ mod tests {
 		}
 		assert!(!name_contains_forbidden_char("valid-chip_name 123"));
 		assert!(!name_contains_forbidden_char(""));
-	}
-
-	#[test]
-	fn reserved_windows_names_are_rejected_case_insensitively() {
-		assert!(!valid_file_name("con"));
-		assert!(!valid_file_name("CON"));
-		assert!(!valid_file_name("  NUL  "));
-		assert!(!valid_file_name("lpt1"));
-		assert!(valid_file_name("CONTROLLER")); // not an exact reserved match
-	}
-
-	#[test]
-	fn empty_and_forbidden_names_are_invalid() {
-		assert!(!valid_file_name(""));
-		assert!(!valid_file_name("bad/name"));
-		assert!(!valid_file_name("bad:name"));
-		assert!(!valid_file_name("trailing.dot."));
-	}
-
-	#[test]
-	fn ordinary_names_are_valid() {
-		assert!(valid_file_name("My Project"));
-		assert!(valid_file_name("GOL"));
-		assert!(valid_file_name("STATE CALCULATOR"));
-	}
-
-	#[test]
-	fn ensure_unique_file_name_leaves_nonexistent_path_untouched() {
-		let tmp = temp_dir("unique_file_untouched");
-		let path = tmp.join("NOT.json");
-		assert_eq!(ensure_unique_file_name(&path), path);
-		std::fs::remove_dir_all(&tmp).ok();
-	}
-
-	#[test]
-	fn ensure_unique_file_name_appends_counter_on_collision() {
-		let tmp = temp_dir("unique_file_collision");
-		std::fs::create_dir_all(&tmp).unwrap();
-		let path = tmp.join("NOT.json");
-		std::fs::write(&path, "{}").unwrap();
-
-		let unique = ensure_unique_file_name(&path);
-		assert_eq!(unique, tmp.join("NOT_1.json"));
-
-		std::fs::write(&unique, "{}").unwrap();
-		let unique2 = ensure_unique_file_name(&path);
-		assert_eq!(unique2, tmp.join("NOT_2.json"));
-
-		std::fs::remove_dir_all(&tmp).ok();
-	}
-
-	#[test]
-	fn ensure_unique_directory_name_appends_counter_on_collision() {
-		let tmp = temp_dir("unique_dir_collision");
-		let path = tmp.join("GOL");
-		std::fs::create_dir_all(&path).unwrap();
-
-		let unique = ensure_unique_directory_name(&path);
-		assert_eq!(unique, tmp.join("GOL_1"));
-
-		std::fs::remove_dir_all(&tmp).ok();
-	}
-
-	#[test]
-	fn copy_directory_copies_files_and_subdirectories_recursively() {
-		let tmp = temp_dir("copy_dir");
-		let src = tmp.join("src");
-		let dst = tmp.join("dst");
-		std::fs::create_dir_all(src.join("Chips")).unwrap();
-		std::fs::write(src.join("ProjectDescription.json"), "{}").unwrap();
-		std::fs::write(src.join("Chips").join("NOT.json"), "{}").unwrap();
-
-		copy_directory(&src, &dst, true).unwrap();
-
-		assert!(dst.join("ProjectDescription.json").is_file());
-		assert!(dst.join("Chips").join("NOT.json").is_file());
-
-		std::fs::remove_dir_all(&tmp).ok();
-	}
-
-	#[test]
-	fn copy_directory_non_recursive_skips_subdirectories() {
-		let tmp = temp_dir("copy_dir_non_recursive");
-		let src = tmp.join("src");
-		let dst = tmp.join("dst");
-		std::fs::create_dir_all(src.join("Chips")).unwrap();
-		std::fs::write(src.join("ProjectDescription.json"), "{}").unwrap();
-		std::fs::write(src.join("Chips").join("NOT.json"), "{}").unwrap();
-
-		copy_directory(&src, &dst, false).unwrap();
-
-		assert!(dst.join("ProjectDescription.json").is_file());
-		assert!(!dst.join("Chips").exists());
-
-		std::fs::remove_dir_all(&tmp).ok();
-	}
-
-	#[test]
-	fn copy_directory_errors_on_missing_source() {
-		let tmp = temp_dir("copy_dir_missing_source");
-		let result = copy_directory(&tmp.join("does-not-exist"), &tmp.join("dst"), true);
-		assert!(result.is_err());
-		std::fs::remove_dir_all(&tmp).ok();
 	}
 }

@@ -75,7 +75,10 @@ repeat function and variable names in doc strings.
 
 ## Testing
 
-Unit tests live inline in `#[cfg(test)]` modules next to the code they cover.
+Tests that can be expressed against the crate's **public API** live in `tests/` as integration
+tests, grouped by area (`render_foundation_test.rs`, `render_ui_test.rs`, `save_system_test.rs`,
+...). Only white-box tests that genuinely depend on private or `pub(crate)` internals stay inline
+in `#[cfg(test)]` modules next to the code they cover -- and should say why in a comment.
 Integration tests go in `tests/`. New features should include unit tests; bug fixes
 must include a regression test that fails before the fix and passes after.
 

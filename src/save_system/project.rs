@@ -30,21 +30,3 @@ impl Project {
 		self.chip_library.add(desc);
 	}
 }
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::description::ChipType;
-
-	#[test]
-	fn add_or_update_custom_chip_registers_new_chip_name_once() {
-		let mut project = Project::new(ProjectDescription::default(), ChipLibrary::new());
-
-		let chip = ChipDescription::new("MY GATE", ChipType::Custom);
-		project.add_or_update_custom_chip(chip.clone());
-		project.add_or_update_custom_chip(chip);
-
-		assert_eq!(project.description.all_custom_chip_names, vec!["MY GATE".to_string()]);
-		assert!(project.chip_library.try_get("my gate").is_some());
-	}
-}

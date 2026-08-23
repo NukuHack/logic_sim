@@ -451,19 +451,3 @@ pub fn load_project(project_dir: &Path) -> std::io::Result<(ProjectDescription, 
 	let (library, errors) = load_chip_library_from_dir(&project_dir.join("Chips"))?;
 	Ok((project, library, errors))
 }
-
-#[cfg(test)]
-mod chip_dir_tests {
-	use super::*;
-
-	#[test]
-	fn load_chip_library_from_dir_returns_empty_library_when_dir_missing() {
-		let dir = std::env::temp_dir().join(format!("logic_sim_missing_chips_dir_{}", std::process::id()));
-		let _ = fs::remove_dir_all(&dir); // make sure it really doesn't exist
-		assert!(!dir.exists());
-
-		let (library, errors) = load_chip_library_from_dir(&dir).unwrap();
-		assert!(errors.is_empty());
-		assert!(library.try_get("nand").is_none(), "a missing dir should yield an empty library, not an error");
-	}
-}
