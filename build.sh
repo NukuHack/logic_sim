@@ -90,7 +90,11 @@ else
     fi
     if command -v cargo-miri >/dev/null 2>&1 || cargo +nightly miri --version >/dev/null 2>&1; then
       echo "==> Running cargo miri test --lib"
-      if ! cargo +nightly miri test --lib; then
+      # -Zmiri-disable-isolation: the unit tests round-trip real save files
+      # through std::fs (statx & co.), which Miri only permits with host
+      # access. Without this every fs-backed test dies on an unsupported-
+      # operation error instead of actually checking our code for UB.
+      if ! MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib; then
         echo "WARN: cargo miri test --lib failed or found UB — investigate before trusting unsafe code"
       fi
     else
