@@ -1,5 +1,6 @@
 //! Rendering layer: the first slice of the ported `Graphics/` + `Game/Interaction` code from the
-//! original C# project. Split into `layout` (grid/pin/chip-size math), `theme` (colour palette),
+//! original C# project. Split into `foundation` (geometry primitives + point-in-shape hit tests
+//! shared by everything above), `layout` (grid/pin/chip-size math), `theme` (colour palette),
 //! `camera` (pan/zoom transform), `scene` (chip descriptions -> coloured triangles), `ui_kit`
 //! (shared button/label/text-field primitives), `editor_ui` and `menu_ui` (in-editor and startup
 //! overlays built from `ui_kit`), `context_menu` (generic right-click popup), `ui_stack` (the
@@ -10,6 +11,7 @@
 pub mod camera;
 pub mod context_menu;
 pub mod editor_ui;
+pub mod foundation;
 pub mod gpu;
 pub mod layout;
 pub mod menu_ui;
@@ -23,7 +25,8 @@ pub use context_menu::{build_context_menu, ContextMenuButton, ContextMenuFrame, 
 pub use editor_ui::{EditorAction, EditorButton, EditorFrame};
 pub use menu_ui::{MenuFrame, UiAction, UiButton, UiRect};
 pub use scene::{
-	bounding_box, build_grid, build_scene, delete_wire, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips, AllLow, PinStateLookup,
-	PlacedSubChip, SceneGeometry, SceneVertex, TextLabel,
+	bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit,
+	hit_test_sub_chip, hit_test_sub_chip_pin, hit_test_wire, place_sub_chips, AllLow, PinHit, PinStateLookup, PlacedSubChip, SceneGeometry,
+	SceneVertex, TextLabel, WireTapHit,
 };
 pub use ui_stack::{Capture, Dispatch, InputResult, LayerId, StackLayer, UiStack};

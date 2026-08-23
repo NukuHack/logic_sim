@@ -1,0 +1,100 @@
+//! Builds drawable geometry for one "view" of a chip (i.e. what the editor shows when you open a
+//! custom chip: its subchips, each subchip's pins, and the wires between them). This is the
+//! scene-graph half of the renderer -- pure data in, triangles out, no wgpu types -- so it can be
+//! unit tested without a GPU. Mirrors (a first-pass subset of) `DLS.Graphics.World.DevSceneDrawer`.
+//!
+//! Split by concern: [`lookup`] (pin-state queries), [`placed`] (subchip placement), [`wires`]
+//! (wire drawing/hit-testing/deletion), [`pins`] (pin drawing/hit-testing), [`components`]
+//! (component bodies + displays), and [`grid`] (the canvas background), all composed here by
+//! [`build_scene`] on top of [`crate::render::foundation`]'s primitives.
+
+pub mod components;
+pub mod grid;
+pub mod lookup;
+pub mod pin_hits;
+pub mod pin_resolve;
+pub mod pins;
+pub mod placed;
+pub mod wire_endpoints;
+pub mod wires;
+
+use crate::description::{ChipDescription, ChipLibrary};
+use crate::render::layout;
+use crate::render::theme;
+use crate::structs::Vec2;
+use std::collections::HashMap;
+
+pub use crate::render::foundation::{
+	apply_alpha, bounding_box, point_in_circle, point_in_rect, point_in_rounded_rect, RoundCorners, SceneGeometry, SceneVertex, TextLabel,
+};
+pub use grid::build_grid;
+pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
+pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
+pub use placed::{place_sub_chips, PlacedSubChip};
+pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};
+pub use wires::delete_wire;
+
+/// Finds whichever placed subchip's body (as laid out by
+/// [`place_sub_chips`]) contains `world_pos`, if any -- used to resolve a
+/// right-click on the canvas to "which component did the player click".
+/// Iterates back-to-front (last-placed first) so, on the rare case two
+/// bodies overlap, the one actually drawn on top (and thus visible to the
+/// player) is the one that gets hit, matching `draw_components`' draw
+/// order.
+pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec2) -> Option<&'b PlacedSubChip<'a>> {
+	placed.iter().rev().find(|p| point_in_rect(world_pos, p.centre, p.size))
+}
+
+/// Build the full drawable scene for one chip: every subchip's body + pins,
+/// plus wires connecting them. `chip.input_pins`/`output_pins` are treated
+/// as this chip's own boundary dev-pins (owner id == the pin's own id, per
+/// the on-disk wire-address convention).
+pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dyn PinStateLookup, hover_world_pos: Option<Vec2>) -> SceneGeometry {
+	let mut geo = SceneGeometry::default();
+	let placed = place_sub_chips(chip, library);
+
+	// owner_id -> index into `placed`, for resolving wire endpoints that
+	// land on a subchip (as opposed to one of this chip's own dev-pins).
+	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+
+	// Draw order is a simple three-layer stack, back to front (no depth buffer, so draw order is z-order):
+	// wires, then pins, then component bodies + name labels on top. Name labels are hover-gated to
+	// whichever thing `hover_world_pos` lands on; pins are checked first so an edge-hover shows the pin.
+	wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
+	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, hover_world_pos);
+	components::draw_components(&mut geo, &placed, pin_state, hover_world_pos, hovered_pin_name.is_some());
+	if let Some((pos, name)) = hovered_pin_name {
+		push_hover_label(&mut geo, pos, name);
+	}
+
+	geo
+}
+
+/// Pushes a small hover-triggered name label just above `pos`. Shared by
+/// both the pin and component hover paths in `build_scene` so their
+/// labels look consistent.
+fn push_hover_label(geo: &mut SceneGeometry, pos: Vec2, name: String) {
+	let width = layout::estimate_text_width(&name, theme::FONT_SIZE_CHIP_NAME);
+	geo.labels.push(TextLabel {
+		pos: Vec2::new(pos.x, pos.y + layout::GRID_SIZE * 2.0),
+		text: name,
+		colour: theme::HOVER_LABEL_COL,
+		font_size: theme::FONT_SIZE_CHIP_NAME,
+		width,
+	});
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+	//! Tiny chip fixtures shared by the scene submodules' unit tests.
+
+	use crate::description::{ChipDescription, ChipType, PinBitCount, PinDescription};
+
+	pub fn nand_desc() -> ChipDescription {
+		let mut d = ChipDescription::new("NAND", ChipType::Nand);
+		d.input_pins.push(PinDescription::new("A", 0, PinBitCount::Bit1));
+		d.input_pins.push(PinDescription::new("B", 1, PinBitCount::Bit1));
+		d.output_pins.push(PinDescription::new("OUT", 0, PinBitCount::Bit1));
+		d
+	}
+}

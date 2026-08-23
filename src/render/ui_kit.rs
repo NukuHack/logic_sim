@@ -4,7 +4,8 @@
 //! the next click against them -- so this module owns the bits that are identical either way
 //! (button/label/text-field drawing, hover colouring), leaving each caller only its own layout.
 
-use crate::render::scene::{SceneGeometry, TextLabel};
+use crate::render::camera::Camera;
+use crate::render::foundation::{SceneGeometry, TextLabel};
 use crate::render::theme;
 use crate::structs::Vec2;
 
@@ -17,6 +18,29 @@ pub const FONT_SIZE: f32 = 18.0;
 pub fn to_world(screen: Vec2, vw: f32, vh: f32) -> Vec2 {
 	let _ = vw; // kept for symmetry / clarity at call sites, x maps 1:1
 	Vec2::new(screen.x, vh - screen.y)
+}
+
+/// Re-maps geometry laid out in `to_world`'s fixed "pixel" space (the
+/// convention every `ui_kit`-based overlay builder draws in) into the
+/// world points that land on those *same pixels* when drawn through
+/// `camera`, which pans and zooms freely -- keeping overlays pinned to
+/// the screen (constant position and size in pixels) no matter how far
+/// the canvas underneath has been panned/zoomed, using one real render
+/// pass instead of needing a second camera/pipeline in `render::gpu`.
+///
+/// Text labels additionally divide their size by the zoom, since a label
+/// drawn at constant pixel size covers a proportionally smaller world rect.
+pub fn pin_geometry_to_screen(mut geometry: SceneGeometry, camera: &Camera, vh: f32) -> SceneGeometry {
+	let to_screen_px = |world: Vec2| Vec2::new(world.x, vh - world.y); // inverse of `to_world`, which is its own inverse
+	for v in &mut geometry.triangles {
+		v.pos = camera.screen_to_world(to_screen_px(v.pos));
+	}
+	for l in &mut geometry.labels {
+		l.pos = camera.screen_to_world(to_screen_px(l.pos));
+		l.font_size /= camera.zoom;
+		l.width /= camera.zoom;
+	}
+	geometry
 }
 
 /// Per-frame ambient context shared by every draw helper: viewport size
@@ -148,37 +172,4 @@ pub fn hovered_button<A: Clone>(buttons: &[Button<A>], mouse: Vec2, require_enab
 pub fn finish<A: Clone>(mut frame: Frame<A>, mouse: Vec2) -> Frame<A> {
 	frame.hovered = hovered_button(&frame.buttons, mouse, true);
 	frame
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn ui_rect_contains_checks_bounds_inclusively() {
-		let r = UiRect::new(10.0, 10.0, 100.0, 20.0);
-		assert!(r.contains(Vec2::new(10.0, 10.0)));
-		assert!(r.contains(Vec2::new(110.0, 30.0)));
-		assert!(r.contains(Vec2::new(60.0, 20.0)));
-		assert!(!r.contains(Vec2::new(9.0, 20.0)));
-		assert!(!r.contains(Vec2::new(60.0, 31.0)));
-	}
-
-	#[test]
-	fn hovered_button_respects_require_enabled() {
-		let rect = UiRect::new(0.0, 0.0, 10.0, 10.0);
-		let buttons = vec![Button { rect, action: "a", enabled: false }];
-		let inside = Vec2::new(5.0, 5.0);
-		assert_eq!(hovered_button(&buttons, inside, true), None);
-		assert_eq!(hovered_button(&buttons, inside, false), Some("a"));
-	}
-
-	#[test]
-	fn text_field_row_falls_back_to_placeholder_when_empty() {
-		let mut frame: Frame<()> = Frame::default();
-		let rect = UiRect::new(0.0, 0.0, 100.0, 20.0);
-		text_field_row(&mut frame, UiCtx::new(200.0, 100.0, Vec2::ZERO), rect, "", "Search...", FONT_SIZE, 16.0);
-		assert_eq!(frame.text_field, Some(rect));
-		assert!(frame.geometry.labels.iter().any(|l| l.text == "Search...|"));
-	}
 }

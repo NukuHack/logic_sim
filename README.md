@@ -70,20 +70,25 @@ Saved projects stamped `DLSVersion >= 2.0.0` can be opened; new saves are writte
 
 ```
 src/
-├── sim.rs            # event-driven logic simulation over a built chip tree
-├── description.rs    # ChipDescription / PinDescription / ChipLibrary types
-├── builtins.rs       # pin layouts for every non-custom chip type
-├── json.rs           # serde models + load/save of project & chip JSON
-├── structs.rs        # shared math/utility types
-├── settings.rs       # AppSettings
-├── bin/app.rs        # the integrated application (picker → viewer)
-├── render/           # wgpu renderer, WGSL shader, camera, theme, editor/menu UI
-└── save_system/      # paths, loader/saver, versioning, orchestration
-tests/                # integration tests incl. real-project round-trips + fixtures
-build.sh              # fmt/clippy/test/build driver (see above)
+├── sim.rs              # event-driven logic simulation over a built chip tree
+├── description.rs      # ChipDescription / PinDescription / ChipLibrary types
+├── builtins.rs         # pin layouts for every non-custom chip type
+├── json.rs             # serde models + load/save of project & chip JSON
+├── structs.rs          # shared math/utility types
+├── settings.rs         # AppSettings
+├── bin/app.rs          # thin entry point (picker → viewer)
+├── render/             # wgpu renderer, WGSL shader, camera, theme
+│   ├── foundation/     # shared geometry primitives + point-in-shape hit tests
+│   ├── scene/          # chip descriptions -> triangles (wires/pins/components/grid)
+│   └── ...             # ui_kit, editor/menu UI, context menu, UI stack, gpu
+├── viewer/             # the frontend: editor state, canvas interaction,
+│                       #   save flows, popups, input routing, frame building
+└── save_system/        # paths, loader/saver, versioning, orchestration
+tests/                  # integration tests incl. real-project round-trips + fixtures
+build.sh                # fmt/clippy/test/build driver (see above)
 ```
 
-The `logic_sim` crate doubles as a library: the simulator (`Simulator`, `SimChip`), descriptions, and save system are all usable headless without the GUI — see `src/lib.rs` for the public surface and `tests/` for usage examples.
+The `logic_sim` crate doubles as a library: the simulator (`Simulator`, `SimChip`), descriptions, save system, and the whole `viewer` frontend are usable headless without a GPU — see `src/lib.rs` for the public surface and `tests/` for usage examples.
 
 ## Contributing
 

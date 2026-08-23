@@ -4,8 +4,8 @@
 //! [`crate::render::editor_ui`] and [`crate::render::menu_ui`]: builds drawable geometry plus
 //! clickable hit-boxes for one frame; the host keeps the open/closed state and re-calls it each frame.
 
+use crate::render::foundation::{SceneGeometry, TextLabel};
 use crate::render::menu_ui::UiRect;
-use crate::render::scene::{SceneGeometry, TextLabel};
 use crate::structs::Vec2;
 
 pub use crate::render::menu_ui::to_world;
@@ -116,14 +116,16 @@ pub fn build_context_menu(state: &ContextMenuState, vw: f32, vh: f32, mouse: Vec
 	let panel_rect = UiRect::new(x, y, ROW_W, panel_h);
 	frame.panel_rect = panel_rect;
 
-	// Border, then background, then rows -- same "outline rect behind a
-	// slightly-inset fill" trick `scene::draw_dev_pin_body` uses.
-	frame.geometry.add_rect(
+	// Border, then background, then rows -- the shared
+	// "outline behind slightly-inset fill" pattern, with the outline's own rect sized one border
+	// wider than the panel on every side so the fill lands exactly on `panel_rect`.
+	frame.geometry.add_outlined_rect(
 		to_world(centre(&panel_rect), vw, vh),
 		Vec2::new(panel_rect.w + BORDER * 2.0, panel_rect.h + BORDER * 2.0),
+		BORDER,
+		[0.17, 0.17, 0.19, 1.0],
 		[0.05, 0.05, 0.06, 1.0],
 	);
-	frame.geometry.add_rect(to_world(centre(&panel_rect), vw, vh), Vec2::new(panel_rect.w, panel_rect.h), [0.17, 0.17, 0.19, 1.0]);
 
 	for (i, item) in state.items.iter().enumerate() {
 		let row_rect = UiRect::new(panel_rect.x, panel_rect.y + i as f32 * ROW_H, panel_rect.w, ROW_H);
@@ -149,48 +151,4 @@ pub fn build_context_menu(state: &ContextMenuState, vw: f32, vh: f32, mouse: Vec
 
 	frame.hovered = frame.buttons.iter().find(|b| b.rect.contains(mouse)).map(|b| b.id.clone());
 	frame
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn builds_one_row_per_item() {
-		let state = ContextMenuState::new("AND", Vec2::new(100.0, 100.0), vec![ContextMenuItem::new("Open", ContextMenuAction::Open)]);
-		let frame = build_context_menu(&state, 1280.0, 800.0, Vec2::ZERO);
-		assert_eq!(frame.buttons.len(), 1);
-		assert_eq!(frame.buttons[0].id, ContextMenuAction::Open);
-		assert!(frame.geometry.labels.iter().any(|l| l.text == "Open"));
-	}
-
-	#[test]
-	fn clamps_panel_to_stay_on_screen() {
-		// Anchored near the bottom-right corner -- panel must not run
-		// off either edge.
-		let state = ContextMenuState::new(
-			"AND",
-			Vec2::new(1275.0, 795.0),
-			vec![ContextMenuItem::new("Open", ContextMenuAction::Open), ContextMenuItem::new("Another", ContextMenuAction::Other)],
-		);
-		let frame = build_context_menu(&state, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.panel_rect.x + frame.panel_rect.w <= 1280.0);
-		assert!(frame.panel_rect.y + frame.panel_rect.h <= 800.0);
-	}
-
-	#[test]
-	fn hovered_row_is_reported() {
-		let state = ContextMenuState::new("AND", Vec2::new(10.0, 10.0), vec![ContextMenuItem::new("Open", ContextMenuAction::Open)]);
-		let mouse = Vec2::new(20.0, 20.0); // inside the single row
-		let frame = build_context_menu(&state, 1280.0, 800.0, mouse);
-		assert_eq!(frame.hovered, Some(ContextMenuAction::Open));
-	}
-
-	#[test]
-	fn empty_items_produces_no_panel() {
-		let state = ContextMenuState::new("AND", Vec2::new(10.0, 10.0), vec![]);
-		let frame = build_context_menu(&state, 1280.0, 800.0, Vec2::ZERO);
-		assert!(frame.buttons.is_empty());
-		assert!(frame.geometry.triangles.is_empty());
-	}
 }

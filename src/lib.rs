@@ -8,6 +8,7 @@ pub mod settings;
 pub mod sim;
 pub mod structs;
 pub mod ui_menu;
+pub mod viewer;
 
 pub use builtins::{create_all as create_all_builtins, register_all as register_all_builtins};
 pub use description::{

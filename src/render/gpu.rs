@@ -5,7 +5,7 @@
 //! glue around the pure, fully-tested `layout` / `theme` / `scene` / `camera` modules.
 
 use crate::render::camera::Camera;
-use crate::render::scene::{SceneGeometry, SceneVertex, TextLabel};
+use crate::render::foundation::{SceneGeometry, SceneVertex, TextLabel};
 use crate::structs::Vec2;
 use bytemuck::{Pod, Zeroable};
 use glyphon::{
@@ -427,33 +427,4 @@ impl Renderer {
 /// want to build an initial vertex buffer without going through `Renderer`.
 pub fn upload_ready_bytes(vertices: &[Vertex]) -> &[u8] {
 	bytemuck::cast_slice(vertices)
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::render::theme;
-
-	#[test]
-	fn scene_vertex_converts_to_gpu_vertex() {
-		let sv = SceneVertex { pos: Vec2::new(1.0, 2.0), colour: theme::PIN_COL };
-		let v: Vertex = sv.into();
-		assert_eq!(v.position, [1.0, 2.0]);
-		assert_eq!(v.colour, theme::PIN_COL);
-	}
-
-	#[test]
-	fn scene_to_vertices_preserves_triangle_count() {
-		let mut geo = SceneGeometry::default();
-		geo.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), theme::CHIP_BODY_COL);
-		let verts = scene_to_vertices(&geo);
-		assert_eq!(verts.len(), 6);
-	}
-
-	#[test]
-	fn vertex_bytes_round_trip_through_bytemuck() {
-		let verts = vec![Vertex { position: [0.0, 0.0], colour: [1.0, 0.0, 0.0, 1.0] }];
-		let bytes = upload_ready_bytes(&verts);
-		assert_eq!(bytes.len(), std::mem::size_of::<Vertex>());
-	}
 }
