@@ -5,8 +5,10 @@ use crate::{
 	render::theme::{Rgba, COLORS},
 	structs::Vec2,
 };
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum ChipType {
 	// ---- Basic Chips ----
 	#[default]
@@ -64,7 +66,7 @@ pub enum ChipType {
 impl ChipType {
 	/// Convert to the integer representation used on disk.
 	pub fn to_int(&self) -> i32 {
-		*self as i32
+		(*self).into()
 	}
 
 	pub fn is_bus_origin_type(self) -> bool {
@@ -105,45 +107,12 @@ impl ChipType {
 	/// Reconstruct from an integer, matching the original C# enum order.
 	/// Invalid values fall back to `Custom`.
 	pub fn from_int(v: i32) -> Self {
-		match v {
-			0 => Self::Custom,
-			1 => Self::Nand,
-			2 => Self::TriStateBuffer,
-			3 => Self::Clock,
-			4 => Self::Pulse,
-			5 => Self::DevRam8Bit,
-			6 => Self::Rom256x16,
-			7 => Self::SevenSegmentDisplay,
-			8 => Self::DisplayRgb,
-			9 => Self::DisplayDot,
-			10 => Self::DisplayLed,
-			11 => Self::Merge1To4Bit,
-			12 => Self::Merge1To8Bit,
-			13 => Self::Merge4To8Bit,
-			14 => Self::Split4To1Bit,
-			15 => Self::Split8To4Bit,
-			16 => Self::Split8To1Bit,
-			17 => Self::In1Bit,
-			18 => Self::In4Bit,
-			19 => Self::In8Bit,
-			20 => Self::Out1Bit,
-			21 => Self::Out4Bit,
-			22 => Self::Out8Bit,
-			23 => Self::Key,
-			24 => Self::Bus1Bit,
-			25 => Self::BusTerminus1Bit,
-			26 => Self::Bus4Bit,
-			27 => Self::BusTerminus4Bit,
-			28 => Self::Bus8Bit,
-			29 => Self::BusTerminus8Bit,
-			30 => Self::Buzzer,
-			31 => Self::KeyMods,
-			_ => Self::default(),
-		}
+		Self::try_from(v).unwrap_or_default()
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum ValueDisplayMode {
 	#[default]
 	None = 0,
@@ -154,23 +123,18 @@ pub enum ValueDisplayMode {
 
 impl ValueDisplayMode {
 	pub fn from_int(v: i32) -> Self {
-		match v {
-			0 => Self::None,
-			1 => Self::Decimal,
-			2 => Self::SignedDecimal,
-			3 => Self::Hex,
-			_ => Self::default(),
-		}
+		Self::try_from(v).unwrap_or_default()
 	}
 
 	pub fn to_int(&self) -> i32 {
-		*self as i32
+		(*self).into()
 	}
 }
 
 /// Where (if anywhere) a chip's name label is drawn on its body. Mirrors
 /// `DLS.Description.NameDisplayLocation`, saved on disk as `NameLocation`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum NameLocation {
 	#[default]
 	Centre = 0,
@@ -182,16 +146,11 @@ impl NameLocation {
 	/// `NameDisplayLocation` as stored on disk: a plain integer matching the
 	/// original C# enum's declaration order
 	pub fn from_int(v: i32) -> Self {
-		match v {
-			0 => Self::Centre,
-			1 => Self::Top,
-			2 => Self::Hidden,
-			_ => Self::default(),
-		}
+		Self::try_from(v).unwrap_or_default()
 	}
 
 	pub fn to_int(&self) -> i32 {
-		*self as i32
+		(*self).into()
 	}
 }
 
@@ -209,7 +168,8 @@ impl PinAddress {
 	}
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum PinBitCount {
 	#[default]
 	Bit1 = 1,
@@ -219,20 +179,16 @@ pub enum PinBitCount {
 
 impl PinBitCount {
 	pub fn from_int(v: i32) -> Self {
-		match v {
-			1 => PinBitCount::Bit1,
-			4 => PinBitCount::Bit4,
-			8 => PinBitCount::Bit8,
-			_ => Self::default(),
-		}
+		Self::try_from(v).unwrap_or_default()
 	}
 
 	pub fn to_int(&self) -> i32 {
-		*self as i32
+		(*self).into()
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum Color {
 	#[default]
 	Red = 0,
@@ -252,21 +208,11 @@ impl Color {
 	/// on-disk value is an unchecked int) fall back to 0 rather than panicking
 	/// or silently wrapping.
 	pub fn from_int(a: i32) -> Self {
-		match a {
-			0 => Color::Red,
-			1 => Color::Orange,
-			2 => Color::Yellow,
-			3 => Color::Green,
-			4 => Color::Blue,
-			5 => Color::Purple,
-			6 => Color::Pink,
-			7 => Color::White,
-			_ => Self::default(),
-		}
+		Self::try_from(a).unwrap_or_default()
 	}
 
 	pub fn to_int(&self) -> i32 {
-		*self as i32 // Works because of explicit discriminants!
+		(*self).into()
 	}
 
 	pub fn to_rgba(&self) -> Rgba {

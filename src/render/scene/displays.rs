@@ -779,8 +779,6 @@ mod tests {
 
 		let lit = theme::state_colour(LogicState::High, Color::White).map(f32::to_bits);
 		let dim = theme::state_colour(LogicState::Low, Color::White).map(f32::to_bits);
-		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits);
-
 		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits); // also the backing quad
 		let cases: [(LogicState, std::vec::Vec<[u32; 4]>, std::vec::Vec<[u32; 4]>); 3] = [
 			(LogicState::High, vec![lit], vec![dim]),

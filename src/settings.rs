@@ -4,41 +4,33 @@
 //! it's just the persisted data plus its on-disk shape. Whatever sets up the window is expected to
 //! translate `AppSettings` into whatever its windowing library needs.
 
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::{Deserialize, Serialize};
 
 /// Mirrors `UnityEngine.FullScreenMode`. The on-disk integer values are
 /// Unity's own enum values (there's a deliberate "hole" at 2 -- that's not a
 /// typo, it matches upstream so that AppSettings.json files written by the
 /// original C# game round-trip correctly through this port).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum FullScreenMode {
-	ExclusiveFullScreen,
+	ExclusiveFullScreen = 0,
 	#[default]
-	FullScreenWindow,
-	MaximizedWindow,
-	Windowed,
+	FullScreenWindow = 1,
+	MaximizedWindow = 3,
+	Windowed = 4,
 }
 
 impl FullScreenMode {
 	pub fn to_int(self) -> i32 {
-		match self {
-			FullScreenMode::ExclusiveFullScreen => 0,
-			FullScreenMode::FullScreenWindow => 1,
-			FullScreenMode::MaximizedWindow => 3,
-			FullScreenMode::Windowed => 4,
-		}
+		self.into()
 	}
 
 	/// Any value not matching a known variant (including the deliberately
 	/// unused `2`) falls back to `FullScreenWindow`, matching the original's
 	/// default full-screen behaviour.
 	pub fn from_int(v: i32) -> Self {
-		match v {
-			0 => FullScreenMode::ExclusiveFullScreen,
-			3 => FullScreenMode::MaximizedWindow,
-			4 => FullScreenMode::Windowed,
-			_ => FullScreenMode::FullScreenWindow,
-		}
+		Self::try_from(v).unwrap_or_default()
 	}
 }
 
