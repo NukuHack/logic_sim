@@ -32,3 +32,11 @@ path = "src/lib.rs"
 name = "app"
 path = "src/bin/app.rs"
 
+# ---- release build: speed first, size second ----
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
