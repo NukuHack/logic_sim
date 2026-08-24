@@ -1,7 +1,7 @@
 use logic_sim::{
-	load_chip_library_from_dir, load_project, parse_chip_description, serialize_chip_description, ChipCollection, ChipDescription, ChipLibrary,
-	ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount, PinDescription, ProjectDescription, Simulator,
-	StarredItem, SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
+	is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description, serialize_chip_description, ChipCollection,
+	ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount, PinDescription,
+	ProjectDescription, Simulator, StarredItem, SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
 };
 use std::path::Path;
 
@@ -1013,4 +1013,65 @@ fn load_chip_library_from_dir_returns_empty_library_when_dir_missing() {
 	let (library, errors) = load_chip_library_from_dir(&dir).unwrap();
 	assert!(errors.is_empty());
 	assert!(library.try_get("nand").is_none(), "a missing dir should yield an empty library, not an error");
+}
+
+// ---- is_equivalent_json (UnsavedChangeDetector) ----
+
+#[test]
+fn is_equivalent_json_ignores_formatting_and_property_order() {
+	assert!(is_equivalent_json(r#"{"a":1,"b":[1,2,3]}"#, r#"{ "b": [1, 2, 3], "a": 1 }"#));
+	assert!(is_equivalent_json(r#"{"a":1}"#, "{\n\t\"a\": 1\n}\n"));
+	assert!(!is_equivalent_json(r#"{"a":1,"b":2}"#, r#"{"b":2,"a":1,"c":3}"#));
+}
+
+#[test]
+fn is_equivalent_json_compares_numbers_approximately() {
+	assert!(is_equivalent_json(r#"{"x":0.10000001}"#, r#"{"x":0.10000002}"#), "within epsilon");
+	assert!(!is_equivalent_json(r#"{"x":0.100001}"#, r#"{"x":0.100200}"#), "outside epsilon");
+	// Integers still compare exactly (any difference dwarfs the epsilon).
+	assert!(!is_equivalent_json(r#"{"id":7}"#, r#"{"id":8}"#));
+}
+
+#[test]
+fn is_equivalent_json_rejects_type_and_shape_mismatches() {
+	assert!(!is_equivalent_json(r#"{"a":1}"#, r#"{"a":"1"}"#));
+	assert!(!is_equivalent_json(r#"[1,2]"#, r#"[2,1]"#), "array order matters");
+	assert!(!is_equivalent_json(r#"[1,2]"#, r#"[1,2,3]"#));
+	assert!(!is_equivalent_json("not json", "{}"));
+}
+
+/// The property the unsaved-changes gate leans on: serializing a parsed
+/// description and comparing against a fresh serialization of the same
+/// description must read as equivalent (i.e. merely loading + re-saving
+/// nothing isn't an "edit"), while any real mutation flips it.
+#[test]
+fn chip_serialization_round_trips_are_always_equivalent() {
+	let mut desc = ChipDescription::new("EQ", ChipType::Custom);
+	desc.colour = [0.25, 0.5, 0.75, 1.0];
+	desc.size = Vec2::new(1.5, 2.5);
+	desc.input_pins.push(PinDescription::from_saved(
+		"IN",
+		0,
+		Vec2::new(-1.125, 0.0625),
+		PinBitCount::Bit8,
+		Color::Blue,
+		ValueDisplayMode::SignedDecimal,
+	));
+	desc.sub_chips.push(SubChipDescription {
+		name: "NAND".into(),
+		id: 1,
+		internal_data: None,
+		position: Vec2::new(3.0, 4.0),
+		label: None,
+		pin_colour_info: Vec::new(),
+	});
+
+	let first = serialize_chip_description(&desc).unwrap();
+	let reparsed = parse_chip_description(&first).unwrap();
+	let second = serialize_chip_description(&reparsed).unwrap();
+	assert!(is_equivalent_json(&first, &second), "load-then-reserialize isn't an edit:\n{first}\nvs\n{second}");
+
+	let mut edited = reparsed;
+	edited.input_pins[0].name = "CHANGED".into();
+	assert!(!is_equivalent_json(&first, &serialize_chip_description(&edited).unwrap()), "a real field change must read as an edit");
 }

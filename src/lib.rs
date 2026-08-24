@@ -17,7 +17,7 @@ pub use description::{
 	ValueDisplayMode, WireConnectionType, WireDescription,
 };
 pub use json::{
-	load_chip_library_from_dir, load_project, parse_chip_description, parse_project_description, serialize_chip_description,
+	is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description, parse_project_description, serialize_chip_description,
 	serialize_project_description, ChipCollection, ProjectDescription, StarredItem,
 };
 pub use save_system::{

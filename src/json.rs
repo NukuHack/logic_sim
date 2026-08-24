@@ -301,6 +301,41 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 	serde_json::to_string(&raw)
 }
 
+/// Tolerance (absolute difference) within which two JSON numbers count as
+/// equal -- mirrors `UnsavedChangeDetector`'s epsilon, so a float that
+/// drifted slightly through a save/load round trip doesn't read as an edit.
+const JSON_FLOAT_EPSILON: f64 = 0.0001;
+
+/// Test if two json strings are equivalent. Unlike directly comparing the
+/// strings, this ignores things like formatting and property order, and
+/// compares numbers approximately (within [`JSON_FLOAT_EPSILON`]). Port of
+/// `DLS.Description.UnsavedChangeDetector.IsEquivalentJson`, backing the
+/// unsaved-changes prompt's "did this chip actually change" check.
+pub fn is_equivalent_json(json_a: &str, json_b: &str) -> bool {
+	match (serde_json::from_str::<serde_json::Value>(json_a), serde_json::from_str::<serde_json::Value>(json_b)) {
+		(Ok(token_a), Ok(token_b)) => is_equivalent_token(&token_a, &token_b),
+		_ => false,
+	}
+}
+
+fn is_equivalent_token(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+	use serde_json::Value;
+	match (a, b) {
+		(Value::Object(obj_a), Value::Object(obj_b)) => {
+			obj_a.len() == obj_b.len()
+				&& obj_a.iter().all(|(key, value_a)| obj_b.get(key).is_some_and(|value_b| is_equivalent_token(value_a, value_b)))
+		}
+		(Value::Array(arr_a), Value::Array(arr_b)) => {
+			arr_a.len() == arr_b.len() && arr_a.iter().zip(arr_b).all(|(value_a, value_b)| is_equivalent_token(value_a, value_b))
+		}
+		(Value::Number(num_a), Value::Number(num_b)) => match (num_a.as_f64(), num_b.as_f64()) {
+			(Some(x), Some(y)) => (x - y).abs() < JSON_FLOAT_EPSILON,
+			_ => num_a == num_b,
+		},
+		_ => a == b,
+	}
+}
+
 /// Load every `*.json` chip file directly inside `chips_dir` into a
 /// ChipLibrary. Mirrors DLS.SaveSystem.Loader's project-chip loading step
 /// (minus builtin chips, which aren't stored as files -- see
