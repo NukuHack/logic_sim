@@ -406,16 +406,18 @@ pub(crate) fn draw_pixel_grid(
 	}
 }
 
-/// Draws one LED tile: black backing plus a tinted inner square, lit/dim
-/// by the LED subchip's first input pin and coloured by its saved palette
-/// index in `internal_data[0]` (white when unconfigured).
+/// Draws one LED tile: black backing plus a tinted inner square showing
+/// the same three wire states -- lit/dim by the LED subchip's first input
+/// pin's *tristate* level (so an unconnected LED renders flat black, not
+/// dim), coloured by its saved palette index in `internal_data[0]` (white
+/// when unconfigured).
 pub(crate) fn draw_led(geo: &mut SceneGeometry, clip: ClipRect, centre: Vec2, scale: f32, owner_id: i32, pin_state: &dyn PinStateLookup) {
 	clip.add_rect(geo, centre, Vec2::splat(scale), theme::STATE_DISCONNECTED_COL);
 
-	let lit = pin_state.is_high(owner_id, 0) == Some(true);
+	let logic = pin_state.logic_state(owner_id, 0).unwrap_or(LogicState::Low);
 	let colour_index = pin_state.internal_state(owner_id).and_then(|s| s.first().copied()).unwrap_or(Color::White.to_int() as u32);
 	let palette = Color::from_int(colour_index as i32);
-	let fill = theme::state_colour(if lit { LogicState::High } else { LogicState::Low }, palette);
+	let fill = theme::state_colour(logic, palette);
 
 	clip.add_rect(geo, centre, Vec2::splat(scale * 0.975), fill);
 }
@@ -744,6 +746,53 @@ mod tests {
 		});
 		assert_eq!(display_entry_bounds(&DisplayDescription::new(3, Vec2::ZERO, 1.0), &bare, &library), None);
 		library.add(bare);
+	}
+
+	/// LED fills follow the wire palette's three states: lit, dim, and --
+	/// the state it used to lack -- flat black when the pin is
+	/// disconnected rather than reading as merely "off".
+	#[test]
+	fn led_fill_shows_all_three_wire_states() {
+		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let mut library = ChipLibrary::new();
+		library.add(led.clone());
+		let mut host = ChipDescription::new("HOST", ChipType::Custom);
+		host.sub_chips.push(SubChipDescription { name: "LED".into(), id: 3, internal_data: None, position: Vec2::ZERO, label: None, pin_colour_info: vec![] });
+		let displays = [DisplayDescription::new(3, Vec2::ZERO, 4.0)];
+
+		struct Level(LogicState);
+		impl PinStateLookup for Level {
+			fn is_high(&self, _o: i32, _p: i32) -> Option<bool> {
+				Some(self.0 == LogicState::High)
+			}
+			fn logic_state(&self, _o: i32, _p: i32) -> Option<LogicState> {
+				Some(self.0)
+			}
+		}
+
+		let lit = theme::state_colour(LogicState::High, Color::White).map(f32::to_bits);
+		let dim = theme::state_colour(LogicState::Low, Color::White).map(f32::to_bits);
+		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits);
+
+		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits); // also the backing quad
+		let cases: [(LogicState, std::vec::Vec<[u32; 4]>, std::vec::Vec<[u32; 4]>); 3] = [
+			(LogicState::High, vec![lit], vec![dim]),
+			(LogicState::Low, vec![dim], vec![lit]),
+			// The backing quad is black anyway; what matters is that the
+			// *fill* no longer paints a tinted colour over it.
+			(LogicState::Disconnected, vec![black], vec![lit, dim]),
+		];
+		for (level, present, absent) in cases {
+			let mut geo = SceneGeometry::default();
+			draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(8.0), &host.sub_chips, &displays, &library, &Level(level), theme::CHIP_BODY_COL, false);
+			let colours = colours_present(&geo);
+			for expected in present {
+				assert!(colours.contains(&expected), "{level:?}: expected {expected:?} among {}", colours.len());
+			}
+			for unexpected in absent {
+				assert!(!colours.contains(&unexpected), "{level:?}: must not paint {unexpected:?}");
+			}
+		}
 	}
 
 	/// A hand-edited save could make a chip's display point back at

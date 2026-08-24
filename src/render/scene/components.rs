@@ -113,8 +113,9 @@ fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip, body_colour:
 
 fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, _body_colour: [f32; 4]) {
 	// An LED's body is its indicator; the shared painter draws the black
-	// backing plus the tinted inner square (lit/dim by the input pin,
-	// coloured by `internal_data[0]`'s palette index).
+	// backing plus the tinted inner square in all three wire states
+	// (lit/dim/disconnected by the input pin, coloured by
+	// `internal_data[0]`'s palette index).
 	displays::draw_led(geo, ClipRect::OPEN, sub.centre, sub.size.x.min(sub.size.y), sub.id, pin_state);
 }
 
