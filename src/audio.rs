@@ -139,6 +139,16 @@ impl SimAudio {
 			self.is_smoothing |= val_new > 0.0;
 		}
 	}
+
+	/// Immediately silences everything -- both the per-step targets and the
+	/// smoothed mix. Used when the editor closes outright: nothing will
+	/// advance the mix there anymore, so a sounding buzzer must not drone on.
+	pub fn silence(&mut self) {
+		self.target_amplitudes_per_freq_temp.fill(0.0);
+		self.target_amplitudes_per_freq.fill(0.0);
+		self.has_input_since_last_init = false;
+		self.is_smoothing = false;
+	}
 }
 
 impl Default for SimAudio {
@@ -209,15 +219,17 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 			config,
 			move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
 				let mut time = samples_elapsed_callback.load(std::sync::atomic::Ordering::Relaxed) as f64 / sample_rate;
-				if let Ok(state) = shared.lock() {
-					for frame in data.chunks_mut(channels) {
-						let sample = process_output_sample(GAIN * state.sample(time));
-						frame.fill(sample);
-						time += 1.0 / sample_rate;
-					}
-					let frames_played = (data.len() / channels) as u64;
-					samples_elapsed_callback.fetch_add(frames_played, std::sync::atomic::Ordering::Relaxed);
+				// Poison recovery, not just a failed lock: an audio panic on
+				// either side must degrade to silence, never to repeating
+				// whatever stale bytes were last left in the buffer.
+				let state = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+				for frame in data.chunks_mut(channels) {
+					let sample = process_output_sample(GAIN * state.sample(time));
+					frame.fill(sample);
+					time += 1.0 / sample_rate;
 				}
+				let frames_played = (data.len() / channels) as u64;
+				samples_elapsed_callback.fetch_add(frames_played, std::sync::atomic::Ordering::Relaxed);
 			},
 			|err| eprintln!("audio stream error: {err}"),
 			None,

@@ -148,6 +148,11 @@ impl App {
 
 	pub(crate) fn return_to_menu(&mut self) {
 		self.screen = Screen::Menu;
+		// The viewer (and with it the only thing advancing the audio mix)
+		// is about to be dropped -- silence any sounding buzzer instead of
+		// letting it drone on under the menu.
+		let shared = std::sync::Arc::clone(&self.audio);
+		shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).sim_audio.silence();
 		self.menu.on_menu_opened();
 		self.set_window_title();
 	}

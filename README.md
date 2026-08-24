@@ -6,6 +6,7 @@ A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.c
 
 - **Project picker → chip viewer** in a single window: open an existing project or create a new one, then edit its chips.
 - **Built-in components**: NAND gates, clocks, pulses, tri-state buffers, RAM/ROM, bit merge/split converters, 7-segment / RGB / dot / LED displays, buses, buzzers, and keyboard-driven input chips (`KEY`, `MOD KEYS`).
+- **Buzzer audio**: buzzers drive a 256-slot frequency table through a smoothed square-wave mix played on the real audio device (silently skipped when none is available).
 - **Custom chips**: save any circuit as a chip and nest it inside other circuits, just like the original.
 - **Chip customization** (save popup → *Customize*): name placement (middle/top/hidden), body colour (palette + hex field), corner-drag resizing previewed live with the chip's own edge pins for scale, and embedded display surfaces you place, move, scale and remove right on the chip body — content clips at the chip edge, and any display that doesn't fully fit is flagged in red. Everything round-trips through the original's standard `Displays` save field.
 - **Compatible saves**: reads and writes the *same* `Projects/` folder layout as the original Unity build (see below), so projects made in either program work in both. Sample projects (GOL, Snake, ZHT90, ...) load out of the box.
@@ -39,10 +40,12 @@ Or use the all-in-one script:
 | `Ctrl+F` | Search |
 | `Ctrl+S` | Save current chip |
 | `Ctrl+N` | New chip |
-| `P` | Preferences |
+| `P` / `Ctrl+P` | Preferences |
 | `R` | Rebuild/restart the simulation |
 | `F` | Toggle fit-to-view camera |
-| `G` | Toggle grid |
+| `G` / `Ctrl+G` | Toggle grid |
+| `Ctrl+Space` | Pause/resume the simulation |
+| `Space` (while paused) | Advance the simulation one step |
 | `Esc` | Cancel pending action / close topmost overlay / leave editor |
 | `Delete` | Remove the display being carried in Customize |
 

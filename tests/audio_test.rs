@@ -118,6 +118,111 @@ fn sample_mixes_square_waves_of_registered_slots() {
 fn output_stage_flattens_peaks_but_passes_quiet_samples_through() {
 	assert_eq!(process_output_sample(0.05), 0.05);
 	assert_eq!(process_output_sample(-0.07), -0.07);
+	// The threshold itself is inclusive: exactly at it, nothing flattens.
+	assert_eq!(process_output_sample(0.1), 0.1);
+	assert_eq!(process_output_sample(-0.1), -0.1);
 	assert_eq!(process_output_sample(0.5), 0.1);
 	assert_eq!(process_output_sample(-0.5), -0.1);
+}
+
+mod end_to_end {
+	use logic_sim::audio::{SimAudio, FREQ_COUNT};
+	use logic_sim::description::{ChipDescription, ChipLibrary, ChipType, SubChipDescription};
+	use logic_sim::sim::{ExternalInput, Simulator};
+	use logic_sim::{PinAddress, Vec2};
+
+	fn buzzer_chip() -> (ChipLibrary, ChipDescription) {
+		let mut library = ChipLibrary::new();
+		logic_sim::register_all_builtins(&mut library);
+
+		let mut chip = ChipDescription::new("NOISY", ChipType::Custom);
+		chip.sub_chips.push(SubChipDescription {
+			name: "BUZZER".into(),
+			id: 1,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		(library, chip)
+	}
+
+	/// The buzzer's builtin pin layout: PITCH (id 1, 8-bit) then VOLUME
+	/// (id 0, 4-bit); the sim arm reads them in that order.
+	fn drive(sim: &mut Simulator, audio: &mut SimAudio, pitch: u32, volume: u32) {
+		let inputs =
+			[ExternalInput { address: PinAddress::new(1, 1), state: pitch }, ExternalInput { address: PinAddress::new(1, 0), state: volume }];
+		sim.run_simulation_step(&inputs, audio);
+	}
+
+	#[test]
+	fn simulator_buzzer_registers_its_note_into_the_shared_audio_state() {
+		let (library, desc) = buzzer_chip();
+		let mut sim = Simulator::build(&desc, &library);
+		let mut audio = SimAudio::new();
+
+		drive(&mut sim, &mut audio, 99, 15);
+
+		assert!(audio.step_targets()[99] > 0.0, "pitch reading picks the frequency slot");
+		assert!(audio.amplitudes()[99] == 0.0, "first step's delta is zero; smoothing starts next step");
+	}
+
+	#[test]
+	fn silent_volume_registers_nothing_and_paused_steps_fade_the_mix() {
+		let (library, desc) = buzzer_chip();
+		let mut sim = Simulator::build(&desc, &library);
+		let mut audio = SimAudio::new();
+
+		// Sound slot 42 and settle the mix onto it instantly (huge delta).
+		audio.init_frame();
+		audio.register_note(42, 15);
+		audio.notify_all_notes_registered(10.0);
+		let sounding = audio.amplitudes()[42];
+		assert!(sounding > 0.5);
+
+		// A simulator beat with the volume pin at zero registers nothing new
+		// (targets clear) but leaves the still-sounding mix untouched.
+		drive(&mut sim, &mut audio, 42, 0);
+		assert_eq!(audio.step_targets()[42], 0.0);
+		drive(&mut sim, &mut audio, 42, 0); // step 2+: the delta-time clock is live
+
+		// Paused-state beats keep fading what's left of the mix toward silence.
+		for _ in 0..40 {
+			std::thread::sleep(std::time::Duration::from_millis(8));
+			sim.update_in_paused_state(&mut audio);
+		}
+		assert!(audio.amplitudes()[42] < sounding * 1e-3, "paused-state steps fade to silence");
+	}
+
+	#[test]
+	fn out_of_range_pitch_slots_are_ignored_rather_than_panicking() {
+		let mut sim = SimAudio::new();
+		sim.register_note(-4, 15);
+		sim.register_note(FREQ_COUNT as i32, 15);
+		assert!(sim.step_targets().iter().all(|&t| t == 0.0));
+	}
+
+	#[test]
+	fn silence_resets_both_targets_and_mix() {
+		let mut sim = SimAudio::new();
+		sim.register_note(7, 15);
+		sim.notify_all_notes_registered(10.0);
+		assert!(sim.amplitudes()[7] > 0.0);
+
+		sim.silence();
+		assert!(sim.step_targets().iter().all(|&t| t == 0.0));
+		assert!(sim.amplitudes().iter().all(|&a| a == 0.0));
+
+		// And smoothing stays idle afterwards instead of re-growing.
+		sim.notify_all_notes_registered(10.0);
+		assert!(sim.amplitudes().iter().all(|&a| a == 0.0));
+	}
+
+	#[test]
+	fn frequency_table_hits_exact_octaves_three_slots_per_semitone() {
+		let sim = SimAudio::new();
+		let freqs = sim.freqs_all();
+		assert!((freqs[36] - 55.0).abs() < 1e-2, "slot 36 is A1 (12 semitones above A0)");
+		assert!((freqs[72] - 110.0).abs() < 1e-2, "slot 72 is A2");
+	}
 }
