@@ -15,7 +15,7 @@
 //! resolving (`PinStateLookup::enter_scope`); scopes that can't be
 //! descended draw blank, matching the original's `sim == null` branches.
 
-use crate::description::{ChipDescription, ChipType, Color, DisplayDescription};
+use crate::description::{ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, SubChipDescription};
 use crate::pin_state::LogicState;
 use crate::render::foundation::SceneGeometry;
 use crate::render::scene::lookup::{AllLow, PinStateLookup};
@@ -95,10 +95,66 @@ pub fn is_display_type(chip_type: ChipType) -> bool {
 	display_base_size(chip_type).is_some()
 }
 
-/// World-space rect (centre, size) a top-level display occupies inside
-/// its host chip: `host_centre + offset`, sized `base * scale`.
-pub fn display_world_rect(host_centre: Vec2, display: DisplayDescription, displayed_type: ChipType) -> Option<(Vec2, Vec2)> {
-	Some((host_centre + display.position, display_base_size(displayed_type)? * display.scale))
+/// Whether a whole chip description can be shown as an embedded display:
+/// one of the four builtin display types, or a custom chip that carries
+/// displays of its own -- placing that cascades its entire display tree
+/// into the host (mirrors the original's `Description.HasDisplay()`
+/// filter for the customization DISPLAYS list, and `SubChipHelper.
+/// CreateDisplayInstances`'s recursion).
+pub fn can_be_embedded_display(desc: &ChipDescription) -> bool {
+	is_display_type(desc.chip_type) || (desc.chip_type == ChipType::Custom && !desc.displays.is_empty())
+}
+
+/// Depth cap for walking display cascades. Well-placed chips can never
+/// contain themselves (`would_create_cycle` blocks it in the editor), but
+/// a hand-edited save file could -- this keeps a cycle from hanging the
+/// renderer instead of trusting the input the way the original does.
+const MAX_CASCADE_DEPTH: u32 = 32;
+
+/// Resolves a display entry's subchip id against its owning chip's own
+/// sub-chip list (ids are unique per owner, not globally -- each cascade
+/// level resolves through *its* node's list, not the host's).
+fn resolve_sub_chip<'a>(owner: &ChipDescription, sub_chip_id: i32, library: &'a ChipLibrary) -> Option<&'a ChipDescription> {
+	owner.sub_chips.iter().find(|s| s.id == sub_chip_id).and_then(|s| library.try_get(&s.name))
+}
+
+/// World-space `(centre offset from the node's own position, size)` that
+/// one custom-chip display node's cascaded content occupies at `scale`:
+/// the union of everything its tree paints, with child positions/scales
+/// composing multiplicatively down the levels. `None` when the tree has
+/// no drawable content at all. Mirrors the bounds the original's
+/// `DrawDisplayWithBackground` accumulates to size its backing quad.
+fn cascade_bounds(desc: &ChipDescription, scale: f32, library: &ChipLibrary, depth: u32) -> Option<(Vec2, Vec2)> {
+	if depth >= MAX_CASCADE_DEPTH {
+		return None;
+	}
+	let mut min = Vec2::splat(f32::MAX);
+	let mut max = Vec2::splat(f32::MIN);
+	for child in &desc.displays {
+		let Some(child_desc) = resolve_sub_chip(desc, child.sub_chip_id, library) else { continue };
+		let Some((offset, size)) = (match child_desc.chip_type {
+			ChipType::Custom => cascade_bounds(child_desc, child.scale * scale, library, depth + 1),
+			t => display_base_size(t).map(|base| (Vec2::ZERO, base * child.scale * scale)),
+		}) else {
+			continue;
+		};
+		let centre = child.position * scale + offset;
+		min = vec_min(min, centre - size * 0.5);
+		max = vec_max(max, centre + size * 0.5);
+	}
+	(min.x <= max.x).then(|| ((min + max) * 0.5, max - min))
+}
+
+/// World-space `(centre offset from the host anchor, size)` one display
+/// entry's painted content occupies: builtin types fill their known
+/// base-size rect about the anchor; a custom entry takes the union of its
+/// whole cascade (see [`cascade_bounds`]). `None` when there's nothing to
+/// show.
+pub fn display_entry_bounds(display: &DisplayDescription, desc: &ChipDescription, library: &ChipLibrary) -> Option<(Vec2, Vec2)> {
+	match desc.chip_type {
+		ChipType::Custom => cascade_bounds(desc, display.scale, library, 0),
+		t => display_base_size(t).map(|base| (Vec2::ZERO, base * display.scale)),
+	}
 }
 
 /// Border colour drawn around an embedded display, derived from the host
@@ -120,14 +176,13 @@ fn display_border_col(chip_colour: Rgba) -> Rgba {
 pub(crate) fn draw_placed_displays_for(
 	geo: &mut SceneGeometry,
 	sub: &crate::render::scene::placed::PlacedSubChip,
-	library: &crate::description::ChipLibrary,
+	library: &ChipLibrary,
 	pin_state: &dyn PinStateLookup,
 ) {
 	if sub.desc.displays.is_empty() {
 		return;
 	}
 	let desc = sub.desc;
-	let resolve = move |id: i32| desc.sub_chips.iter().find(|s| s.id == id).and_then(|s| library.try_get(&s.name));
 	// The displays' `(subchip id, pin id)` addresses live *inside this
 	// placed chip's own scope*, not the one this draw call was handed
 	// -- descend one level before resolving, or every pin reads
@@ -135,24 +190,32 @@ pub(crate) fn draw_placed_displays_for(
 	// static previews with no simulator) draw blank, mirroring the
 	// original's `sim == null` branch.
 	let scoped: Box<dyn PinStateLookup> = pin_state.enter_scope(sub.id).unwrap_or_else(|| Box::new(AllLow));
-	draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, resolve, scoped.as_ref(), desc.colour, false);
+	draw_subchip_displays(geo, sub.centre, sub.size, &desc.sub_chips, &desc.displays, library, scoped.as_ref(), desc.colour, false);
 }
 
 /// Draws every embedded display of a chip, clipped to the body rect at
-/// (`chip_centre`, `chip_size`). `resolve` maps a subchip id to its
-/// description via the caller's library; ids that don't resolve to a
-/// display-type chip are skipped, same as the original's "display has
-/// been deleted by player" tolerance. `chip_colour` tints the border
-/// around each display (alpha 0 falls back to the theme default). With
-/// `mark_out_of_bounds`, displays sticking out of the body are flagged
-/// with a translucent red quad over their full extent (customize preview).
+/// (`chip_centre`, `chip_size`). Display entries resolve through
+/// `owner_sub_chips` -- the owning chip's own sub-chip list whose ids the
+/// entries reference; entries resolving to nothing display-carrying are
+/// skipped, same as the original's "display has been deleted by player"
+/// tolerance. `chip_colour` tints the border around each display (alpha 0
+/// falls back to the theme default). With `mark_out_of_bounds`, displays
+/// sticking out of the body are flagged with a translucent red quad over
+/// their full extent (customize preview).
+///
+/// A custom-chip entry cascades: its target chip's own displays merge in
+/// wholesale, positions/scales composing down the levels and backed by
+/// one quad over the union -- mirroring `DrawDisplay`'s `ChildDisplays`
+/// recursion plus the bounds-accumulating backing of
+/// `DrawDisplayWithBackground`.
 #[allow(clippy::too_many_arguments)] // one painter entry covering clip/colour/flag knobs
-pub fn draw_subchip_displays<'a>(
+pub fn draw_subchip_displays(
 	geo: &mut SceneGeometry,
 	chip_centre: Vec2,
 	chip_size: Vec2,
+	owner_sub_chips: &[SubChipDescription],
 	displays: &[DisplayDescription],
-	resolve: impl Fn(i32) -> Option<&'a ChipDescription>,
+	library: &ChipLibrary,
 	pin_state: &dyn PinStateLookup,
 	chip_colour: Rgba,
 	mark_out_of_bounds: bool,
@@ -163,59 +226,85 @@ pub fn draw_subchip_displays<'a>(
 	let clip = ClipRect::from_centre_size(chip_centre, chip_size);
 
 	for display in displays {
-		let Some(desc) = resolve(display.sub_chip_id) else { continue };
-		let Some(base) = display_base_size(desc.chip_type) else { continue };
+		let Some(desc) = resolve_sub_chip_id(owner_sub_chips, display.sub_chip_id, library) else { continue };
+		let origin = chip_centre + display.position;
 
-		let centre = chip_centre + display.position;
-		let bounds_size = base * display.scale;
+		// The backing/border/out-of-bounds rects follow the *painted*
+		// extent: builtin types fill their base-size rect about the entry
+		// position; a custom entry's content unions wherever its cascade
+		// actually lands (which may be off-centre from the entry itself).
+		let (backing_centre, bounds_size, paint_scale) = match desc.chip_type {
+			ChipType::Custom => {
+				let Some((offset, size)) = cascade_bounds(desc, display.scale, library, 0) else { continue };
+				(origin + offset, size, display.scale)
+			}
+			t => {
+				let Some(base) = display_base_size(t) else { continue };
+				(origin, base * display.scale, base.x * display.scale)
+			}
+		};
 
 		// Backing + border first, so the clipped content drawn next lands
 		// on top (mirrors the original's reserved-quad ordering).
-		clip.add_rect(geo, centre, bounds_size + Vec2::splat(0.03), display_border_col(chip_colour));
-		clip.add_rect(geo, centre, bounds_size, theme::STATE_DISCONNECTED_COL);
+		clip.add_rect(geo, backing_centre, bounds_size + Vec2::splat(0.03), display_border_col(chip_colour));
+		clip.add_rect(geo, backing_centre, bounds_size, theme::STATE_DISCONNECTED_COL);
 
-		// The painters take the display's FINAL world footprint as their
-		// `scale` (the originals hand them `scaleWorld` directly), and
-		// `base` encodes each type's scale-1 content size -- so the two
-		// must agree, or e.g. an LED tiles far past its own backing/hit
-		// rect (its base being well under 1).
-		draw_display_node(geo, clip, desc, display.sub_chip_id, centre, bounds_size.x, &resolve, pin_state);
+		draw_display_node(geo, clip, desc, display.sub_chip_id, origin, paint_scale, library, pin_state, 0);
 
-		if mark_out_of_bounds && !clip.contains_rect(centre, bounds_size) {
-			geo.add_rect(centre, bounds_size, OUT_OF_BOUNDS_COL);
+		if mark_out_of_bounds && !clip.contains_rect(backing_centre, bounds_size) {
+			geo.add_rect(backing_centre, bounds_size, OUT_OF_BOUNDS_COL);
 		}
 	}
 }
 
+/// Resolves a top-level display entry against an explicit sub-chip list
+/// (callers like the customize ghost pass a list without a whole host
+/// description at hand).
+fn resolve_sub_chip_id<'a>(owner_sub_chips: &[SubChipDescription], sub_chip_id: i32, library: &'a ChipLibrary) -> Option<&'a ChipDescription> {
+	owner_sub_chips.iter().find(|s| s.id == sub_chip_id).and_then(|s| library.try_get(&s.name))
+}
+
 /// Draws one display node's content -- recursing through custom chips'
-/// own embedded displays, descending one sim scope per level.
+/// own embedded displays (the cascade), descending one sim scope per
+/// level. `scale` is the node's composed world multiplier: leaf painters
+/// turn it into their final footprint via each child type's base size,
+/// while custom children keep composing it.
 #[allow(clippy::too_many_arguments)]
-fn draw_display_node<'a>(
+fn draw_display_node(
 	geo: &mut SceneGeometry,
 	clip: ClipRect,
 	desc: &ChipDescription,
 	owner_id: i32,
 	centre: Vec2,
 	scale: f32,
-	resolve: &impl Fn(i32) -> Option<&'a ChipDescription>,
+	library: &ChipLibrary,
 	pin_state: &dyn PinStateLookup,
+	depth: u32,
 ) {
 	match desc.chip_type {
 		ChipType::Custom => {
+			if depth >= MAX_CASCADE_DEPTH {
+				return;
+			}
 			// The child displays' subchip ids live inside this node's own
 			// scope; positions/scales are relative to it.
 			let child_pin_state: Box<dyn PinStateLookup> = pin_state.enter_scope(owner_id).unwrap_or_else(|| Box::new(AllLow));
 			for child in &desc.displays {
-				let Some(child_desc) = resolve(child.sub_chip_id) else { continue };
+				let Some(child_desc) = resolve_sub_chip(desc, child.sub_chip_id, library) else { continue };
+				let child_scale = match child_desc.chip_type {
+					ChipType::Custom => child.scale * scale,
+					t => display_base_size(t).map_or(child.scale * scale, |base| base.x * child.scale * scale),
+				};
 				draw_display_node(
 					geo,
 					clip,
 					child_desc,
 					child.sub_chip_id,
 					centre + child.position * scale,
-					child.scale * scale,
-					resolve,
+					child_scale,
+					library,
 					&*child_pin_state,
+					depth + 1,
 				);
 			}
 		}
@@ -386,31 +475,64 @@ mod tests {
 		assert!(!is_display_type(ChipType::Clock));
 	}
 
-	/// Builds a resolver closure bound to `desc`'s real borrow region --
-	/// a plain `move` closure returning references to its own captures
-	/// trips the borrow checker's HRTB inference.
-	fn resolves_to<'a>(desc: &'a ChipDescription, id: i32) -> impl Fn(i32) -> Option<&'a ChipDescription> {
-		move |q: i32| (q == id).then_some(desc)
+	/// Library fixture keyed by name plus a host whose sub-chip list
+	/// references them -- the shape every draw call resolves through.
+	struct Fixture {
+		library: ChipLibrary,
+		host: ChipDescription,
+	}
+
+	fn fixture(chips: &[ChipDescription], host_subs: &[(&str, i32)]) -> Fixture {
+		let mut library = ChipLibrary::new();
+		for desc in chips {
+			library.add(desc.clone());
+		}
+		let mut host = ChipDescription::new("HOST", ChipType::Custom);
+		for (name, id) in host_subs {
+			host.sub_chips.push(SubChipDescription {
+				name: (*name).into(),
+				id: *id,
+				internal_data: None,
+				position: Vec2::ZERO,
+				label: None,
+				pin_colour_info: vec![],
+			});
+		}
+		Fixture { library, host }
+	}
+
+	fn draws_into(fixture: &Fixture, chip_size: Vec2, displays: &[DisplayDescription], out_of_bounds: bool) -> SceneGeometry {
+		let mut geo = SceneGeometry::default();
+		draw_subchip_displays(
+			&mut geo,
+			Vec2::ZERO,
+			chip_size,
+			&fixture.host.sub_chips,
+			displays,
+			&fixture.library,
+			&FixedState { pins: HashMap::new(), internal: None },
+			theme::CHIP_BODY_COL,
+			out_of_bounds,
+		);
+		geo
+	}
+
+	fn colours_present(geo: &SceneGeometry) -> std::collections::HashSet<[u32; 4]> {
+		geo.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect()
 	}
 
 	#[test]
 	fn out_of_bounds_display_gets_red_flag_inside_body_does_not() {
 		let seg = seg_desc();
-		let resolve = resolves_to(&seg, 5);
+		let f = fixture(&[seg], &[("7Seg", 5)]);
 
 		// Display fully outside the body.
-		let outside = [DisplayDescription::new(5, Vec2::new(50.0, 50.0), 1.0)];
-		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(2.0), &outside, &resolve, &AllLow, theme::CHIP_BODY_COL, true);
-		let colours: std::collections::HashSet<_> = geo.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect();
-		assert!(colours.contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "sticking-out display must be flagged red");
+		let geo = draws_into(&f, Vec2::splat(2.0), &[DisplayDescription::new(5, Vec2::new(50.0, 50.0), 1.0)], true);
+		assert!(colours_present(&geo).contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "sticking-out display must be flagged red");
 
 		// Same display centred well inside the body.
-		let inside = [DisplayDescription::new(5, Vec2::ZERO, 0.5)];
-		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(4.0), &inside, &resolve, &AllLow, theme::CHIP_BODY_COL, true);
-		let colours: std::collections::HashSet<_> = geo.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect();
-		assert!(!colours.contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "fitting display must not be flagged red");
+		let geo = draws_into(&f, Vec2::splat(4.0), &[DisplayDescription::new(5, Vec2::ZERO, 0.5)], true);
+		assert!(!colours_present(&geo).contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "fitting display must not be flagged red");
 	}
 
 	#[test]
@@ -418,23 +540,14 @@ mod tests {
 		// A 1x1 LED pushed halfway past the body edge: every vertex of the
 		// drawn content must sit within the body rect.
 		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let f = fixture(&[led], &[("LED", 3)]);
 		let host_size = Vec2::splat(1.0);
 		let displays = [DisplayDescription::new(3, Vec2::new(1.25, 0.0), 1.0)];
 
-		let mut geo = SceneGeometry::default();
 		// Out-of-bounds flag off: its red quad deliberately covers the
 		// display's *full* extent (it must stay visible past the body edge),
 		// so it isn't subject to the clipping under test here.
-		draw_subchip_displays(
-			&mut geo,
-			Vec2::ZERO,
-			host_size,
-			&displays,
-			resolves_to(&led, 3),
-			&FixedState { pins: HashMap::new(), internal: None },
-			theme::CHIP_BODY_COL,
-			false,
-		);
+		let geo = draws_into(&f, host_size, &displays, false);
 
 		let clip = ClipRect::from_centre_size(Vec2::ZERO, host_size);
 		for v in &geo.triangles {
@@ -446,12 +559,53 @@ mod tests {
 	#[test]
 	fn non_display_and_unresolvable_ids_are_skipped() {
 		let nand = ChipDescription::new("NAND", ChipType::Nand);
+		let f = fixture(&[nand], &[("NAND", 1), ("GHOST", 99)]);
 		let displays = [DisplayDescription::new(1, Vec2::ZERO, 1.0), DisplayDescription::new(99, Vec2::ZERO, 1.0)];
 
-		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(4.0), &displays, resolves_to(&nand, 1), &AllLow, theme::CHIP_BODY_COL, true);
-
+		let geo = draws_into(&f, Vec2::splat(4.0), &displays, true);
 		assert_eq!(rects_drawn(&geo), 0, "neither entry may produce geometry");
+	}
+
+	#[test]
+	fn empty_displays_draw_nothing_at_all() {
+		let f = fixture(&[], &[]);
+		let geo = draws_into(&f, Vec2::splat(1.0), &[], true);
+		assert!(geo.triangles.is_empty());
+	}
+
+	#[test]
+	fn rgb_pixel_content_reads_internal_buffer_with_packed_nibbles() {
+		let rgb = rgb_desc();
+		let mut internal = vec![0u32; 256];
+		internal[0] = 0xF; // full red at pixel (0, 0)
+
+		let mut library = ChipLibrary::new();
+		library.add(rgb.clone());
+		let mut host = ChipDescription::new("HOST", ChipType::Custom);
+		host.sub_chips.push(SubChipDescription {
+			name: "RGB".into(),
+			id: 2,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+
+		let displays = [DisplayDescription::new(2, Vec2::ZERO, 2.0)];
+		let mut geo = SceneGeometry::default();
+		draw_subchip_displays(
+			&mut geo,
+			Vec2::ZERO,
+			Vec2::splat(8.0),
+			&host.sub_chips,
+			&displays,
+			&library,
+			&FixedState { pins: HashMap::new(), internal: Some(internal) },
+			theme::CHIP_BODY_COL,
+			false,
+		);
+
+		assert!(colours_present(&geo).contains(&[1.0f32, 0.0, 0.0, 1.0].map(f32::to_bits)), "the written pixel must decode to full red");
 	}
 
 	/// The painted LED content must occupy exactly its layout rect
@@ -462,19 +616,9 @@ mod tests {
 	#[test]
 	fn embedded_led_paints_exactly_its_layout_rect() {
 		let led = ChipDescription::new("LED", ChipType::DisplayLed);
-		let displays = [DisplayDescription::new(3, Vec2::ZERO, 2.0)];
+		let f = fixture(&[led], &[("LED", 3)]);
 
-		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(
-			&mut geo,
-			Vec2::ZERO,
-			Vec2::splat(10.0),
-			&displays,
-			resolves_to(&led, 3),
-			&FixedState { pins: HashMap::new(), internal: None },
-			theme::CHIP_BODY_COL,
-			false,
-		);
+		let geo = draws_into(&f, Vec2::splat(10.0), &[DisplayDescription::new(3, Vec2::ZERO, 2.0)], false);
 
 		let max_extent = geo.triangles.iter().fold(0.0f32, |m, v| m.max(v.pos.x.abs()).max(v.pos.y.abs()));
 		// Widest quad is the border (content + 0.03 total), centred.
@@ -482,42 +626,95 @@ mod tests {
 		assert!((max_extent - expected_half).abs() < 1e-4, "content half-extent must be {expected_half}, got {max_extent}");
 	}
 
+	/// The cascade: placing a custom chip that carries its own embedded
+	/// LED merges that LED into the host -- its painted tile lands at
+	/// `host entry position + child position` with sizes composing, and
+	/// the whole union gets one backing (mirroring `DrawDisplay`'s
+	/// `ChildDisplays` recursion).
 	#[test]
-	fn empty_displays_draw_nothing_at_all() {
-		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(
-			&mut geo,
-			Vec2::ZERO,
-			Vec2::splat(1.0),
-			&[],
-			|_| unreachable!("resolver must not be consulted when there are no displays"),
-			&AllLow,
-			theme::CHIP_BODY_COL,
-			true,
-		);
-		assert!(geo.triangles.is_empty());
+	fn custom_display_entry_cascades_its_own_displays() {
+		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let mut panel = ChipDescription::new("PANEL", ChipType::Custom);
+		panel.sub_chips.push(SubChipDescription {
+			name: "LED".into(),
+			id: 7,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		panel.displays.push(DisplayDescription::new(7, Vec2::new(0.25, -0.25), 2.0));
+
+		// HOST holds PANEL as a subchip and places it as a display.
+		let mut f = fixture(&[led, panel], &[("PANEL", 9)]);
+		f.host.displays.push(DisplayDescription::new(9, Vec2::new(1.0, 0.5), 1.0));
+
+		let geo = draws_into(&f, Vec2::splat(6.0), &f.host.displays, true);
+
+		// The cascaded LED tile is base(0.1875) * panel-entry scale 1 *
+		// inner scale 2 = 0.375 wide, centred at (1.0, 0.5) + (0.25,-0.25).
+		let centre = Vec2::new(1.25, 0.25);
+		let near = |p: Vec2| (p - centre).magnitude() < 0.5;
+		let lit_vertices = geo.triangles.iter().filter(|v| near(v.pos)).count();
+		assert!(lit_vertices > 0, "the nested LED's tiles must land at the composed position");
+
+		// And the cascade's bounds drive the red out-of-bounds flag: push
+		// the entry mostly out of a small body -- flagged.
+		let small = [DisplayDescription::new(9, Vec2::new(2.9, 2.9), 1.0)];
+		let geo = draws_into(&f, Vec2::splat(1.0), &small, true);
+		assert!(colours_present(&geo).contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "a sticking-out cascade gets the red flag");
 	}
 
+	/// A custom display entry whose target carries nothing drawable draws
+	/// no geometry at all (no backing for an empty union).
 	#[test]
-	fn rgb_pixel_content_reads_internal_buffer_with_packed_nibbles() {
-		let rgb = rgb_desc();
-		let mut internal = vec![0u32; 256];
-		internal[0] = 0xF; // full red at pixel (0, 0)
+	fn empty_custom_display_entry_draws_nothing() {
+		let mut panel = ChipDescription::new("PANEL", ChipType::Custom);
+		panel.sub_chips.push(SubChipDescription {
+			name: "X".into(),
+			id: 1,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		let f = fixture(&[panel], &[("PANEL", 2)]);
 
-		let displays = [DisplayDescription::new(2, Vec2::ZERO, 2.0)];
-		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(
-			&mut geo,
-			Vec2::ZERO,
-			Vec2::splat(4.0),
-			&displays,
-			resolves_to(&rgb, 2),
-			&FixedState { pins: HashMap::new(), internal: Some(internal) },
-			theme::CHIP_BODY_COL,
-			false,
-		);
+		let geo = draws_into(&f, Vec2::splat(4.0), &[DisplayDescription::new(2, Vec2::ZERO, 1.0)], true);
+		assert_eq!(rects_drawn(&geo), 0, "an empty cascade has nothing to back or draw");
+	}
 
-		let colours: std::collections::HashSet<_> = geo.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect();
-		assert!(colours.contains(&[1.0f32, 0.0, 0.0, 1.0].map(f32::to_bits)), "the written pixel must decode to full red");
+	/// A hand-edited save could make a chip's display point back at
+	/// itself; the depth guard must keep drawing/bounds from recursing
+	/// forever. A real LED sits beside the cycle so there's genuine
+	/// content to draw -- this test passing at all is the assertion (an
+	/// unguarded walk would blow the stack).
+	#[test]
+	fn cyclic_cascade_is_cut_off_not_hung() {
+		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let mut loopy = ChipDescription::new("LOOPY", ChipType::Custom);
+		loopy.sub_chips.push(SubChipDescription {
+			name: "LOOPY".into(),
+			id: 1,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		loopy.sub_chips.push(SubChipDescription {
+			name: "LED".into(),
+			id: 2,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		loopy.displays.push(DisplayDescription::new(2, Vec2::new(0.125, 0.0), 1.0));
+		loopy.displays.push(DisplayDescription::new(1, Vec2::new(0.25, 0.0), 1.0));
+		let mut f = fixture(&[led, loopy], &[("LOOPY", 1)]);
+		f.host.displays.push(DisplayDescription::new(1, Vec2::ZERO, 1.0));
+
+		let geo = draws_into(&f, Vec2::splat(20.0), &f.host.displays, false);
+		assert!(rects_drawn(&geo) > 0, "the real content beside the cycle still backs and draws");
 	}
 }

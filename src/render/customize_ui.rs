@@ -66,8 +66,10 @@ impl CustomizeInteraction {
 }
 
 /// One row of the customize workspace's DISPLAYS list: a subchip of the
-/// chip being customized whose own type can be shown as an embedded
-/// display (`scene::displays::is_display_type`).
+/// chip being customized that can be shown as an embedded display -- one
+/// of the four builtin display types, or a custom chip carrying displays
+/// of its own (whose whole cascade then merges into this chip; see
+/// `scene::displays::can_be_embedded_display`).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DisplayListEntry {
 	pub(crate) sub_chip_id: i32,
@@ -79,7 +81,7 @@ pub(crate) struct DisplayListEntry {
 	pub(crate) placed: bool,
 }
 
-/// Enumerates the DISPLAYS-list rows for `draft`: every display-type
+/// Enumerates the DISPLAYS-list rows for `draft`: every display-carrying
 /// subchip, in reading order (x then y, mirroring the original's
 /// `OrderBy(Position.x).ThenBy(Position.y)`).
 pub(crate) fn display_entries(draft: &ChipDescription, library: &ChipLibrary) -> Vec<DisplayListEntry> {
@@ -88,7 +90,7 @@ pub(crate) fn display_entries(draft: &ChipDescription, library: &ChipLibrary) ->
 		.iter()
 		.filter_map(|sub| {
 			let desc = library.try_get(&sub.name)?;
-			displays::is_display_type(desc.chip_type).then_some((sub, desc.chip_type))
+			displays::can_be_embedded_display(desc).then_some((sub, desc.chip_type))
 		})
 		.collect();
 	subs.sort_by(|(a, _), (b, _)| a.position.x.total_cmp(&b.position.x).then(a.position.y.total_cmp(&b.position.y)));
@@ -375,22 +377,32 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 
 	// Embedded displays (clipped to the body; sticking-out ones get the
 	// red overlay flag from the shared painter).
-	let resolve = |id: i32| ctx.draft.sub_chips.iter().find(|s| s.id == id).and_then(|s| ctx.library.try_get(&s.name));
-	displays::draw_subchip_displays(&mut world, Vec2::ZERO, size, &ctx.draft.displays, resolve, ctx.pin_state, body_colour, true);
+	displays::draw_subchip_displays(
+		&mut world,
+		Vec2::ZERO,
+		size,
+		&ctx.draft.sub_chips,
+		&ctx.draft.displays,
+		ctx.library,
+		ctx.pin_state,
+		body_colour,
+		true,
+	);
 
 	append_world_to_frame(&mut frame.geometry, &world, centre_px, px_per_unit, ui.vh);
 
 	// Placement ghost, following the cursor at its would-be scale.
 	if let CustomizeInteraction::PlacingDisplay { sub_chip_id } = ctx.interaction {
-		if let Some(desc) = resolve(sub_chip_id) {
+		if let Some(desc) = ctx.draft.sub_chips.iter().find(|s| s.id == sub_chip_id).and_then(|s| ctx.library.try_get(&s.name)) {
 			let mut ghost = SceneGeometry::default();
 			let cursor_world = Vec2::new((mouse.x - centre_px.x) / px_per_unit, -(mouse.y - centre_px.y) / px_per_unit);
 			displays::draw_subchip_displays(
 				&mut ghost,
 				cursor_world,
 				Vec2::splat(f32::MAX),
+				&ctx.draft.sub_chips,
 				&[DisplayDescription::new(sub_chip_id, Vec2::ZERO, default_display_scale(desc.chip_type))],
-				resolve,
+				ctx.library,
 				ctx.pin_state,
 				body_colour,
 				false,
@@ -446,15 +458,19 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 	// moving. Pushed back-to-front so the front-most display wins hits;
 	// suppressed mid-interaction (the click then commits instead).
 	let placed_rect = |display: &DisplayDescription, resolved: &ChipDescription| -> Option<(UiRect, UiRect)> {
-		let (centre, dsize) = displays::display_world_rect(Vec2::ZERO, *display, resolved.chip_type)?;
-		let tl = map(centre + Vec2::new(-dsize.x / 2.0, dsize.y / 2.0));
-		let br = map(centre + Vec2::new(dsize.x / 2.0, -dsize.y / 2.0));
+		// Follows the painted extent (custom cascades included), so grab
+		// and scale hotspots always sit exactly on what's drawn.
+		let (offset, dsize) = displays::display_entry_bounds(display, resolved, ctx.library)?;
+		let tl = map(offset + Vec2::new(-dsize.x / 2.0, dsize.y / 2.0));
+		let br = map(offset + Vec2::new(dsize.x / 2.0, -dsize.y / 2.0));
 		Some((rect_from_corners(tl, br), UiRect::new(br.x - 11.0, br.y - 11.0, 11.0, 11.0)))
 	};
 
 	if !ctx.interaction.is_active() {
 		for (i, display) in ctx.draft.displays.iter().enumerate().rev() {
-			let Some(resolved) = resolve(display.sub_chip_id) else { continue };
+			let Some(resolved) = ctx.draft.sub_chips.iter().find(|s| s.id == display.sub_chip_id).and_then(|s| ctx.library.try_get(&s.name)) else {
+				continue;
+			};
 			let Some((drect, scale_corner)) = placed_rect(display, resolved) else { continue };
 			if drect.contains(mouse) {
 				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 0.8, 0.25, 1.0]);
@@ -469,7 +485,8 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 			_ => None,
 		};
 		if let Some(i) = carried.and_then(|i| ctx.draft.displays.get(i)) {
-			if let Some(resolved) = resolve(i.sub_chip_id) {
+			let resolved = ctx.draft.sub_chips.iter().find(|s| s.id == i.sub_chip_id).and_then(|s| ctx.library.try_get(&s.name));
+			if let Some(resolved) = resolved {
 				if let Some((drect, _)) = placed_rect(i, resolved) {
 					draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 1.0, 1.0, 1.0]);
 				}
@@ -610,6 +627,46 @@ mod tests {
 		let mut placed = draft.clone();
 		placed.displays.push(DisplayDescription::new(4, Vec2::ZERO, 1.0));
 		assert!(display_entries(&placed, &library)[0].placed);
+	}
+
+	/// A placed *custom* chip that carries displays of its own joins the
+	/// DISPLAYS list too (the cascade source); a custom chip without any
+	/// doesn't.
+	#[test]
+	fn display_entries_lists_custom_chips_that_carry_displays() {
+		let mut draft = sample_draft(); // subchips: NAND (id 1), 7Seg (id 4)
+		draft.displays.clear();
+
+		let mut carrying = ChipDescription::new("CARRYING", ChipType::Custom);
+		carrying.displays.push(DisplayDescription::new(99, Vec2::ZERO, 1.0));
+		let plain = ChipDescription::new("PLAIN", ChipType::Custom);
+
+		let mut library = lib_with_seg();
+		library.add(carrying);
+		library.add(plain);
+		draft.sub_chips.push(crate::SubChipDescription {
+			name: "CARRYING".into(),
+			id: 6,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		draft.sub_chips.push(crate::SubChipDescription {
+			name: "PLAIN".into(),
+			id: 7,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+
+		let entries = display_entries(&draft, &library);
+		let listed: Vec<_> = entries.iter().map(|e| e.sub_chip_id).collect();
+		assert!(listed.contains(&4), "builtin display still listed");
+		assert!(listed.contains(&6), "custom-with-displays listed as a cascade source");
+		assert!(!listed.contains(&7), "display-less custom not listed");
+		assert_eq!(entries.iter().find(|e| e.sub_chip_id == 6).unwrap().chip_type, ChipType::Custom);
 	}
 
 	#[test]
