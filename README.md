@@ -6,6 +6,7 @@ A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.c
 
 - **Project picker → chip viewer** in a single window: open an existing project or create a new one, then edit its chips.
 - **Built-in components**: NAND gates, clocks, pulses, tri-state buffers, RAM/ROM, bit merge/split converters, 7-segment / RGB / dot / LED displays, buses, buzzers, and keyboard-driven input chips (`KEY`, `MOD KEYS`).
+- **Buses**: placing a `BUS` chip places its linked terminus partner with it; the pair wires together like a wire passing through, other wires can tap off anywhere along a bus, and any number of inputs (and outputs) can be wired into it -- everything merges at the origin.
 - **Buzzer audio**: buzzers drive a 256-slot frequency table through a smoothed square-wave mix played on the real audio device (silently skipped when none is available).
 - **Custom chips**: save any circuit as a chip and nest it inside other circuits, just like the original.
 - **Chip customization** (save popup → *Customize*): name placement (middle/top/hidden), body colour (palette + hex field), corner-drag resizing previewed live with the chip's own edge pins for scale, and embedded display surfaces you place, move, scale and remove right on the chip body — content clips at the chip edge, and any display that doesn't fully fit is flagged in red. Everything round-trips through the original's standard `Displays` save field.

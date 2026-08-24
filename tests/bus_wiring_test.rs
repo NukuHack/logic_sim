@@ -158,6 +158,53 @@ fn corresponding_terminus_maps_each_bus_width_and_nothing_else() {
 	assert_eq!(ChipType::BusTerminus4Bit.corresponding_bus_terminus(), None, "a terminus has no further pair");
 }
 
+/// The electrical payoff of "wiring into a bus wire": two NAND outputs
+/// completed onto the bus wire both merge into the origin's hidden input
+/// (via `TargetPin_BusCorrected`), and the terminus side reads the result.
+/// Only deterministic driver states are asserted (the sim resolves
+/// conflicting drivers randomly, mirroring the original).
+#[test]
+fn simulator_feeds_multiple_inputs_into_a_bus_wire_through_the_origin() {
+	let (library, mut chip) = fixture();
+
+	// Two NAND drivers (ids 8 and 9) whose outputs complete ONTO the bus
+	// wire -- exactly what the editor builds for an output-onto-bus-wire
+	// completion: target bus-corrected to the origin's input (pin 0).
+	for id in [8, 9] {
+		chip.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		chip.wires.push(WireDescription::new_tapped_target(PinAddress::new(id, 2), PinAddress::new(5, 0), 0, 0, Vec2::ZERO));
+	}
+
+	let mut sim = logic_sim::Simulator::build(&chip, &library);
+
+	// Drive both NANDs so their outputs sit HIGH deterministically
+	// (NAND(IN B=0, IN A=anything) = 1): identical states on the shared
+	// net, so the random conflict resolution can't flip the outcome.
+	let drive = |sim: &mut logic_sim::Simulator, audio: &mut logic_sim::audio::SimAudio| {
+		let mut inputs = Vec::new();
+		for id in [8u32, 9] {
+			inputs.push(logic_sim::ExternalInput { address: PinAddress::new(id as i32, 0), state: 0 }); // IN B low
+			inputs.push(logic_sim::ExternalInput { address: PinAddress::new(id as i32, 1), state: 1 });
+		}
+		sim.run_simulation_step(&inputs, audio);
+	};
+
+	let mut audio = logic_sim::audio::SimAudio::new();
+	for _ in 0..3 {
+		drive(&mut sim, &mut audio);
+	}
+
+	let terminus_input = sim.find_pin(sim.root(), PinAddress::new(10, 0)).expect("terminus input pin exists");
+	assert_eq!(sim.pin(terminus_input).state & 1, 1, "merged bus signal reaches the terminus");
+}
+
 #[test]
 fn tapped_target_wires_round_trip_through_the_save_format() {
 	let mut wire = WireDescription::new_tapped_target(PinAddress::new(1, 0), PinAddress::new(2, 1), 0, 2, Vec2::new(3.0, 4.0));

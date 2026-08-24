@@ -99,7 +99,9 @@ fn try_start_pending_wire(v: &mut ViewerState, world_pos: Vec2) -> bool {
 ///  - landing on an existing wire *completes into it* ("wiring into the
 ///    wire"): inputs may tap into any wire, outputs only into bus wires,
 ///    and the electrical endpoints resolve from the tapped wire
-///    (bus-corrected on the target side) -- see `viewer::bus_wiring`;
+///    (bus-corrected on the output-start side) -- see `viewer::bus_wiring`.
+///    A placement that itself started on a wire ignores wire clicks instead
+///    (wire-to-wire is ambiguous);
 ///  - landing on a component body is ignored outright (deliberately *not*
 ///    a "turn" -- see this method's caller's doc comment on the
 ///    empty-space branch below);
@@ -172,23 +174,17 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 
 	let max_dist = wire_click_tolerance(&v.camera);
 	let on_component = scene::hit_test_sub_chip(&placed, world_pos).is_some();
+	let on_wire = scene::closest_wire_hit(root_desc, &v.library, world_pos, max_dist);
 
-	// Completing ONTO an existing wire ("wiring into the wire"). Only wires
-	// started from a real pin get here: a wire-tap start completing onto
-	// another wire is rejected inside `resolve_completion_on_wire`.
+	// Completing ONTO an existing wire ("wiring into the wire"). Only
+	// placements started from a real pin complete here; a wire-tap start
+	// landing on another wire falls through to the ignore below (the
+	// wire-to-wire case `resolve_completion_on_wire` rejects as ambiguous).
 	if !on_component && v.pending_wire.as_ref().is_some_and(|p| matches!(p.start, PendingWireEnd::Pin { .. })) {
 		let pending = v.pending_wire.as_ref().expect("checked above");
 		let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else { unreachable!("branch guarantees a pin start") };
-		if let Some(tap) = scene::closest_wire_hit(root_desc, &v.library, world_pos, max_dist) {
-			match bus_wiring::resolve_completion_on_wire(
-				root_desc,
-				&v.library,
-				tap.wire_index,
-				matches!(pending.start, PendingWireEnd::WireTap { .. }),
-				pending.start.is_source(),
-				owner_id,
-				pin_id,
-			) {
+		if let Some(tap) = on_wire {
+			match bus_wiring::resolve_completion_on_wire(root_desc, &v.library, tap.wire_index, false, pending.start.is_source(), owner_id, pin_id) {
 				Ok((source, target)) => {
 					let pending = v.pending_wire.take().expect("checked above");
 					let mut wire = WireDescription::new_tapped_target(source, target, tap.wire_index as i32, tap.segment_index, tap.point);
@@ -209,7 +205,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		}
 	}
 
-	if on_component {
+	if on_component || on_wire.is_some() {
 		// Neither a pin nor empty space -- ignored outright (not a "turn"), so the placement just
 		// stays exactly as it was and the player can click somewhere more useful instead.
 		return;
@@ -575,5 +571,55 @@ mod tests {
 		chip.input_pins.push(pin);
 
 		assert_eq!(next_component_id(&chip), 8);
+	}
+
+	// ---- Bus pairing: placement + paired deletion (white-box: drives the
+	// pub(crate) placement flow on a real ViewerState) ----
+
+	fn viewer_with_builtins() -> ViewerState {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	#[test]
+	fn placing_a_bus_places_its_linked_terminus_pair() {
+		let mut v = viewer_with_builtins();
+		v.pending_place = Some("BUS-4".to_string());
+		let mut status = None;
+
+		try_place_pending_chip(&mut v, Vec2::new(10.0, 10.0), &mut status);
+
+		assert_eq!(status, None);
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.sub_chips.len(), 2, "origin + terminus");
+		assert_eq!(chip.sub_chips[0].name, "BUS-4");
+		assert_eq!(chip.sub_chips[1].name, "BUS-TERMINUS-4");
+
+		let (origin_id, terminus_id) = (chip.sub_chips[0].id, chip.sub_chips[1].id);
+		assert_eq!(terminus_id, origin_id + 1, "pair ids are consecutive");
+		assert_eq!(chip.sub_chips[0].internal_data, Some(vec![terminus_id as u32]), "origin links to terminus");
+		assert_eq!(chip.sub_chips[1].internal_data, Some(vec![origin_id as u32]), "terminus links back to origin");
+		assert!(bus_wiring::bus_pair_linked(chip, &v.library, origin_id, terminus_id), "the placed pair satisfies the linked-pair check");
+	}
+
+	#[test]
+	fn deleting_one_bus_half_takes_the_other_and_their_wires() {
+		let mut v = viewer_with_builtins();
+		v.pending_place = Some("BUS-4".to_string());
+		try_place_pending_chip(&mut v, Vec2::ZERO, &mut None);
+
+		// Wire something across the pair so deletion must cascade it away.
+		let chip = v.library.get_mut("ROOT");
+		let (origin_id, terminus_id) = (chip.sub_chips[0].id, chip.sub_chips[1].id);
+		chip.wires.push(WireDescription::new(PinAddress::new(origin_id, 1), PinAddress::new(terminus_id, 0)));
+		drop(chip);
+
+		delete_component(&mut v, origin_id);
+
+		let chip = v.library.get("ROOT");
+		assert!(chip.sub_chips.is_empty(), "both halves go together");
+		assert!(chip.wires.is_empty(), "wires attached to either half go too");
 	}
 }

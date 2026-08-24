@@ -215,4 +215,88 @@ mod tests {
 		let start_mid = Vec2::new((wire1_verts[0].pos.x + wire1_verts[5].pos.x) / 2.0, (wire1_verts[0].pos.y + wire1_verts[5].pos.y) / 2.0);
 		assert_eq!(start_mid, expected_tap_point);
 	}
+
+	/// Mirror of the source-tap test above for *target*-side taps
+	/// (`ToWireTarget` -- "wiring into a wire"): the drawn wire must END on
+	/// the tapped wire's segment rather than at its target pin's position.
+	#[test]
+	fn build_scene_draws_a_target_tapped_wire_ending_on_its_tap_point() {
+		let mut lib = ChipLibrary::new();
+		lib.add(nand_desc());
+
+		let mut chip = ChipDescription::new("TAP_TARGET_TEST", ChipType::Custom);
+		for id in [1, 2, 3] {
+			chip.sub_chips.push(SubChipDescription {
+				name: "NAND".into(),
+				id,
+				internal_data: None,
+				label: None,
+				position: Vec2::new(id as f32 * 4.0, 0.0),
+				pin_colour_info: Vec::new(),
+			});
+		}
+
+		let mut anchor = WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0));
+		anchor.points = vec![Vec2::new(2.0, 5.0)];
+		chip.wires.push(anchor);
+
+		// Runs from NAND3's output and lands ON anchor's first segment.
+		let mut tap = WireDescription::new_tapped_target(PinAddress::new(3, 0), PinAddress::new(2, 1), 0, 0, Vec2::new(1.0, 10.0));
+		tap.points = vec![Vec2::new(-2.0, -3.0)];
+		chip.wires.push(tap);
+
+		let placed = place_sub_chips(&chip, &lib);
+		let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+		let mut cache: WirePointCache = HashMap::new();
+		let wire_ctx = WireCtx { chip: &chip, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip.wires };
+		let anchor_src = wire_ctx.endpoint(0, false, &mut cache, 0).unwrap();
+		let anchor_bend = chip.wires[0].points[0];
+		let expected_tap_point = closest_point_on_segment(chip.wires[1].cached_target_point, anchor_src, anchor_bend);
+
+		let scene = super::super::build_scene(&chip, &lib, &AllLow, None);
+
+		// Both wires have one bend each (2 segments => 12 verts via
+		// `add_polyline`'s two quads), so the tap wire occupies [12..24].
+		// Within each quad the corners are [a+n, b+n, b-n, a+n, b-n, a-n]:
+		// verts 1 and 2 straddle `b`. The second quad's `b` is the end of
+		// the last segment -- the attachment point.
+		let last_quad = &scene.triangles[18..24];
+		let end_mid = Vec2::new((last_quad[1].pos.x + last_quad[2].pos.x) / 2.0, (last_quad[1].pos.y + last_quad[2].pos.y) / 2.0);
+		assert_eq!(end_mid, expected_tap_point);
+	}
+
+	/// Deleting a wire takes every wire tapping onto it with it --
+	/// regardless of which side they tap from -- and renumbers surviving
+	/// taps so they still point at the right anchors.
+	#[test]
+	fn delete_wire_cascades_to_target_side_taps_and_renumbers_survivors() {
+		let mut chip = ChipDescription::new("CASCADE", ChipType::Custom);
+		for id in [1, 2, 3] {
+			chip.sub_chips.push(SubChipDescription {
+				name: "NAND".into(),
+				id,
+				internal_data: None,
+				position: Vec2::ZERO,
+				label: None,
+				pin_colour_info: vec![],
+			});
+		}
+
+		// wire 0: NAND1 -> NAND2 (the deletion target)
+		chip.wires.push(WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0)));
+		// wire 1: taps onto wire 0 from its SOURCE side
+		let mut source_tap = WireDescription::new_tapped_source(PinAddress::new(1, 0), PinAddress::new(3, 1), 0, 0, Vec2::ZERO);
+		source_tap.points = vec![Vec2::new(1.0, 1.0)];
+		chip.wires.push(source_tap);
+		// wire 2: taps onto wire 0 from its TARGET side
+		chip.wires.push(WireDescription::new_tapped_target(PinAddress::new(3, 0), PinAddress::new(2, 1), 0, 0, Vec2::ZERO));
+		// wire 3: independent pin-to-pin wire
+		chip.wires.push(WireDescription::new(PinAddress::new(3, 0), PinAddress::new(3, 1)));
+
+		delete_wire(&mut chip, 0);
+
+		assert_eq!(chip.wires.len(), 1, "both tappers go with their anchor");
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(3, 0), "the independent survivor stays");
+		assert_eq!(chip.wires[0].connection_type, WireConnectionType::ToPins);
+	}
 }
