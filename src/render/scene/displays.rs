@@ -69,14 +69,22 @@ impl ClipRect {
 	}
 }
 
-/// Natural world-space footprint of one display at scale 1 (the shapes
-/// `DevSceneDrawer.DrawDisplay_*` produce for `scale == 1`): 7-segment is
-/// 1 x 1.75, RGB/dot/LED are square. `None` for chip types that can't be
-/// shown as an embedded display.
+/// Natural world-space footprint of one display at scale 1 -- chosen so
+/// **scale 1 reproduces the placed component's visible content exactly**
+/// (the brief for embedded displays): the originals' builtin display
+/// chips carry a self-display whose `Scale` equals their content width --
+/// 7-segment `1.0` (body `GridSize*10` minus insets), dot `1.5`
+/// (pin-stack height `1.75` minus `GridSize*2`), RGB `2.375`
+/// (`GridSize*21` body), LED `0.1875` (`0.25` body minus
+/// `GridSize*0.5`). Heights follow each painter's aspect (7-segment is
+/// 1 x 1.75; the rest square). `None` for chip types that can't be shown
+/// as an embedded display.
 pub fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
 	match chip_type {
 		ChipType::SevenSegmentDisplay => Some(Vec2::new(1.0, 1.75)),
-		ChipType::DisplayRgb | ChipType::DisplayDot | ChipType::DisplayLed => Some(Vec2::splat(1.0)),
+		ChipType::DisplayRgb => Some(Vec2::splat(2.375)),
+		ChipType::DisplayDot => Some(Vec2::splat(1.5)),
+		ChipType::DisplayLed => Some(Vec2::splat(0.1875)),
 		_ => None,
 	}
 }
@@ -119,7 +127,14 @@ pub(crate) fn draw_placed_displays(
 		}
 		let desc = sub.desc;
 		let resolve = move |id: i32| desc.sub_chips.iter().find(|s| s.id == id).and_then(|s| library.try_get(&s.name));
-		draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, resolve, pin_state, desc.colour, false);
+		// The displays' `(subchip id, pin id)` addresses live *inside this
+		// placed chip's own scope*, not the one this draw call was handed
+		// -- descend one level before resolving, or every pin reads
+		// unresolvable and nothing ever lights. Un-enterable scopes (e.g.
+		// static previews with no simulator) draw blank, mirroring the
+		// original's `sim == null` branch.
+		let scoped: Box<dyn PinStateLookup> = pin_state.enter_scope(sub.id).unwrap_or_else(|| Box::new(AllLow));
+		draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, resolve, scoped.as_ref(), desc.colour, false);
 	}
 }
 
@@ -354,8 +369,13 @@ mod tests {
 
 	#[test]
 	fn display_base_size_covers_only_display_types() {
+		// Scale-1 parity: these are the originals' builtin self-display
+		// content widths, so an embedded display at scale 1 matches its
+		// placed-component counterpart exactly.
 		assert_eq!(display_base_size(ChipType::SevenSegmentDisplay), Some(Vec2::new(1.0, 1.75)));
-		assert_eq!(display_base_size(ChipType::DisplayLed), Some(Vec2::splat(1.0)));
+		assert_eq!(display_base_size(ChipType::DisplayRgb), Some(Vec2::splat(2.375)));
+		assert_eq!(display_base_size(ChipType::DisplayDot), Some(Vec2::splat(1.5)));
+		assert_eq!(display_base_size(ChipType::DisplayLed), Some(Vec2::splat(0.1875)));
 		assert_eq!(display_base_size(ChipType::Nand), None);
 		assert!(is_display_type(ChipType::DisplayDot));
 		assert!(!is_display_type(ChipType::Clock));

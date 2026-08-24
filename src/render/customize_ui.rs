@@ -107,16 +107,13 @@ pub(crate) fn display_entries(draft: &ChipDescription, library: &ChipLibrary) ->
 		.collect()
 }
 
-/// Sensible starting world-size multiplier for a freshly-placed display
-/// of `chip_type`, so a dropped display lands readable without the user
-/// having to scale it first.
-pub(crate) fn default_display_scale(chip_type: ChipType) -> f32 {
-	match chip_type {
-		ChipType::SevenSegmentDisplay => 1.5,
-		ChipType::DisplayRgb => 2.5,
-		ChipType::DisplayDot => 1.75,
-		_ => 0.75,
-	}
+/// Starting world-size multiplier for a freshly-placed display: always
+/// 1, because [`displays::display_base_size`] already encodes each type's
+/// placed-component content footprint -- dropping a display lands it at
+/// exactly the size that chip renders at on the canvas, per the
+/// scale-1-parity rule.
+pub(crate) fn default_display_scale(_chip_type: ChipType) -> f32 {
+	1.0
 }
 
 /// Screen-pixel facts about the last-built customize frame, cached on
@@ -632,9 +629,9 @@ mod tests {
 	}
 
 	#[test]
-	fn default_display_scale_is_positive_for_every_placeable_display() {
+	fn default_display_scale_is_one_so_scale_matches_component_size() {
 		for t in [ChipType::SevenSegmentDisplay, ChipType::DisplayRgb, ChipType::DisplayDot, ChipType::DisplayLed] {
-			assert!(default_display_scale(t) > 0.0);
+			assert_eq!(default_display_scale(t), 1.0, "scale 1 must equal the placed component's content size");
 		}
 	}
 

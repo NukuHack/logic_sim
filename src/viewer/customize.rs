@@ -444,4 +444,82 @@ mod tests {
 		let host = ChipDescription::new("H", ChipType::Custom);
 		assert!(display_entries(&host, &lib).is_empty());
 	}
+
+	/// Full-pipeline check: with a driven input wired into an embedded
+	/// 7-segment, the customize layer's geometry must contain the lit
+	/// segment colour (not just the off palette) -- i.e. the preview reads
+	/// live simulator state, not a blank.
+	#[test]
+	fn customize_preview_lights_embedded_displays_from_live_sim_state() {
+		use crate::viewer::frame::build_viewer_stack;
+		use crate::viewer::state::{editor_action, Overlay, ViewerAction};
+		use crate::{register_all_builtins, render::ui_stack::LayerId};
+
+		let mut library = crate::ChipLibrary::new();
+		register_all_builtins(&mut library);
+
+		let mut panel = ChipDescription::new("Panel", crate::ChipType::Custom);
+		panel.input_pins.push(PinDescription::new("IN", 1, PinBitCount::Bit1));
+		panel.size = Vec2::new(3.0, 2.0);
+		panel.sub_chips.push(crate::SubChipDescription {
+			name: "7-SEGMENT".into(),
+			id: 4,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		panel.wires.push(crate::WireDescription::new(crate::PinAddress::new(1, 0), crate::PinAddress::new(4, 0)));
+		panel.displays.push(DisplayDescription::new(4, Vec2::new(0.5, 0.25), 1.0));
+		let sim = crate::Simulator::build(&panel, &library);
+		library.add(panel.clone());
+
+		let mut v = ViewerState {
+			project_name: String::new(),
+			library,
+			root_chip_name: "Panel".to_string(),
+			sim,
+			camera: crate::render::camera::Camera::new(Vec2::new(1280.0, 800.0)),
+			dragging: false,
+			last_cursor: Vec2::new(640.0, 400.0),
+			camera_fitted: true,
+			show_grid: false,
+			prefs: crate::ProjectDescription::default(),
+			overlays: Vec::new(),
+			search_query: String::new(),
+			overlay_text_input: String::new(),
+			overlay_key_choice: None,
+			naming_purpose: Default::default(),
+			key_select_purpose: Default::default(),
+			rom_editor: None,
+			customize: None,
+			stack: crate::render::ui_stack::UiStack::new(),
+			bottom_bar_scroll_x: 0.0,
+			bottom_bar_scroll_max: 0.0,
+			library_selection: crate::render::editor_ui::LibrarySelection::None,
+			library_creating_collection: false,
+			library_renaming_collection: false,
+			library_confirming_chip_delete: false,
+			library_confirming_collection_delete: false,
+			library_delete_message: String::new(),
+			bottom_bar_open_collection: None,
+			context_menu: None,
+			pending_wire: None,
+			pending_place: None,
+		};
+
+		// Drive the input high (what toggling a switch does), then open the
+		// customizer and build one frame of the real UI stack.
+		v.library.get_mut("Panel").input_pins[0].driven_state = 1;
+		open_customize(&mut v);
+		assert!(v.overlays.contains(&Overlay::CustomizeChip));
+
+		let stack = build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::new(900.0, 400.0));
+		let layer = stack.layers().iter().find(|l| l.id == LayerId::CustomizePanel).expect("customize layer built");
+		let _ = editor_action as fn(crate::render::editor_ui::EditorAction) -> ViewerAction;
+
+		let lit: std::collections::HashSet<_> = layer.geometry.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect();
+		let seg_on_a = theme::SEVEN_SEG_COLS[1].map(f32::to_bits);
+		assert!(lit.contains(&seg_on_a), "lit 7-segment colour must appear; got {} distinct colours", lit.len());
+	}
 }
