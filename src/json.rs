@@ -215,12 +215,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 		})
 		.collect();
 
-	desc.displays = raw
-		.displays
-		.iter()
-		.flatten()
-		.map(|d| DisplayDescription::new(d.id, d.position, d.scale))
-		.collect();
+	desc.displays = raw.displays.iter().flatten().map(|d| DisplayDescription::new(d.id, d.position, d.scale)).collect();
 
 	desc
 }
@@ -297,12 +292,7 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 		displays: if desc.displays.is_empty() {
 			None
 		} else {
-			Some(
-				desc.displays
-					.iter()
-					.map(|d| JsonDisplayDescription { id: d.sub_chip_id, position: d.position, scale: d.scale })
-					.collect(),
-			)
+			Some(desc.displays.iter().map(|d| JsonDisplayDescription { id: d.sub_chip_id, position: d.position, scale: d.scale }).collect())
 		},
 	};
 

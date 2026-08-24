@@ -127,6 +127,39 @@ pub enum EditorAction {
 	/// rename the chip -- moves its on-disk file to the typed name, no
 	/// copy left behind under the old name.
 	SaveChipRename,
+	/// Save-chip popup: open [`crate::render::customize_ui`]'s
+	/// customization workspace on top of the popup (mirrors
+	/// `ChipSaveMenu`'s always-offered "CUSTOMIZE" button).
+	OpenChipCustomize,
+	/// Customize workspace: discard every customization made this session
+	/// and drop back to the save-chip popup (the Escape path funnels into
+	/// the same handler).
+	CustomizeCancel,
+	/// Customize workspace: keep the edits -- written onto the library's
+	/// entry for the open chip -- and drop back to the save-chip popup,
+	/// mirroring `ChipCustomizationMenu`'s CONFIRM.
+	CustomizeConfirm,
+	/// Customize workspace: cycle `name_location` Centre -> Top -> Hidden,
+	/// re-clamping the body's minimum size afterwards (Hidden frees the
+	/// width the label reserved; see `layout::calculate_min_chip_size`).
+	CustomizeCycleNameLocation,
+	/// Customize workspace: set the body colour to palette swatch
+	/// `usize` (an index into `theme::COLORS`) and refresh the hex field.
+	CustomizePickColour(usize),
+	/// Customize preview: press on placed display `usize`'s body to pick
+	/// it up (click again inside the preview to drop, Delete removes it,
+	/// Escape puts it back).
+	CustomizeGrabDisplayMove(usize),
+	/// Customize preview: press near placed display `usize`'s scale corner
+	/// to resize it by dragging toward/away from its centre.
+	CustomizeGrabDisplayScale(usize),
+	/// Customize preview: press a corner bracket of the chip body to start
+	/// resizing from that corner (`usize` 0..4 = top-left, top-right,
+	/// bottom-left, bottom-right).
+	CustomizeResizeStart(usize),
+	/// Customize workspace: pick up a fresh display from the DISPLAYS list
+	/// row `usize` (only enabled while that subchip isn't already placed).
+	CustomizePlaceEntry(usize),
 }
 
 /// Hit-box of one clickable region of an [`EditorFrame`] -- see [`ui_kit::Button`].
@@ -896,12 +929,14 @@ pub enum SaveChipMode {
 /// identity (shown for context, e.g. "Saving: Full Adder"); `text` is
 /// the typed name field's contents; `mode` (see its own docs) picks
 /// which action buttons to show -- and, for `Replace`, colours it red
-/// since it's destructive to *some other* chip's save file.
+/// since it's destructive to *some other* chip's save file. Every mode
+/// also offers CUSTOMIZE (mirroring `ChipSaveMenu`'s button trio/quartet),
+/// which opens [`crate::render::customize_ui`]'s workspace on top.
 pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
-	let panel_w = 420.0;
-	let panel_h = 178.0;
+	let panel_w = 460.0;
+	let panel_h = 208.0;
 	let cx = vw / 2.0;
 	let cy = vh / 2.0;
 
@@ -927,34 +962,93 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		SaveChipMode::SaveAsOrRename => "Name changed -- keep both, or rename?",
 	};
 	if !hint.is_empty() {
-		add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 92.0), panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
+		add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 94.0), panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
 	}
 
 	let confirm_enabled = !text.trim().is_empty();
-	let button_y = panel_rect.y + panel_h - 46.0;
+	let button_y = panel_rect.y + panel_h - 96.0;
 	match mode {
 		SaveChipMode::Save => {
-			let confirm_rect = UiRect::new(cx - 186.0, button_y, 180.0, 36.0);
-			let cancel_rect = UiRect::new(cx + 6.0, button_y, 180.0, 36.0);
-			add_button(&mut frame, ui, confirm_rect, "Save", EditorAction::SaveChipConfirm, confirm_enabled);
-			add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
+			let w = (panel_w - 60.0 - 16.0) / 3.0;
+			add_button(&mut frame, ui, UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0), "Cancel", EditorAction::ClosePopup, true);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + w + 8.0, button_y, w, 36.0),
+				"Customize",
+				EditorAction::OpenChipCustomize,
+				true,
+			);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0),
+				"Save",
+				EditorAction::SaveChipConfirm,
+				confirm_enabled,
+			);
 		}
 		SaveChipMode::Replace => {
-			let confirm_rect = UiRect::new(cx - 186.0, button_y, 180.0, 36.0);
-			let cancel_rect = UiRect::new(cx + 6.0, button_y, 180.0, 36.0);
-			add_button_coloured(&mut frame, ui, confirm_rect, "Replace", EditorAction::SaveChipConfirm, confirm_enabled, [0.62, 0.18, 0.18, 1.0]);
-			add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
+			let w = (panel_w - 60.0 - 16.0) / 3.0;
+			add_button(&mut frame, ui, UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0), "Cancel", EditorAction::ClosePopup, true);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + w + 8.0, button_y, w, 36.0),
+				"Customize",
+				EditorAction::OpenChipCustomize,
+				true,
+			);
+			add_button_coloured(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0),
+				"Replace",
+				EditorAction::SaveChipConfirm,
+				confirm_enabled,
+				[0.62, 0.18, 0.18, 1.0],
+			);
 		}
 		SaveChipMode::SaveAsOrRename => {
-			let w = (panel_w - 60.0 - 16.0) / 3.0;
-			let save_as_rect = UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0);
-			let rename_rect = UiRect::new(save_as_rect.x + w + 8.0, button_y, w, 36.0);
-			let cancel_rect = UiRect::new(rename_rect.x + w + 8.0, button_y, w, 36.0);
-			add_button(&mut frame, ui, save_as_rect, "Save As", EditorAction::SaveChipSaveAs, confirm_enabled);
-			add_button(&mut frame, ui, rename_rect, "Rename", EditorAction::SaveChipRename, confirm_enabled);
-			add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
+			let w = (panel_w - 60.0 - 24.0) / 4.0;
+			add_button(&mut frame, ui, UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0), "Cancel", EditorAction::ClosePopup, true);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0), button_y, w, 36.0),
+				"Customize",
+				EditorAction::OpenChipCustomize,
+				true,
+			);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0),
+				"Save As",
+				EditorAction::SaveChipSaveAs,
+				confirm_enabled,
+			);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 3.0, button_y, w, 36.0),
+				"Rename",
+				EditorAction::SaveChipRename,
+				confirm_enabled,
+			);
 		}
 	}
+
+	// Small footer note so the customization affordance explains itself.
+	add_label(
+		&mut frame,
+		ui,
+		Vec2::new(cx, panel_rect.y + panel_h - 34.0),
+		panel_w - 40.0,
+		"Customize sets name position, colour, size and embedded displays before saving",
+		[0.6, 0.6, 0.65, 1.0],
+		12.5,
+	);
 
 	finish(frame, ui)
 }

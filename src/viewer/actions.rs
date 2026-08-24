@@ -4,6 +4,7 @@
 
 use crate::json::ChipCollection;
 use crate::render::editor_ui::{EditorAction, LibrarySelection};
+use crate::viewer::customize as customize_flow;
 use crate::viewer::library::{
 	chip_delete_confirm_message, delete_chip_from_library, delete_collection, move_selected_library_row, reset_library_popup_state,
 	sync_library_collections,
@@ -165,6 +166,15 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		EditorAction::SaveChipConfirm => confirm_save_chip_popup(v, paths, status),
 		EditorAction::SaveChipSaveAs => confirm_save_chip_as(v, paths, status),
 		EditorAction::SaveChipRename => confirm_save_chip_rename(v, paths, status),
+		EditorAction::OpenChipCustomize => customize_flow::open_customize(v),
+		EditorAction::CustomizeCancel => customize_flow::cancel_customize(v),
+		EditorAction::CustomizeConfirm => customize_flow::confirm_customize(v, status),
+		EditorAction::CustomizeCycleNameLocation => customize_flow::cycle_name_location(v),
+		EditorAction::CustomizePickColour(i) => customize_flow::pick_colour(v, i),
+		EditorAction::CustomizeGrabDisplayMove(i) => customize_flow::start_move_display(v, i),
+		EditorAction::CustomizeGrabDisplayScale(i) => customize_flow::start_scale_display(v, i),
+		EditorAction::CustomizeResizeStart(corner) => customize_flow::start_resize(v, corner),
+		EditorAction::CustomizePlaceEntry(entry) => customize_flow::place_list_entry(v, entry),
 	}
 }
 

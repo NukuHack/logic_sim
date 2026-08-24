@@ -4,7 +4,6 @@
 //! segment / RGB / dot / LED displays, key bindings).
 
 use crate::description::{ChipType, NameLocation};
-use crate::pin_state::LogicState;
 use crate::render::foundation::{point_in_rect, SceneGeometry, TextLabel};
 use crate::render::layout;
 use crate::render::scene::displays::{self, ClipRect};
@@ -128,6 +127,7 @@ fn draw_display_pixel_grid(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_sta
 mod tests {
 	use super::*;
 	use crate::description::ChipDescription;
+	use crate::pin_state::LogicState;
 	use crate::render::scene::test_support::nand_desc;
 
 	/// Minimal `PinStateLookup` test double for exercising the display

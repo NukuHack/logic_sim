@@ -107,14 +107,19 @@ fn display_border_col(chip_colour: Rgba) -> Rgba {
 /// subchip in `placed` whose description carries any (`mark_out_of_bounds`
 /// is deliberately off here -- the red flag is a customize-preview-only
 /// affordance, matching the original's `outOfBoundsDisplay` parameter).
-pub(crate) fn draw_placed_displays(geo: &mut SceneGeometry, placed: &[crate::render::scene::placed::PlacedSubChip], library: &crate::description::ChipLibrary, pin_state: &dyn PinStateLookup) {
+pub(crate) fn draw_placed_displays(
+	geo: &mut SceneGeometry,
+	placed: &[crate::render::scene::placed::PlacedSubChip],
+	library: &crate::description::ChipLibrary,
+	pin_state: &dyn PinStateLookup,
+) {
 	for sub in placed {
 		if sub.desc.displays.is_empty() {
 			continue;
 		}
 		let desc = sub.desc;
 		let resolve = move |id: i32| desc.sub_chips.iter().find(|s| s.id == id).and_then(|s| library.try_get(&s.name));
-		draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, &resolve, pin_state, desc.colour, false);
+		draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, resolve, pin_state, desc.colour, false);
 	}
 }
 
@@ -126,6 +131,7 @@ pub(crate) fn draw_placed_displays(geo: &mut SceneGeometry, placed: &[crate::ren
 /// around each display (alpha 0 falls back to the theme default). With
 /// `mark_out_of_bounds`, displays sticking out of the body are flagged
 /// with a translucent red quad over their full extent (customize preview).
+#[allow(clippy::too_many_arguments)] // one painter entry covering clip/colour/flag knobs
 pub fn draw_subchip_displays<'a>(
 	geo: &mut SceneGeometry,
 	chip_centre: Vec2,
@@ -163,6 +169,7 @@ pub fn draw_subchip_displays<'a>(
 
 /// Draws one display node's content -- recursing through custom chips'
 /// own embedded displays, descending one sim scope per level.
+#[allow(clippy::too_many_arguments)]
 fn draw_display_node<'a>(
 	geo: &mut SceneGeometry,
 	clip: ClipRect,
@@ -177,11 +184,19 @@ fn draw_display_node<'a>(
 		ChipType::Custom => {
 			// The child displays' subchip ids live inside this node's own
 			// scope; positions/scales are relative to it.
-			let child_pin_state: Box<dyn PinStateLookup> =
-				pin_state.enter_scope(owner_id).unwrap_or_else(|| Box::new(AllLow));
+			let child_pin_state: Box<dyn PinStateLookup> = pin_state.enter_scope(owner_id).unwrap_or_else(|| Box::new(AllLow));
 			for child in &desc.displays {
 				let Some(child_desc) = resolve(child.sub_chip_id) else { continue };
-				draw_display_node(geo, clip, child_desc, child.sub_chip_id, centre + child.position * scale, child.scale * scale, resolve, &*child_pin_state);
+				draw_display_node(
+					geo,
+					clip,
+					child_desc,
+					child.sub_chip_id,
+					centre + child.position * scale,
+					child.scale * scale,
+					resolve,
+					&*child_pin_state,
+				);
 			}
 		}
 		ChipType::SevenSegmentDisplay => draw_seven_segment(geo, clip, centre, scale, owner_id, pin_state),
@@ -235,7 +250,15 @@ pub(crate) fn draw_seven_segment(geo: &mut SceneGeometry, clip: ClipRect, centre
 /// Draws a `DisplayRgb`/`DisplayDot` pixel buffer (16x16, address
 /// `y * 16 + x`; packed R|G<<4|B<<8 nibbles for RGB, plain on/off for
 /// dot) at `scale` square. Blank dim pixels when not simulated.
-pub(crate) fn draw_pixel_grid(geo: &mut SceneGeometry, clip: ClipRect, centre: Vec2, scale: f32, owner_id: i32, pin_state: &dyn PinStateLookup, is_rgb: bool) {
+pub(crate) fn draw_pixel_grid(
+	geo: &mut SceneGeometry,
+	clip: ClipRect,
+	centre: Vec2,
+	scale: f32,
+	owner_id: i32,
+	pin_state: &dyn PinStateLookup,
+	is_rgb: bool,
+) {
 	const PIXELS_PER_ROW: usize = 16;
 	const BORDER_FRAC: f32 = 0.95;
 	const PIXEL_SIZE_FRAC: f32 = 0.925;
@@ -377,7 +400,16 @@ mod tests {
 		// Out-of-bounds flag off: its red quad deliberately covers the
 		// display's *full* extent (it must stay visible past the body edge),
 		// so it isn't subject to the clipping under test here.
-		draw_subchip_displays(&mut geo, Vec2::ZERO, host_size, &displays, resolves_to(&led, 3), &FixedState { pins: HashMap::new(), internal: None }, theme::CHIP_BODY_COL, false);
+		draw_subchip_displays(
+			&mut geo,
+			Vec2::ZERO,
+			host_size,
+			&displays,
+			resolves_to(&led, 3),
+			&FixedState { pins: HashMap::new(), internal: None },
+			theme::CHIP_BODY_COL,
+			false,
+		);
 
 		let clip = ClipRect::from_centre_size(Vec2::ZERO, host_size);
 		for v in &geo.triangles {
@@ -400,7 +432,16 @@ mod tests {
 	#[test]
 	fn empty_displays_draw_nothing_at_all() {
 		let mut geo = SceneGeometry::default();
-		draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(1.0), &[], |_| unreachable!("resolver must not be consulted when there are no displays"), &AllLow, theme::CHIP_BODY_COL, true);
+		draw_subchip_displays(
+			&mut geo,
+			Vec2::ZERO,
+			Vec2::splat(1.0),
+			&[],
+			|_| unreachable!("resolver must not be consulted when there are no displays"),
+			&AllLow,
+			theme::CHIP_BODY_COL,
+			true,
+		);
 		assert!(geo.triangles.is_empty());
 	}
 

@@ -165,6 +165,16 @@ impl App {
 								apply_context_menu_action(v, &self.paths, &mut self.status, &target, id);
 							}
 						}
+						// The customize workspace: hotspot clicks go through the
+						// action funnel; a click landing on the preview's padding
+						// commits whatever's being carried (drop placement /
+						// finish resize), mirroring the canvas's own
+						// "background click" idiom.
+						Some(LayerId::CustomizePanel) => match dispatch.button.map(|b| b.action.clone()) {
+							Some(ViewerAction::Editor(action)) => apply_editor_action(v, &self.paths, &mut self.status, action),
+							None => crate::viewer::customize::handle_preview_click(v),
+							_ => {}
+						},
 						_ => {
 							if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
 								apply_editor_action(v, &self.paths, &mut self.status, action);
@@ -215,6 +225,8 @@ impl App {
 		// the keyboard handler).
 		v.pending_wire = None;
 		v.pending_place = None;
+		// ...and for a customize-workspace grab/resize in flight.
+		crate::viewer::customize::cancel_interaction(v);
 
 		sync_stack_with_state(v);
 
@@ -336,6 +348,16 @@ impl App {
 				// instead of zooming the canvas underneath it.
 				InputResult::Handled if dispatch.layer == Some(LayerId::BottomBar) && !dispatch.scroll_regions.is_empty() => {
 					v.bottom_bar_scroll_x = (v.bottom_bar_scroll_x - scroll * 40.0).clamp(0.0, v.bottom_bar_scroll_max.max(0.0));
+				}
+				// Customize workspace: wheel over the DISPLAYS viewport scrolls
+				// the list; over the preview it zooms the chip preview.
+				InputResult::Handled if dispatch.layer == Some(LayerId::CustomizePanel) => {
+					let in_list = v.customize.as_ref().is_some_and(|c| c.layout.valid && c.layout.list.contains(self.mouse_pos));
+					if in_list {
+						crate::viewer::customize::scroll_list(v, scroll * 40.0);
+					} else {
+						crate::viewer::customize::zoom_preview(v, 1.0 + scroll * 0.1);
+					}
 				}
 				// Swallowed by some other capturing layer (a modal panel, flyout, popup...).
 				InputResult::Handled | InputResult::Stop => {}

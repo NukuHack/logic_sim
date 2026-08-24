@@ -7,6 +7,7 @@
 use crate::render::editor_ui::{self, EditorAction, LibrarySelection};
 use crate::render::ui_stack::LayerId;
 use crate::viewer::actions::{apply_editor_action, open_library_panel};
+use crate::viewer::customize as customize_flow;
 use crate::viewer::library::reset_library_popup_state;
 use crate::viewer::popups::{confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell};
 use crate::viewer::save_flow::{confirm_save_chip_popup, save_chip_mode, start_new_chip};
@@ -115,6 +116,28 @@ pub(crate) fn handle_viewer_key(
 				v.overlay_text_input.push_str(s);
 			}
 		}
+		// The customizer's hex colour field: only hex digits and a leading
+		// '#' get through, capped at "#RRGGBB" -- each accepted keystroke
+		// re-parses into the draft colour immediately.
+		Key::Character(s) if v.stack.keyboard_target() == Some(LayerId::CustomizePanel) => {
+			let is_hexish = |c: char| c.is_ascii_hexdigit() || c == '#';
+			if s.chars().all(is_hexish) && v.overlay_text_input.chars().count() < 7 {
+				v.overlay_text_input.push_str(s);
+				customize_flow::apply_hex_input(v);
+			}
+		}
+		Key::Named(NamedKey::Backspace) if v.stack.keyboard_target() == Some(LayerId::CustomizePanel) => {
+			v.overlay_text_input.pop();
+			customize_flow::apply_hex_input(v);
+		}
+		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::CustomizePanel) => {
+			customize_flow::confirm_customize(v, status);
+		}
+		Key::Named(NamedKey::Delete)
+			if v.stack.keyboard_target() == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_active()) =>
+		{
+			customize_flow::delete_held_display(v);
+		}
 		// ---- Key-select overlay: capture the next alphanumeric key ----
 		Key::Character(s) if v.stack.keyboard_target() == Some(LayerId::KeySelect) => {
 			if let Some(c) = s.chars().next() {
@@ -141,6 +164,13 @@ pub(crate) fn handle_viewer_key(
 					|| v.library_confirming_collection_delete) =>
 		{
 			reset_library_popup_state(v);
+		}
+		// ---- Customize workspace: Escape cancels a grab/resize first,
+		// only closing the workspace itself on the next press ----
+		Key::Named(NamedKey::Escape)
+			if v.stack.keyboard_target() == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_active()) =>
+		{
+			customize_flow::cancel_interaction(v);
 		}
 		Key::Named(NamedKey::Escape) if v.stack.keyboard_target().is_some_and(LayerId::is_overlay_panel) => {
 			if v.stack.keyboard_target() == Some(LayerId::Library) {

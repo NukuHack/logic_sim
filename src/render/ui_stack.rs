@@ -49,6 +49,11 @@ pub enum LayerId {
 	KeySelect,
 	RomEditor,
 	SaveChip,
+	/// The chip-customization workspace opened from the save-chip popup
+	/// (`ChipSaveMenu`'s "CUSTOMIZE"): a live preview of the chip being
+	/// customized plus its own option column, stacked on top of the save
+	/// popup so confirming drops the player back there.
+	CustomizePanel,
 	/// Transient status/error message. Never captures anything.
 	StatusToast,
 	ContextMenu,
@@ -61,7 +66,14 @@ impl LayerId {
 	pub fn is_overlay_panel(self) -> bool {
 		matches!(
 			self,
-			LayerId::Library | LayerId::Search | LayerId::Preferences | LayerId::Naming | LayerId::KeySelect | LayerId::RomEditor | LayerId::SaveChip
+			LayerId::Library
+				| LayerId::Search
+				| LayerId::Preferences
+				| LayerId::Naming
+				| LayerId::KeySelect
+				| LayerId::RomEditor
+				| LayerId::SaveChip
+				| LayerId::CustomizePanel
 		)
 	}
 

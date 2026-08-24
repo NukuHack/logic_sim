@@ -7,6 +7,7 @@ use crate::render::context_menu::{ContextMenuAction, ContextMenuState};
 use crate::render::editor_ui::LibrarySelection;
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::Simulator;
+use crate::viewer::customize::CustomizeState;
 use crate::{ChipLibrary, PinAddress, PinBitCount, ProjectDescription};
 
 use crate::render::editor_ui;
@@ -28,6 +29,7 @@ pub(crate) enum Overlay {
 	KeySelect,
 	RomEditor,
 	SaveChip,
+	CustomizeChip,
 }
 
 impl Overlay {
@@ -40,6 +42,7 @@ impl Overlay {
 			Overlay::KeySelect => LayerId::KeySelect,
 			Overlay::RomEditor => LayerId::RomEditor,
 			Overlay::SaveChip => LayerId::SaveChip,
+			Overlay::CustomizeChip => LayerId::CustomizePanel,
 		}
 	}
 }
@@ -207,6 +210,12 @@ pub(crate) struct ViewerState {
 	pub(crate) key_select_purpose: KeySelectPurpose,
 	/// Draft state for `Overlay::RomEditor`, when open.
 	pub(crate) rom_editor: Option<RomEditorState>,
+	/// Draft state for `Overlay::CustomizeChip`, when open -- the cloned
+	/// chip description being customized (name location / colour / size /
+	/// embedded displays) plus whatever grab/resize interaction is in
+	/// flight. Written back onto the library entry only on Confirm; see
+	/// `viewer::customize`.
+	pub(crate) customize: Option<CustomizeState>,
 
 	/// The viewer's UI stack as of the *last drawn* frame -- every
 	/// visible surface is a layer in here (canvas at the bottom, popups
@@ -303,6 +312,9 @@ pub(crate) fn sync_stack_with_state(v: &mut ViewerState) {
 	if v.bottom_bar_open_collection.is_none() {
 		v.stack.pop_if_top(|id| id == LayerId::BottomBarFlyout);
 	}
+	if v.customize.is_none() {
+		v.stack.pop_if_top(|id| id == LayerId::CustomizePanel);
+	}
 	if v.overlays.is_empty() {
 		v.stack.pop_while_top(|id| id.is_overlay_panel());
 	}
@@ -342,10 +354,20 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 		Overlay::Search => v.search_query.clear(),
 		// The shared buffer belongs to whichever text-field overlay owned it while open.
 		Overlay::SaveChip => v.overlay_text_input.clear(),
+		// The customizer borrowed the shared buffer for its hex colour
+		// field; give the save popup's name back (see `open_customize`).
+		Overlay::CustomizeChip => {
+			if let Some(customize) = v.customize.take() {
+				v.overlay_text_input = customize.saved_save_text;
+			}
+		}
 		// Preferences carries no transient draft of its own.
 		Overlay::Preferences => {}
 	}
-	if !matches!(top, Overlay::Library | Overlay::Search) {
+	// The shared buffer belongs to whichever text-field overlay owned it
+	// while open -- except CustomizeChip, whose arm above just handed it
+	// back to the save popup underneath and mustn't be wiped here.
+	if !matches!(top, Overlay::Library | Overlay::Search | Overlay::CustomizeChip) {
 		v.overlay_text_input.clear();
 	}
 }

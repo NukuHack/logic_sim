@@ -90,6 +90,10 @@ fn run_viewer_sim_step(v: &mut ViewerState) {
 /// the non-capturing status toast.
 pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: f32, vh: f32, mouse: Vec2) -> UiStack<ViewerAction> {
 	run_viewer_sim_step(v);
+	// The customizer's in-flight resize/move/scale applies against the live
+	// cursor before the frame is built, so this frame already shows its
+	// effect (same immediate-mode beat as the camera pan above).
+	crate::viewer::customize::update_live_interaction(v);
 
 	let root_desc = v.library.get(&v.root_chip_name).clone();
 	let hover_world_pos = v.camera.screen_to_world(mouse);
@@ -174,6 +178,19 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// (Ctrl+F pushes Search on top of an open Library). Each captures the full screen:
 	// they're modal, so nothing underneath (bar included) gets clicked through them.
 	for overlay in v.overlays.clone() {
+		let mut customize_out = (overlay == Overlay::CustomizeChip).then(|| crate::viewer::customize::build_layer(v, vw, vh, mouse));
+		if let Some(out) = customize_out.as_mut() {
+			let frame = std::mem::take(&mut out.frame);
+			let (layout, scroll_max) = (out.layout, out.list_scroll_max);
+			crate::viewer::customize::cache_layout(v, layout, scroll_max);
+			let layer = StackLayer::convert_frame(overlay.layer_id(), frame, Capture::FullScreen, editor_action)
+				.with_scroll_region(layout.preview)
+				.with_scroll_region(layout.list);
+			let mut layer_owned = layer;
+			layer_owned.geometry = pin_geometry_to_screen(std::mem::take(&mut layer_owned.geometry), &v.camera, vh);
+			viewer_stack.push(layer_owned);
+			continue;
+		}
 		let overlay_frame = build_overlay_frame(v, overlay, vw, vh, mouse);
 		let layer_id = overlay.layer_id();
 		let mut overlay_layer = StackLayer::convert_frame(layer_id, overlay_frame, Capture::FullScreen, editor_action);
@@ -281,6 +298,10 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			let mode = save_chip_mode(v, &v.overlay_text_input);
 			editor_ui::build_save_chip_popup(&v.root_chip_name, &v.overlay_text_input, mode, vw, vh, mouse)
 		}
+		// Handled separately by `build_viewer_stack` (its frame carries the
+		// preview layout back onto `ViewerState::customize`), so reaching
+		// this arm at all would double-build it.
+		Overlay::CustomizeChip => editor_ui::EditorFrame::default(),
 	}
 }
 

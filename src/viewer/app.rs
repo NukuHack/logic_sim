@@ -134,6 +134,7 @@ impl App {
 					naming_purpose: Default::default(),
 					key_select_purpose: Default::default(),
 					rom_editor: None,
+					customize: None,
 					stack: UiStack::new(),
 					bottom_bar_scroll_x: 0.0,
 					bottom_bar_scroll_max: 0.0,

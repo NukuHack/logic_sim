@@ -10,6 +10,7 @@
 
 pub mod camera;
 pub mod context_menu;
+pub mod customize_ui;
 pub mod editor_ui;
 pub mod foundation;
 pub mod gpu;
