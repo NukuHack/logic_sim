@@ -41,8 +41,8 @@ pub use wires::delete_wire;
 /// right-click on the canvas to "which component did the player click".
 /// Iterates back-to-front (last-placed first) so, on the rare case two
 /// bodies overlap, the one actually drawn on top (and thus visible to the
-/// player) is the one that gets hit, matching `draw_components`' draw
-/// order.
+/// player) is the one that gets hit, matching `components::draw_component`'s
+/// draw order.
 pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec2) -> Option<&'b PlacedSubChip<'a>> {
 	placed.iter().rev().find(|p| point_in_rect(world_pos, p.centre, p.size))
 }
@@ -52,6 +52,58 @@ pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec
 /// as this chip's own boundary dev-pins (owner id == the pin's own id, per
 /// the on-disk wire-address convention).
 pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dyn PinStateLookup, hover_world_pos: Option<Vec2>) -> SceneGeometry {
+	build_scene_with_spans(chip, library, pin_state, hover_world_pos).0
+}
+
+/// Vertex-index span of one placed subchip's own geometry (its body, name
+/// label, and any embedded displays) inside the [`SceneGeometry`] returned
+/// by [`build_scene_with_spans`] -- what lets a caller fade exactly that
+/// component (dragging draws carried components translucently) without
+/// touching its pins or wires.
+#[derive(Debug, Clone)]
+pub struct ComponentSpan {
+	pub triangles: std::ops::Range<usize>,
+	pub labels: std::ops::Range<usize>,
+}
+
+/// Per-subchip-id map of [`ComponentSpan`]s.
+#[derive(Debug, Default, Clone)]
+pub struct ComponentSpans {
+	spans: HashMap<i32, ComponentSpan>,
+}
+
+impl ComponentSpans {
+	pub fn get(&self, subchip_id: i32) -> Option<&ComponentSpan> {
+		self.spans.get(&subchip_id)
+	}
+
+	fn insert(&mut self, subchip_id: i32, span: ComponentSpan) {
+		self.spans.insert(subchip_id, span);
+	}
+}
+
+/// Multiplies every vertex/label alpha of `span`'s slice of `geo` by
+/// `alpha` -- the per-component counterpart of
+/// [`crate::render::foundation::apply_alpha`].
+pub fn fade_component(geo: &mut SceneGeometry, span: &ComponentSpan, alpha: f32) {
+	for v in &mut geo.triangles[span.triangles.clone()] {
+		v.colour[3] *= alpha;
+	}
+	for l in &mut geo.labels[span.labels.clone()] {
+		l.colour[3] *= alpha;
+	}
+}
+
+/// [`build_scene`] plus a per-component index of where each placed
+/// subchip's own geometry landed in the returned buffers (see
+/// [`ComponentSpan`]). Wires/pins/dev-pins stay untracked -- they're never
+/// faded with a dragged component.
+pub fn build_scene_with_spans(
+	chip: &ChipDescription,
+	library: &ChipLibrary,
+	pin_state: &dyn PinStateLookup,
+	hover_world_pos: Option<Vec2>,
+) -> (SceneGeometry, ComponentSpans) {
 	let mut geo = SceneGeometry::default();
 	let placed = place_sub_chips(chip, library);
 
@@ -65,16 +117,24 @@ pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dy
 	// "customize" feature -- a display must cover its host's body, never the
 	// other way around). Name labels are hover-gated to whichever thing
 	// `hover_world_pos` lands on; pins are checked first so an edge-hover
-	// shows the pin.
+	// shows the pin. Components and their displays draw interleaved (rather
+	// than as two whole layers) purely so each component's triangles land in
+	// one contiguous span.
 	wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
 	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, hover_world_pos);
-	components::draw_components(&mut geo, &placed, pin_state, hover_world_pos, hovered_pin_name.is_some());
-	displays::draw_placed_displays(&mut geo, &placed, library, pin_state);
+	let mut spans = ComponentSpans::default();
+	for sub in &placed {
+		let triangle_start = geo.triangles.len();
+		let label_start = geo.labels.len();
+		components::draw_component(&mut geo, sub, pin_state, hover_world_pos, hovered_pin_name.is_some());
+		displays::draw_placed_displays_for(&mut geo, sub, library, pin_state);
+		spans.insert(sub.id, ComponentSpan { triangles: triangle_start..geo.triangles.len(), labels: label_start..geo.labels.len() });
+	}
 	if let Some((pos, name)) = hovered_pin_name {
 		push_hover_label(&mut geo, pos, name);
 	}
 
-	geo
+	(geo, spans)
 }
 
 /// Pushes a small hover-triggered name label just above `pos`. Shared by
@@ -103,5 +163,59 @@ pub(crate) mod test_support {
 		d.input_pins.push(PinDescription::new("B", 1, PinBitCount::Bit1));
 		d.output_pins.push(PinDescription::new("OUT", 0, PinBitCount::Bit1));
 		d
+	}
+}
+
+#[cfg(test)]
+mod span_tests {
+	//! White-box: the per-component spans `build_scene_with_spans` records
+	//! are what the viewer fades a dragged component by -- they must cover
+	//! exactly that component's own vertices and nothing else.
+
+	use super::*;
+	use crate::description::{PinAddress, SubChipDescription, WireDescription};
+	use crate::render::scene::test_support::nand_desc;
+
+	fn two_nands_and_a_wire() -> (ChipLibrary, ChipDescription) {
+		let mut library = ChipLibrary::new();
+		library.add(nand_desc());
+		let mut chip = ChipDescription::new("SPANS", crate::description::ChipType::Custom);
+		for id in [1, 2] {
+			chip.sub_chips.push(SubChipDescription {
+				name: "NAND".into(),
+				id,
+				internal_data: None,
+				position: Vec2::new(id as f32 * 4.0, 0.0),
+				label: None,
+				pin_colour_info: Vec::new(),
+			});
+		}
+		chip.wires.push(WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 1)));
+		(library, chip)
+	}
+
+	#[test]
+	fn build_scene_with_spans_tracks_each_components_own_vertices() {
+		let (library, chip) = two_nands_and_a_wire();
+
+		let (scene, spans) = build_scene_with_spans(&chip, &library, &AllLow, None);
+		let span1 = spans.get(1).expect("component 1 is indexed");
+		let span2 = spans.get(2).expect("component 2 is indexed");
+
+		assert!(!span1.triangles.is_empty() && !span1.labels.is_empty(), "a body rect + name label were drawn");
+		assert!(span1.triangles.end <= span2.triangles.start, "spans are disjoint and in draw order");
+
+		// Fading one component's span touches exactly its slice: the wire
+		// layer drawn before every span, and the other component's span,
+		// both stay at full alpha.
+		let full_alpha = scene.triangles[0].colour[3];
+		assert_eq!(full_alpha, 1.0);
+
+		let mut faded = scene.clone();
+		fade_component(&mut faded, span1, 0.5);
+		assert!((faded.triangles[span1.triangles.start].colour[3] - 0.5).abs() < 1e-6, "the span itself fades");
+		assert_eq!(faded.triangles[span2.triangles.start].colour[3], full_alpha, "other components don't");
+		assert_eq!(faded.triangles[0].colour[3], full_alpha, "wires drawn beneath every span don't");
+		assert!((faded.labels[span1.labels.start].colour[3] - 0.5).abs() < 1e-6, "labels fade with their component");
 	}
 }

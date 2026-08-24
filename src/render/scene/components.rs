@@ -12,8 +12,12 @@ use crate::render::scene::placed::PlacedSubChip;
 use crate::render::theme;
 use crate::structs::Vec2;
 
-/// Layer 3 (top): every subchip's body rectangle, drawn last so a
-/// component's body is never occluded by a wire or pin drawn earlier.
+/// Layer 3 (top): draws one placed subchip's body + name/label text, last
+/// of the scene layers so a component's body is never occluded by a wire
+/// or pin drawn earlier. Called once per placed subchip by
+/// `build_scene_with_spans`, which brackets each call between recorded
+/// vertex indices -- the spans the viewer uses to fade exactly the carried
+/// components while they're being dragged.
 ///
 /// The name label is hover-gated: it's only added when `hover_world_pos`
 /// lands on this subchip's body rect *and* `pin_already_hovered` is
@@ -25,60 +29,58 @@ use crate::structs::Vec2;
 /// NameDisplayLocation.Hidden)" gate; the `isKeyChip` special case (which
 /// shows a keybinding string even when hidden) isn't ported here since it
 /// needs live key-binding state this module doesn't have.
-pub(crate) fn draw_components(
+pub(crate) fn draw_component(
 	geo: &mut SceneGeometry,
-	placed: &[PlacedSubChip],
+	sub: &PlacedSubChip,
 	pin_state: &dyn PinStateLookup,
 	hover_world_pos: Option<Vec2>,
 	pin_already_hovered: bool,
 ) {
-	for sub in placed {
-		// Use this chip's saved body colour (alpha 0 means "not saved" --
-		// fall back to the theme default) rather than always drawing every
-		// chip with the same flat grey.
-		let body_colour = if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL };
+	// Use this chip's saved body colour (alpha 0 means "not saved" --
+	// fall back to the theme default) rather than always drawing every
+	// chip with the same flat grey.
+	let body_colour = if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL };
 
-		// 7-segment/RGB/dot displays draw their own live pixel/segment content in place of the plain
-		// body rect (`NameLocation` is `Hidden` because the body is the visualisation). `DisplayLed`
-		// needs no branch here: its "display" is just the tinted body rect already produced above.
-		match sub.desc.chip_type {
-			ChipType::SevenSegmentDisplay => draw_display_seven_segment(geo, sub, pin_state),
-			ChipType::DisplayRgb => draw_display_pixel_grid(geo, sub, pin_state, true),
-			ChipType::DisplayDot => draw_display_pixel_grid(geo, sub, pin_state, false),
-			ChipType::DisplayLed => draw_display_led(geo, sub, pin_state, body_colour),
-			ChipType::Key => draw_key_component(geo, sub, body_colour),
-			_ => geo.add_rect(sub.centre, sub.size, body_colour),
-		}
+	// 7-segment/RGB/dot displays draw their own live pixel/segment content in place of the plain
+	// body rect (`NameLocation` is `Hidden` because the body is the visualisation). `DisplayLed`
+	// needs no branch here: its "display" is just the tinted body rect already produced above.
+	match sub.desc.chip_type {
+		ChipType::SevenSegmentDisplay => draw_display_seven_segment(geo, sub, pin_state),
+		ChipType::DisplayRgb => draw_display_pixel_grid(geo, sub, pin_state, true),
+		ChipType::DisplayDot => draw_display_pixel_grid(geo, sub, pin_state, false),
+		ChipType::DisplayLed => draw_display_led(geo, sub, pin_state, body_colour),
+		ChipType::Key => draw_key_component(geo, sub, body_colour),
+		_ => geo.add_rect(sub.centre, sub.size, body_colour),
+	}
 
-		let is_hovered = !pin_already_hovered && hover_world_pos.is_some_and(|p| point_in_rect(p, sub.centre, sub.size));
-		// draw name if options allow
-		if sub.desc.name_location != NameLocation::Hidden {
-			let name_pos = match sub.desc.name_location {
-				NameLocation::Top => {
-					Vec2::new(sub.centre.x, sub.centre.y + sub.size.y / 2.0 - theme::FONT_SIZE_CHIP_NAME / 2.0 - layout::GRID_SIZE / 2.0)
-				}
-				_ => sub.centre,
-			};
+	let is_hovered = !pin_already_hovered && hover_world_pos.is_some_and(|p| point_in_rect(p, sub.centre, sub.size));
+	// draw name if options allow
+	if sub.desc.name_location != NameLocation::Hidden {
+		let name_pos = match sub.desc.name_location {
+			NameLocation::Top => {
+				Vec2::new(sub.centre.x, sub.centre.y + sub.size.y / 2.0 - theme::FONT_SIZE_CHIP_NAME / 2.0 - layout::GRID_SIZE / 2.0)
+			}
+			_ => sub.centre,
+		};
+		geo.labels.push(TextLabel {
+			pos: name_pos,
+			text: sub.desc.name.clone(),
+			colour: theme::text_colour_for_background(body_colour),
+			font_size: theme::FONT_SIZE_CHIP_NAME,
+			width: sub.size.x,
+		});
+	}
+	// draw label if hovered
+	if let Some(label) = &sub.label {
+		if is_hovered {
+			let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
 			geo.labels.push(TextLabel {
-				pos: name_pos,
-				text: sub.desc.name.clone(),
+				pos: label_pos,
+				text: label.into(),
 				colour: theme::text_colour_for_background(body_colour),
 				font_size: theme::FONT_SIZE_CHIP_NAME,
 				width: sub.size.x,
 			});
-		}
-		// draw label if hovered
-		if let Some(label) = &sub.label {
-			if is_hovered {
-				let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
-				geo.labels.push(TextLabel {
-					pos: label_pos,
-					text: label.into(),
-					colour: theme::text_colour_for_background(body_colour),
-					font_size: theme::FONT_SIZE_CHIP_NAME,
-					width: sub.size.x,
-				});
-			}
 		}
 	}
 }

@@ -111,31 +111,31 @@ fn display_border_col(chip_colour: Rgba) -> Rgba {
 	[shift(body[0]).clamp(0.0, 1.0), shift(body[1]).clamp(0.0, 1.0), shift(body[2]).clamp(0.0, 1.0), 1.0]
 }
 
-/// Canvas-path entry: draws the embedded displays of every *placed*
-/// subchip in `placed` whose description carries any (`mark_out_of_bounds`
-/// is deliberately off here -- the red flag is a customize-preview-only
-/// affordance, matching the original's `outOfBoundsDisplay` parameter).
-pub(crate) fn draw_placed_displays(
+/// Canvas-path entry: draws one *placed* subchip's embedded displays
+/// (`mark_out_of_bounds` is deliberately off here -- the red flag is a
+/// customize-preview-only affordance, matching the original's
+/// `outOfBoundsDisplay` parameter). Called once per placed subchip by
+/// `build_scene_with_spans`, bracketed into that component's own vertex
+/// span -- see `render::scene::components::draw_component`'s doc comment.
+pub(crate) fn draw_placed_displays_for(
 	geo: &mut SceneGeometry,
-	placed: &[crate::render::scene::placed::PlacedSubChip],
+	sub: &crate::render::scene::placed::PlacedSubChip,
 	library: &crate::description::ChipLibrary,
 	pin_state: &dyn PinStateLookup,
 ) {
-	for sub in placed {
-		if sub.desc.displays.is_empty() {
-			continue;
-		}
-		let desc = sub.desc;
-		let resolve = move |id: i32| desc.sub_chips.iter().find(|s| s.id == id).and_then(|s| library.try_get(&s.name));
-		// The displays' `(subchip id, pin id)` addresses live *inside this
-		// placed chip's own scope*, not the one this draw call was handed
-		// -- descend one level before resolving, or every pin reads
-		// unresolvable and nothing ever lights. Un-enterable scopes (e.g.
-		// static previews with no simulator) draw blank, mirroring the
-		// original's `sim == null` branch.
-		let scoped: Box<dyn PinStateLookup> = pin_state.enter_scope(sub.id).unwrap_or_else(|| Box::new(AllLow));
-		draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, resolve, scoped.as_ref(), desc.colour, false);
+	if sub.desc.displays.is_empty() {
+		return;
 	}
+	let desc = sub.desc;
+	let resolve = move |id: i32| desc.sub_chips.iter().find(|s| s.id == id).and_then(|s| library.try_get(&s.name));
+	// The displays' `(subchip id, pin id)` addresses live *inside this
+	// placed chip's own scope*, not the one this draw call was handed
+	// -- descend one level before resolving, or every pin reads
+	// unresolvable and nothing ever lights. Un-enterable scopes (e.g.
+	// static previews with no simulator) draw blank, mirroring the
+	// original's `sim == null` branch.
+	let scoped: Box<dyn PinStateLookup> = pin_state.enter_scope(sub.id).unwrap_or_else(|| Box::new(AllLow));
+	draw_subchip_displays(geo, sub.centre, sub.size, &desc.displays, resolve, scoped.as_ref(), desc.colour, false);
 }
 
 /// Draws every embedded display of a chip, clipped to the body rect at
