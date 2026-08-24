@@ -7,6 +7,7 @@ A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.c
 - **Project picker → chip viewer** in a single window: open an existing project or create a new one, then edit its chips.
 - **Built-in components**: NAND gates, clocks, pulses, tri-state buffers, RAM/ROM, bit merge/split converters, 7-segment / RGB / dot / LED displays, buses, buzzers, and keyboard-driven input chips (`KEY`, `MOD KEYS`).
 - **Custom chips**: save any circuit as a chip and nest it inside other circuits, just like the original.
+- **Chip customization** (save popup → *Customize*): name placement (middle/top/hidden), body colour (palette + hex field), corner-drag resizing previewed live with the chip's own edge pins for scale, and embedded display surfaces you place, move, scale and remove right on the chip body — content clips at the chip edge, and any display that doesn't fully fit is flagged in red. Everything round-trips through the original's standard `Displays` save field.
 - **Compatible saves**: reads and writes the *same* `Projects/` folder layout as the original Unity build (see below), so projects made in either program work in both. Sample projects (GOL, Snake, ZHT90, ...) load out of the box.
 - **Editor UI stack**: library panel (`Tab`), search overlay, preferences, ROM editor, key binding, right-click context menus, wire/chip deletion, camera fit-to-view, grid toggle.
 
@@ -43,6 +44,7 @@ Or use the all-in-one script:
 | `F` | Toggle fit-to-view camera |
 | `G` | Toggle grid |
 | `Esc` | Cancel pending action / close topmost overlay / leave editor |
+| `Delete` | Remove the display being carried in Customize |
 
 Mouse: drag to pan, scroll to zoom, click pins to place wires, right-click for context menus.
 
@@ -79,7 +81,8 @@ src/
 ├── bin/app.rs          # thin entry point (picker → viewer)
 ├── render/             # wgpu renderer, WGSL shader, camera, theme
 │   ├── foundation/     # shared geometry primitives + point-in-shape hit tests
-│   ├── scene/          # chip descriptions -> triangles (wires/pins/components/grid)
+│   ├── scene/          # chip descriptions -> triangles (wires/pins/components/displays/grid)
+│   ├── customize_ui.rs # chip-customization workspace (save popup -> Customize)
 │   └── ...             # ui_kit, editor/menu UI, context menu, UI stack, gpu
 ├── viewer/             # the frontend: editor state, canvas interaction,
 │                       #   save flows, popups, input routing, frame building
