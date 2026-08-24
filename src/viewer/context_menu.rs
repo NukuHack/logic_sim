@@ -7,7 +7,7 @@ use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::canvas::delete_component;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
-use crate::viewer::state::{open_overlay, KeySelectPurpose, NamingPurpose, Overlay, RomEditorState, ViewerState};
+use crate::viewer::state::{open_overlay, KeySelectPurpose, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 
 /// One right-clickable "thing" a context menu can be attached to, parsed
@@ -158,13 +158,20 @@ pub(crate) fn apply_context_menu_action(
 			}
 			v.rebuild_sim();
 		}
-		(ContextMenuAction::Label, ContextTarget::DevPin { is_input, id }) => {
+		// The dev-pin "Edit" row (`PinEditMenu`): rename +, for multi-bit
+		// pins, the Decimal Display wheel. Supersedes this port's old
+		// label-only naming popup for pins.
+		(ContextMenuAction::Configure, ContextTarget::DevPin { is_input, id }) => {
 			let chip = v.library.get(&root_chip_name);
 			let pins = if is_input { &chip.input_pins } else { &chip.output_pins };
-			let current = pins.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_default();
-			open_overlay(v, Overlay::Naming);
-			v.overlay_text_input = current;
-			v.naming_purpose = NamingPurpose::LabelDevPin { is_input, id };
+			// Copy the draft's seeds out of the library first so the
+			// immutable borrow ends before the overlay opens.
+			let draft = pins.iter().find(|p| p.id == id).map(|p| (p.name.clone(), p.value_display_mode.to_int().max(0) as usize));
+			if let Some((current_name, display_mode_index)) = draft {
+				open_overlay(v, Overlay::PinEdit);
+				v.overlay_text_input = current_name;
+				v.pin_edit = Some(PinEditState { is_input, pin_id: id, display_mode_index });
+			}
 		}
 		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => delete_component(v, id),
 

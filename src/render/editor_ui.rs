@@ -167,6 +167,13 @@ pub enum EditorAction {
 	/// [`crate::render::customize_ui`]'s row builder and
 	/// `viewer::customize::place_list_entry`).
 	CustomizePlaceEntry(usize),
+	/// Pin-edit popup (`PinEditMenu`): commit the typed name -- and, for
+	/// multi-bit pins, the chosen Decimal Display mode -- onto the target
+	/// dev-pin and close.
+	ConfirmPinEdit,
+	/// Pin-edit popup: pick `usize` (an index into
+	/// [`PIN_DECIMAL_DISPLAY_OPTIONS`]) as the draft Decimal Display mode.
+	PinEditSetDisplayMode(usize),
 	/// Unsaved-changes popup (`UnsavedChangesPopup`): the player chose to
 	/// walk away from the current chip's unsaved edits -- run whichever
 	/// action originally opened the popup (see
@@ -1159,6 +1166,69 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		[0.6, 0.6, 0.65, 1.0],
 		12.5,
 	);
+
+	finish(frame, ui)
+}
+
+// ---------------------------------------------------------------------
+// Pin edit popup (`PinEditMenu`)
+// ---------------------------------------------------------------------
+
+/// The pin-edit popup's "Decimal Display" options -- mirrors
+/// `PinEditMenu.PinDecimalDisplayOptions`. Index order matches
+/// `ValueDisplayMode`'s discriminants, so `(mode as usize)` /
+/// `ValueDisplayMode::from_int(index as i32)` convert directly.
+pub const PIN_DECIMAL_DISPLAY_OPTIONS: [&str; 4] = ["Off", "Unsigned", "Signed", "HEX"];
+
+/// Longest pin name the edit popup confirms, mirroring
+/// `PinEditMenu.MaxLengthPinName` (`"MY LONG PIN NAME"`) and its
+/// length-only validator.
+pub const MAX_PIN_NAME_LENGTH: usize = 16;
+
+/// Builds the boundary-dev-pin edit popup (mirrors `PinEditMenu`): a name
+/// field plus -- only for pins wider than one bit -- a "Decimal Display"
+/// row of option buttons standing in for the original's wheel selector.
+/// Both halves commit together on Confirm; Cancel discards. `name` is the
+/// host's shared text buffer's current contents; `display_mode_index`
+/// indexes [`PIN_DECIMAL_DISPLAY_OPTIONS`] (ignored while
+/// `show_display_options` is false).
+pub fn build_pin_edit_popup(name: &str, show_display_options: bool, display_mode_index: usize, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
+	let mut frame = EditorFrame::default();
+	let panel_w = 420.0;
+	let panel_h = if show_display_options { 232.0 } else { 152.0 };
+	let cx = vw / 2.0;
+	let cy = vh / 2.0;
+
+	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+
+	add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 26.0), panel_w - 40.0, "Edit pin", [1.0, 1.0, 1.0, 1.0], 20.0);
+
+	let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 46.0, panel_w - 60.0, 34.0);
+	ui_kit::text_field_row(&mut frame, ui, field_rect, name, "", FONT_SIZE, 16.0);
+
+	let mut y = field_rect.y + field_rect.h + 12.0;
+	if show_display_options {
+		add_label(&mut frame, ui, Vec2::new(cx, y + ROW_H / 2.0), panel_w - 40.0, "Decimal Display", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
+		y += ROW_H + ROW_GAP;
+		let options_x = cx - (panel_w - 60.0) / 2.0;
+		let option_w = ((panel_w - 60.0) - 8.0 * (PIN_DECIMAL_DISPLAY_OPTIONS.len() - 1) as f32) / PIN_DECIMAL_DISPLAY_OPTIONS.len() as f32;
+		for (i, option) in PIN_DECIMAL_DISPLAY_OPTIONS.iter().enumerate() {
+			let rect = UiRect::new(options_x + i as f32 * (option_w + 8.0), y, option_w, ROW_H);
+			if i == display_mode_index.min(PIN_DECIMAL_DISPLAY_OPTIONS.len() - 1) {
+				add_button_coloured(&mut frame, ui, rect, option, EditorAction::PinEditSetDisplayMode(i), true, [0.3, 0.42, 0.58, 1.0]);
+			} else {
+				add_button(&mut frame, ui, rect, option, EditorAction::PinEditSetDisplayMode(i), true);
+			}
+		}
+		y += ROW_H + ROW_GAP;
+	}
+
+	let name_len = name.trim().chars().count();
+	let confirm_enabled = name_len > 0 && name_len <= MAX_PIN_NAME_LENGTH;
+	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0), "Confirm", EditorAction::ConfirmPinEdit, confirm_enabled);
+	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0), "Cancel", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)
 }

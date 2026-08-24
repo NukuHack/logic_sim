@@ -293,12 +293,15 @@ impl App {
 		let root_chip_name = v.root_chip_name.clone();
 		let world_pos = v.camera.screen_to_world(self.mouse_pos);
 
-		// 2) One of the current root chip's own boundary dev-pins.
+		// 2) One of the current root chip's own boundary dev-pins. "Edit"
+		// opens the pin-edit popup (`PinEditMenu`: rename +, for multi-bit
+		// pins, the Decimal Display wheel).
 		{
 			let root_desc = v.library.get(&root_chip_name);
 			if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
 				let target = format!("devpin:{}:{}", if is_input { "in" } else { "out" }, pin_id);
-				let items = vec![ContextMenuItem::new("Label", ContextMenuAction::Label), ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
+				let items =
+					vec![ContextMenuItem::new("Edit", ContextMenuAction::Configure), ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
 				v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, items));
 				return;
 			}

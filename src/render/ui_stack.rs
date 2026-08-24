@@ -54,6 +54,9 @@ pub enum LayerId {
 	/// customized plus its own option column, stacked on top of the save
 	/// popup so confirming drops the player back there.
 	CustomizePanel,
+	/// The pin-edit popup (`PinEditMenu`): rename a boundary dev-pin and,
+	/// for multi-bit pins, pick its "Decimal Display" mode.
+	PinEdit,
 	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`):
 	/// gates leaving the current chip behind while it has in-memory-only
 	/// edits.
@@ -77,6 +80,7 @@ impl LayerId {
 				| LayerId::KeySelect
 				| LayerId::RomEditor
 				| LayerId::SaveChip
+				| LayerId::PinEdit
 				| LayerId::UnsavedChanges
 				| LayerId::CustomizePanel
 		)

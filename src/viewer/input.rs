@@ -11,7 +11,7 @@ use crate::viewer::canvas::delete_component;
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::customize as customize_flow;
 use crate::viewer::library::reset_library_popup_state;
-use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell};
+use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, confirm_naming_popup, confirm_pin_edit_popup, confirm_rom_cell};
 use crate::viewer::save_flow::{
 	confirm_save_chip_popup, confirm_unsaved_changes_popup, request_exit_to_menu, request_start_new_chip, save_chip_mode,
 };
@@ -65,7 +65,7 @@ pub(crate) fn handle_viewer_key(
 			v.search_query.pop();
 		}
 		Key::Named(NamedKey::Backspace)
-			if matches!(v.stack.keyboard_target(), Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip))
+			if matches!(v.stack.keyboard_target(), Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::PinEdit))
 				|| (matches!(v.stack.keyboard_target(), Some(LayerId::Library))
 					&& (v.library_creating_collection || v.library_renaming_collection)) =>
 		{
@@ -73,6 +73,9 @@ pub(crate) fn handle_viewer_key(
 		}
 		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::Naming) => {
 			confirm_naming_popup(v, status);
+		}
+		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::PinEdit) => {
+			confirm_pin_edit_popup(v);
 		}
 		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::UnsavedChanges) => {
 			confirm_unsaved_changes_popup(v, paths, status);
@@ -102,7 +105,7 @@ pub(crate) fn handle_viewer_key(
 			}
 		}
 		Key::Character(s)
-			if matches!(v.stack.keyboard_target(), Some(LayerId::Naming | LayerId::SaveChip))
+			if matches!(v.stack.keyboard_target(), Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))
 				|| (matches!(v.stack.keyboard_target(), Some(LayerId::Library))
 					&& (v.library_creating_collection || v.library_renaming_collection)) =>
 		{
@@ -337,7 +340,7 @@ fn persist_prefs_shortcut_change(v: &mut ViewerState, paths: &SavePaths) {
 /// is focused.
 fn typing_into_free_text_field(v: &ViewerState) -> bool {
 	match v.stack.keyboard_target() {
-		Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::Search | LayerId::KeySelect) => true,
+		Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::PinEdit | LayerId::Search | LayerId::KeySelect) => true,
 		Some(LayerId::Library) => v.library_creating_collection || v.library_renaming_collection,
 		_ => false,
 	}

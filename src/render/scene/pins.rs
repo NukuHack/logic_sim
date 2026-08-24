@@ -3,9 +3,9 @@
 //! bodies, and the clickable per-bit grid on input dev-pins -- layer 2 of
 //! the chip scene.
 
-use crate::description::{Color, PinBitCount};
+use crate::description::{Color, PinBitCount, ValueDisplayMode};
 use crate::pin_state::LogicState;
-use crate::render::foundation::{RoundCorners, SceneGeometry};
+use crate::render::foundation::{RoundCorners, SceneGeometry, TextLabel};
 use crate::render::layout;
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_hits::{point_in_dev_pin_body, point_in_pin_shape};
@@ -114,6 +114,68 @@ fn draw_input_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBit
 	}
 }
 
+/// Formats one boundary dev-pin's live multi-bit value for its configured
+/// [`ValueDisplayMode`] (`DevPinInstance.GetStateDecimalDisplayValue` +
+/// `DrawPinDecValue`'s buffer filling): unsigned decimal, two's-complement
+/// signed decimal, or uppercase hex. Disconnected bits read as 0, the way
+/// `PinState.GetBitStates` masks the tristate flags off. Empty for 1-bit
+/// pins (the original never draws a value there) and for `None`.
+fn dev_pin_value_text(pin_state: &dyn PinStateLookup, pin_id: i32, bit_count: PinBitCount, mode: ValueDisplayMode) -> String {
+	let bit_width = match bit_count {
+		PinBitCount::Bit1 => return String::new(),
+		PinBitCount::Bit4 => 4,
+		PinBitCount::Bit8 => 8,
+	};
+	let mut raw: u32 = 0;
+	for bit_index in 0..bit_width {
+		if pin_state.bit_logic_state(pin_id, 0, bit_index as u32) == Some(LogicState::High) {
+			raw |= 1 << bit_index;
+		}
+	}
+	match mode {
+		ValueDisplayMode::None => String::new(),
+		ValueDisplayMode::Decimal => format!("{raw}"),
+		ValueDisplayMode::SignedDecimal => {
+			// Two's complement across exactly this pin's width: anything
+			// with the sign bit set wraps to its negative value.
+			let sign_bit = 1u32 << (bit_width - 1);
+			if raw >= sign_bit {
+				format!("{}", raw as i64 - (1u32 << bit_width) as i64)
+			} else {
+				format!("{raw}")
+			}
+		}
+		ValueDisplayMode::Hex => format!("{raw:X}"),
+	}
+}
+
+/// Draws the "Decimal Display" read-out below a boundary dev-pin's body
+/// (`DevSceneDrawer.DrawPinDecValue`): a translucent dark quad sized to
+/// the pin's bit-grid footprint with the formatted live value centred on
+/// it. Skipped entirely for 1-bit pins and `ValueDisplayMode::None`, like
+/// the original.
+fn draw_dev_pin_value_label(
+	geo: &mut SceneGeometry,
+	pos: Vec2,
+	bit_count: PinBitCount,
+	mode: ValueDisplayMode,
+	pin_state: &dyn PinStateLookup,
+	pin_id: i32,
+) {
+	let text = dev_pin_value_text(pin_state, pin_id, bit_count, mode);
+	if text.is_empty() {
+		return;
+	}
+	let grid_size = layout::input_dev_pin_body_size(bit_count);
+	// Mirrors DrawPinDecValue's placement: centred under the pin's own
+	// bounds (Bottom + half label height - offsetY == Bottom - 0.125).
+	const OFFSET_Y: f32 = 0.125;
+	let centre = Vec2::new(pos.x, pos.y - grid_size.y / 2.0 - OFFSET_Y);
+	let quad_w = grid_size.x.max(layout::estimate_text_width(&text, theme::FONT_SIZE_CHIP_NAME) + layout::GRID_SIZE * 2.0);
+	geo.add_rect(centre, Vec2::new(quad_w, 0.2), [0.0, 0.0, 0.0, 0.17]);
+	geo.labels.push(TextLabel { pos: centre, text, colour: [1.0, 1.0, 1.0, 1.0], font_size: theme::FONT_SIZE_CHIP_NAME, width: grid_size.x });
+}
+
 /// Layer 2 (middle): every pin -- each subchip's input/output pins
 /// (`draw_pin_shape` -- a plain circle for 1-bit, a "pill" for wider
 /// pins) plus this chip's own boundary dev-pins (small rounded-rect
@@ -177,12 +239,14 @@ pub(crate) fn draw_pins(
 		}
 		// the clickable part
 		draw_input_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin.id, pin_state);
+		draw_dev_pin_value_label(geo, pin.position, pin.bit_count, pin.value_display_mode, pin_state, pin.id);
 	}
 	for pin in &chip.output_pins {
 		draw_dev_pin_body(geo, pin.position, pin.bit_count, pin.colour, pin_state.logic_state(pin.id, 0), false);
 		if hover_world_pos.is_some_and(|p| point_in_dev_pin_body(p, pin.position, pin.bit_count, false)) {
 			hovered = Some((pin.position, pin.name.clone()));
 		}
+		draw_dev_pin_value_label(geo, pin.position, pin.bit_count, pin.value_display_mode, pin_state, pin.id);
 	}
 
 	hovered
@@ -199,5 +263,42 @@ mod tests {
 		let mut geo_1bit = SceneGeometry::default();
 		draw_pin_shape(&mut geo_1bit, Vec2::ZERO, PinBitCount::Bit1, theme::PIN_COL);
 		assert_eq!(geo_1bit.triangles.len(), PIN_SEGMENTS as usize * 3);
+	}
+
+	/// Reports each bit of pin 0 from a raw bitmask -- enough to exercise
+	/// the value formatting below.
+	struct Bits(u32);
+	impl PinStateLookup for Bits {
+		fn is_high(&self, _owner: i32, _pin: i32) -> Option<bool> {
+			Some(self.0 & 1 == 1)
+		}
+		fn bit_logic_state(&self, _owner: i32, _pin: i32, bit_index: u32) -> Option<LogicState> {
+			Some(if (self.0 >> bit_index) & 1 == 1 { LogicState::High } else { LogicState::Low })
+		}
+	}
+
+	#[test]
+	fn dev_pin_value_formats_each_display_mode() {
+		assert_eq!(dev_pin_value_text(&Bits(0b1010), 0, PinBitCount::Bit4, ValueDisplayMode::Decimal), "10");
+		assert_eq!(dev_pin_value_text(&Bits(0b1010), 0, PinBitCount::Bit4, ValueDisplayMode::SignedDecimal), "-6");
+		assert_eq!(dev_pin_value_text(&Bits(0b1111), 0, PinBitCount::Bit4, ValueDisplayMode::SignedDecimal), "-1");
+		assert_eq!(dev_pin_value_text(&Bits(0b0011), 0, PinBitCount::Bit4, ValueDisplayMode::SignedDecimal), "3");
+		assert_eq!(dev_pin_value_text(&Bits(0xFF), 0, PinBitCount::Bit8, ValueDisplayMode::Hex), "FF");
+		assert_eq!(dev_pin_value_text(&Bits(1), 0, PinBitCount::Bit1, ValueDisplayMode::Decimal), "", "1-bit pins never show a value");
+		assert_eq!(dev_pin_value_text(&Bits(7), 0, PinBitCount::Bit8, ValueDisplayMode::None), "");
+	}
+
+	#[test]
+	fn drawing_the_value_label_appends_a_quad_and_text_below_the_body() {
+		let mut geo = SceneGeometry::default();
+		draw_dev_pin_value_label(&mut geo, Vec2::ZERO, PinBitCount::Bit4, ValueDisplayMode::Decimal, &Bits(0b0011), 0);
+		assert_eq!(geo.triangles.len(), 6, "one background quad");
+		assert_eq!(geo.labels.len(), 1);
+		assert_eq!(geo.labels[0].text, "3");
+		assert!(geo.labels[0].pos.y < 0.0, "the read-out sits below the pin body");
+
+		let mut off_geo = SceneGeometry::default();
+		draw_dev_pin_value_label(&mut off_geo, Vec2::ZERO, PinBitCount::Bit4, ValueDisplayMode::None, &Bits(0b0011), 0);
+		assert!(off_geo.triangles.is_empty() && off_geo.labels.is_empty(), "mode Off draws nothing");
 	}
 }

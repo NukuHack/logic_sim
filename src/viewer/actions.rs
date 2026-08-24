@@ -10,7 +10,9 @@ use crate::viewer::library::{
 	chip_delete_confirm_message, delete_chip_from_library, delete_collection, move_selected_library_row, reset_library_popup_state,
 	sync_library_collections,
 };
-use crate::viewer::popups::{apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell, cycle_pref};
+use crate::viewer::popups::{
+	apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_naming_popup, confirm_pin_edit_popup, confirm_rom_cell, cycle_pref,
+};
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
 };
@@ -186,6 +188,12 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		EditorAction::CustomizeGrabDisplayScale(i) => customize_flow::start_scale_display(v, i),
 		EditorAction::CustomizeResizeStart(corner) => customize_flow::start_resize(v, corner),
 		EditorAction::CustomizePlaceEntry(entry) => customize_flow::place_list_entry(v, entry),
+		EditorAction::ConfirmPinEdit => confirm_pin_edit_popup(v),
+		EditorAction::PinEditSetDisplayMode(i) => {
+			if let Some(edit) = v.pin_edit.as_mut() {
+				edit.display_mode_index = i;
+			}
+		}
 		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
 	}
 }

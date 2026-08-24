@@ -445,7 +445,6 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			let title = match v.naming_purpose {
 				NamingPurpose::RenameProject => "Rename project",
 				NamingPurpose::LabelComponent(_) => "Label component",
-				NamingPurpose::LabelDevPin { .. } => "Label pin",
 				NamingPurpose::ConfigurePulseDuration(_) => "Pulse length (ticks)",
 			};
 			editor_ui::build_simple_naming_popup(title, &v.overlay_text_input, confirm_enabled, vw, vh, mouse)
@@ -459,6 +458,20 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 		Overlay::SaveChip => {
 			let mode = save_chip_mode(v, &v.overlay_text_input);
 			editor_ui::build_save_chip_popup(&v.root_chip_name, &v.overlay_text_input, mode, vw, vh, mouse)
+		}
+		Overlay::PinEdit => {
+			let Some(edit) = v.pin_edit.as_ref() else { return editor_ui::EditorFrame::default() };
+			let chip = v.library.get(&v.root_chip_name);
+			let pins = if edit.is_input { &chip.input_pins } else { &chip.output_pins };
+			let pin = pins.iter().find(|p| p.id == edit.pin_id);
+			editor_ui::build_pin_edit_popup(
+				pin.map(|p| p.name.as_str()).unwrap_or_default(),
+				pin.is_some_and(|p| p.bit_count != crate::description::PinBitCount::Bit1),
+				edit.display_mode_index,
+				vw,
+				vh,
+				mouse,
+			)
 		}
 		Overlay::UnsavedChanges => editor_ui::build_unsaved_changes_popup(vw, vh, mouse),
 		// Handled separately by `build_viewer_stack` (its frame carries the

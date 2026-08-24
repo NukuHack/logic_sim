@@ -34,6 +34,9 @@ pub(crate) enum Overlay {
 	RomEditor,
 	SaveChip,
 	CustomizeChip,
+	/// The boundary-dev-pin edit popup (`PinEditMenu`): rename +, for
+	/// multi-bit pins, the "Decimal Display" wheel.
+	PinEdit,
 	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`).
 	UnsavedChanges,
 }
@@ -49,6 +52,7 @@ impl Overlay {
 			Overlay::RomEditor => LayerId::RomEditor,
 			Overlay::SaveChip => LayerId::SaveChip,
 			Overlay::CustomizeChip => LayerId::CustomizePanel,
+			Overlay::PinEdit => LayerId::PinEdit,
 			Overlay::UnsavedChanges => LayerId::UnsavedChanges,
 		}
 	}
@@ -86,10 +90,6 @@ pub(crate) enum NamingPurpose {
 	/// Set a placed subchip's display label (`SubChipDescription::label`).
 	/// `i32` is that subchip's id within the current root chip.
 	LabelComponent(i32),
-	/// Set the name of one of the *current root chip's own* boundary
-	/// dev-pins (`ChipDescription::input_pins`/`output_pins`) -- never a
-	/// subchip's pin, per the brief.
-	LabelDevPin { is_input: bool, id: i32 },
 	/// Pulse length, in simulation ticks (`SubChipDescription::internal_data[0]`,
 	/// mirrored into `Simulator`'s per-chip `internal_state[DURATION]` --
 	/// see `sim::process_builtin_chip`'s `Pulse` arm).
@@ -121,6 +121,21 @@ pub(crate) struct RomEditorState {
 	pub(crate) component_id: i32,
 	pub(crate) data: Vec<u32>,
 	pub(crate) selected: usize,
+}
+
+/// Working state for the pin-edit popup (`Overlay::PinEdit`, mirroring
+/// `PinEditMenu`): which of the current root chip's own boundary dev-pins
+/// it's editing, plus the draft "Decimal Display" wheel selection --
+/// `display_mode_index` is an index into
+/// `editor_ui::PIN_DECIMAL_DISPLAY_OPTIONS` and only meaningful for pins
+/// wider than one bit. The name draft lives in the shared
+/// `overlay_text_input` like every other text-field popup. Both halves
+/// are written back onto the pin only on Confirm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PinEditState {
+	pub(crate) is_input: bool,
+	pub(crate) pin_id: i32,
+	pub(crate) display_mode_index: usize,
 }
 
 /// What [`Overlay::UnsavedChanges`]'s Continue button should do once the
@@ -232,6 +247,8 @@ pub(crate) struct ViewerState {
 	pub(crate) key_select_purpose: KeySelectPurpose,
 	/// Draft state for `Overlay::RomEditor`, when open.
 	pub(crate) rom_editor: Option<RomEditorState>,
+	/// Draft state for `Overlay::PinEdit`, when open -- see [`PinEditState`].
+	pub(crate) pin_edit: Option<PinEditState>,
 	/// What `Overlay::UnsavedChanges`' Continue should resume -- see
 	/// [`PendingUnsavedAction`]'s docs. `Some` exactly while the popup is
 	/// open.
@@ -367,6 +384,7 @@ impl ViewerState {
 			naming_purpose: Default::default(),
 			key_select_purpose: Default::default(),
 			rom_editor: None,
+			pin_edit: None,
 			pending_unsaved_action: None,
 			exit_requested: false,
 			customize: None,
@@ -541,6 +559,9 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 		Overlay::KeySelect => v.key_select_purpose = KeySelectPurpose::default(),
 		Overlay::RomEditor => v.rom_editor = None,
 		Overlay::Search => v.search_query.clear(),
+		// The pin-edit draft dies with the popup, success or not (the
+		// confirm path writes its values onto the pin *before* closing).
+		Overlay::PinEdit => v.pin_edit = None,
 		Overlay::UnsavedChanges => {
 			// Cancel: the pending action is dropped with the prompt --
 			// mirroring `UnsavedChangesPopup` never firing its callback

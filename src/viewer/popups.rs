@@ -1,8 +1,9 @@
 //! Confirm handlers for the generic popups: the naming popup (project
-//! rename, component/pin labels, pulse length), the ROM cell editor, and
+//! rename, component labels, pulse length), the ROM cell editor, and
 //! the key-select popup -- each shared by its popup's Confirm *button*
 //! and pressing Enter directly, so the two input paths can't drift
-//! apart.
+//! apart. Also the pin-edit popup's own confirm (rename + Decimal
+//! Display mode), which follows the same shape.
 
 use crate::render::editor_ui;
 use crate::viewer::state::{close_top_overlay, KeySelectPurpose, NamingPurpose, ViewerState};
@@ -51,15 +52,6 @@ pub(crate) fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<Stri
 		NamingPurpose::LabelComponent(id) => {
 			if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
 				sub.label = if trimmed.is_empty() { None } else { Some(trimmed) };
-			}
-		}
-		NamingPurpose::LabelDevPin { is_input, id } => {
-			let chip = v.library.get_mut(&root_chip_name);
-			let pins = if is_input { &mut chip.input_pins } else { &mut chip.output_pins };
-			if let Some(pin) = pins.iter_mut().find(|p| p.id == id) {
-				if !trimmed.is_empty() {
-					pin.name = trimmed;
-				}
 			}
 		}
 		NamingPurpose::ConfigurePulseDuration(id) => match trimmed.parse::<u32>() {
@@ -153,9 +145,41 @@ pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<
 	close_top_overlay(v);
 }
 
+/// Commits the pin-edit popup's draft onto its target boundary dev-pin
+/// (`EditorAction::ConfirmPinEdit`, shared by the popup's Confirm button
+/// and pressing Enter): renames it when a fresh, validly-sized name is
+/// typed (empty/too-long drafts leave the name alone, matching the
+/// disabled Confirm button) and -- for multi-bit pins -- writes the
+/// chosen Decimal Display mode back to
+/// `PinDescription::value_display_mode`, which scene rendering reads each
+/// frame. Always closes the popup afterwards.
+pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
+	if let Some(edit) = v.pin_edit.take() {
+		let trimmed = v.overlay_text_input.trim().to_string();
+		let name_len = trimmed.chars().count();
+		if !trimmed.is_empty() && name_len <= editor_ui::MAX_PIN_NAME_LENGTH {
+			let root_chip_name = v.root_chip_name.clone();
+			let chip = v.library.get_mut(&root_chip_name);
+			let pins = if edit.is_input { &mut chip.input_pins } else { &mut chip.output_pins };
+			if let Some(pin) = pins.iter_mut().find(|p| p.id == edit.pin_id) {
+				pin.name = trimmed;
+				// Mirrors `PinEditMenu.Confirm`'s guard: 1-bit pins never
+				// take a display mode (the popup offers no wheel for them).
+				if pin.bit_count != crate::PinBitCount::Bit1 {
+					pin.value_display_mode = crate::description::ValueDisplayMode::from_int(
+						edit.display_mode_index.min(editor_ui::PIN_DECIMAL_DISPLAY_OPTIONS.len() - 1) as i32,
+					);
+				}
+			}
+		}
+	}
+	close_top_overlay(v);
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::viewer::state::PinEditState;
 
 	#[test]
 	fn parse_rom_word_accepts_decimal_and_hex() {
@@ -181,5 +205,57 @@ mod tests {
 		assert!(prefs.prefs_sim_paused);
 
 		cycle_pref(&mut prefs, 99); // out of range: no-op
+	}
+
+	fn viewer_with_dev_pin(bit_count: crate::PinBitCount) -> ViewerState {
+		let mut library = crate::ChipLibrary::new();
+		let mut chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
+		chip.output_pins.push(crate::PinDescription::new("OUT", 4, bit_count));
+		library.add(chip);
+		ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	fn open_pin_edit(v: &mut ViewerState) {
+		v.overlays.push(crate::viewer::state::Overlay::PinEdit);
+	}
+
+	/// The popup's whole contract: Confirm writes both halves (name +
+	/// Decimal Display mode for multi-bit pins) onto the pin and closes;
+	/// a 1-bit pin never gets a mode written; an empty name leaves the
+	/// old one.
+	#[test]
+	fn confirm_pin_edit_writes_name_and_display_mode() {
+		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit8);
+		open_pin_edit(&mut v);
+		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 3 });
+		v.overlay_text_input = "DATA BUS".to_string();
+
+		confirm_pin_edit_popup(&mut v);
+
+		let pin = &v.library.get("ROOT").output_pins[0];
+		assert_eq!(pin.name, "DATA BUS");
+		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::Hex);
+		assert!(v.pin_edit.is_none() && v.overlays.is_empty(), "the popup closed with its draft dropped");
+	}
+
+	#[test]
+	fn confirm_pin_edit_ignores_mode_for_1bit_and_bad_names() {
+		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit1);
+		open_pin_edit(&mut v);
+		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 1 });
+		v.overlay_text_input = "CLK".to_string();
+		confirm_pin_edit_popup(&mut v);
+		let pin = &v.library.get("ROOT").output_pins[0];
+		assert_eq!(pin.name, "CLK");
+		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::None, "1-bit pins don't take a display mode");
+
+		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit8);
+		open_pin_edit(&mut v);
+		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 2 });
+		v.overlay_text_input = "   ".to_string();
+		confirm_pin_edit_popup(&mut v);
+		let pin = &v.library.get("ROOT").output_pins[0];
+		assert_eq!(pin.name, "OUT", "an empty/whitespace draft keeps the old name");
+		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::None);
 	}
 }
