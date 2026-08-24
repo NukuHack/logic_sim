@@ -64,7 +64,7 @@ fn build_display_sim(builtin_name: &str, sub_inputs: &[(i32, PinBitCount)], sub_
 fn drive(sim: &mut Simulator, values: &[(i32, u32)], steps: usize) {
 	let inputs: Vec<ExternalInput> = values.iter().map(|&(id, state)| ExternalInput { address: PinAddress::new(id, id), state }).collect();
 	for _ in 0..steps {
-		sim.run_simulation_step(&inputs);
+		sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 	}
 }
 

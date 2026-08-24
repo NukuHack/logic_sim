@@ -144,7 +144,11 @@ fn update_viewer_sim(v: &mut ViewerState) {
 
 	if paused {
 		// Mirrors `SimThread`'s paused branch: sleep-equivalent, no debt
-		// accrues. `was_paused` is cleared on resume below.
+		// accrues. `was_paused` is cleared on resume below. The audio mix
+		// still decays (`UpdateInPausedState`) so a sounding buzzer fades
+		// out rather than hanging.
+		let mut audio = lock_audio(&v.audio);
+		v.sim.update_in_paused_state(&mut audio.sim_audio);
 		v.sim_pacing.debt_ticks = 0.0;
 		v.sim_pacing.was_paused = true;
 		return;
@@ -177,6 +181,7 @@ fn update_viewer_sim(v: &mut ViewerState) {
 /// One simulation step with every input dev-pin's current driven state
 /// (`Simulator.RunSimulationStep(simChip, project.inputPins, ..)`).
 fn run_one_sim_step(v: &mut ViewerState) {
+	let mut audio = lock_audio(&v.audio);
 	let external_inputs: Vec<crate::sim::ExternalInput> = v
 		.library
 		.get(&v.root_chip_name)
@@ -184,7 +189,13 @@ fn run_one_sim_step(v: &mut ViewerState) {
 		.iter()
 		.map(|pin| crate::sim::ExternalInput { address: crate::description::PinAddress::new(pin.id, 0), state: pin.driven_state })
 		.collect();
-	v.sim.run_simulation_step(&external_inputs);
+	v.sim.run_simulation_step(&external_inputs, &mut audio.sim_audio);
+}
+
+/// Locks the shared buzzer-audio state for the simulation side, recovering
+/// from a poisoned lock (an audio panic must not take the whole editor down).
+fn lock_audio(audio: &crate::audio::SharedAudioState) -> std::sync::MutexGuard<'_, crate::audio::AudioState> {
+	audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Rebuilds the viewer's UI stack from live state, bottom-to-top: canvas

@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod builtins;
 pub mod description;
 pub mod json;

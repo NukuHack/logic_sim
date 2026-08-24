@@ -148,6 +148,12 @@ pub(crate) struct ViewerState {
 	pub(crate) last_cursor: Vec2,
 	pub(crate) camera_fitted: bool,
 
+	/// The app's shared buzzer-audio state: simulation steps register
+	/// notes into it, the output stream samples from it. Shared (rather
+	/// than owned here) so the stream keeps running across project
+	/// switches, like the original's ever-present `AudioUnity`.
+	pub(crate) audio: crate::audio::SharedAudioState,
+
 	/// The project's saved prefs/collections, edited live by the
 	/// preferences/library overlays and written back to disk on Apply.
 	pub(crate) prefs: ProjectDescription,
@@ -268,7 +274,13 @@ impl ViewerState {
 	/// present in `library`), with the simulation built and prefs-driven
 	/// simulation settings applied. Callers tweak post-construction bits
 	/// (key modifiers, camera fitting) directly afterwards.
-	pub(crate) fn new(project_name: &str, library: ChipLibrary, root_chip_name: String, viewport: Vec2) -> Self {
+	pub(crate) fn new(
+		project_name: &str,
+		library: ChipLibrary,
+		root_chip_name: String,
+		viewport: Vec2,
+		audio: crate::audio::SharedAudioState,
+	) -> Self {
 		let root_desc = library.get(&root_chip_name).clone();
 		let sim = Simulator::build(&root_desc, &library);
 		let mut v = Self {
@@ -280,6 +292,7 @@ impl ViewerState {
 			dragging: false,
 			last_cursor: Vec2::ZERO,
 			camera_fitted: false,
+			audio,
 			prefs: ProjectDescription::default(),
 			sim_pacing: SimPacing::default(),
 			advance_single_step: false,

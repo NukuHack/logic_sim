@@ -473,7 +473,7 @@ mod tests {
 		panel.displays.push(DisplayDescription::new(4, Vec2::new(0.5, 0.25), 1.0));
 		library.add(panel.clone());
 
-		let mut v = ViewerState::new("", library, "Panel".to_string(), Vec2::new(1280.0, 800.0));
+		let mut v = ViewerState::new("", library, "Panel".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.last_cursor = Vec2::new(640.0, 400.0);
 		v.camera_fitted = true;
 

@@ -62,7 +62,7 @@ fn wrap_builtin(
 fn drive_and_step(sim: &mut Simulator, in_state: u32, steps: usize) {
 	let inputs = [ExternalInput { address: PinAddress::new(IN_PIN_ID, IN_PIN_ID), state: in_state }];
 	for _ in 0..steps {
-		sim.run_simulation_step(&inputs);
+		sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 	}
 }
 

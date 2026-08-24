@@ -54,7 +54,7 @@ fn read_output(sim: &Simulator, out_pin_id: i32) -> u32 {
 fn key_chip_is_low_when_letter_not_held() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 0);
 }
@@ -64,7 +64,7 @@ fn key_chip_is_high_when_matching_letter_held() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
 	sim.held_keys.insert('A');
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 1);
 }
@@ -74,7 +74,7 @@ fn key_chip_ignores_other_held_letters() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
 	sim.held_keys.insert('B');
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 0);
 }
@@ -90,7 +90,7 @@ fn key_chip_does_not_match_lowercase_in_held_keys() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
 	sim.held_keys.insert('a');
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 0);
 }
@@ -100,13 +100,13 @@ fn key_chip_releasing_the_key_turns_output_back_off() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
 	sim.held_keys.insert('A');
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 1);
 
 	sim.held_keys.remove(&'A');
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 0);
 }
@@ -119,7 +119,7 @@ fn key_chip_releasing_the_key_turns_output_back_off() {
 fn key_chip_with_no_internal_data_does_not_panic() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, None);
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 0);
 }
@@ -130,7 +130,7 @@ fn key_chip_with_no_internal_data_does_not_panic() {
 fn key_mods_chip_outputs_zero_by_default() {
 	let (mut sim, out_id) = build_sim_around("MOD KEYS", PinBitCount::Bit8, None);
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id), 0);
 }
@@ -140,7 +140,7 @@ fn key_mods_chip_outputs_current_modifier_bitmask() {
 	let (mut sim, out_id) = build_sim_around("MOD KEYS", PinBitCount::Bit8, None);
 	sim.key_modifiers = key_mods_bits::SHIFT | key_mods_bits::ALT;
 	for _ in 0..2 {
-		sim.run_simulation_step(&[]);
+		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 
 	let state = read_output(&sim, out_id);

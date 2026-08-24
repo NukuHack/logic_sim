@@ -371,7 +371,7 @@ mod tests {
 		let root_chip_name = "New Chip".to_string();
 		let mut library = library;
 		library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
-		ViewerState::new("", library, root_chip_name, Vec2::new(1280.0, 800.0))
+		ViewerState::new("", library, root_chip_name, Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
 	}
 
 	#[test]

@@ -108,8 +108,6 @@ pub struct Simulator {
 	/// KeyMods-chip state: current modifier keys, as a `key_mods_bits` bitmask
 	/// (set by host).
 	pub key_modifiers: u32,
-	/// Buzzer notes registered this frame: (freq_index, volume_index).
-	pub registered_notes: Vec<(i32, u32)>,
 }
 
 /// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's
@@ -148,7 +146,6 @@ impl Simulator {
 			elapsed_seconds_old: 0.0,
 			held_keys: std::collections::HashSet::new(),
 			key_modifiers: 0,
-			registered_notes: Vec::new(),
 		}
 	}
 
@@ -195,9 +192,12 @@ impl Simulator {
 	}
 
 	/// Run a single simulation step: apply external inputs, then propagate
-	/// signals through the whole chip graph.
-	pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput]) {
-		self.registered_notes.clear();
+	/// signals through the whole chip graph. Buzzer outputs land in
+	/// `audio`, whose smoothing advances by the real time this step took --
+	/// the exact beat of `Simulator.RunSimulationStep`. `audio` lives
+	/// outside the simulator (on the host app) so it survives rebuilds.
+	pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput], audio: &mut crate::audio::SimAudio) {
+		audio.init_frame();
 
 		self.pcg_rng_state = self.rng.gen::<u32>();
 		self.can_dynamic_reorder_this_frame = self.simulation_frame.is_multiple_of(100);
@@ -211,24 +211,32 @@ impl Simulator {
 		}
 
 		if self.needs_order_pass {
-			self.step_chip_reorder(self.root);
+			self.step_chip_reorder(self.root, audio);
 			self.needs_order_pass = false;
 		} else {
-			self.step_chip(self.root);
+			self.step_chip(self.root, audio);
 		}
 
-		self.update_audio_state();
+		self.notify_audio_state(audio);
 	}
 
-	fn update_audio_state(&mut self) {
-		let elapsed = self.start_time.elapsed().as_secs_f64();
-		let _delta_time = if self.simulation_frame <= 1 { 0.0 } else { elapsed - self.elapsed_seconds_old };
-		self.elapsed_seconds_old = elapsed;
-		// Host can inspect `registered_notes` after each step to drive audio.
+	/// Keeps the audio mix fading toward silence while the simulation is
+	/// paused (`Simulator.UpdateInPausedState`): no notes register, but the
+	/// smoothing pass still runs so a sounding buzzer decays away.
+	pub fn update_in_paused_state(&mut self, audio: &mut crate::audio::SimAudio) {
+		audio.init_frame();
+		self.notify_audio_state(audio);
+	}
+
+	fn notify_audio_state(&mut self, audio: &mut crate::audio::SimAudio) {
+		let elapsed_seconds = self.start_time.elapsed().as_secs_f64();
+		let delta_time = if self.simulation_frame <= 1 { 0.0 } else { elapsed_seconds - self.elapsed_seconds_old };
+		self.elapsed_seconds_old = elapsed_seconds;
+		audio.notify_all_notes_registered(delta_time);
 	}
 
 	/// Recursively propagate signals through this chip and its subchips.
-	fn step_chip(&mut self, chip_idx: ChipIdx) {
+	fn step_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
 		self.propagate_inputs(chip_idx);
 
 		let num_sub = self.chips[chip_idx.0].sub_chips.len();
@@ -248,9 +256,9 @@ impl Simulator {
 			}
 
 			if self.chips[next_sub_chip.0].is_builtin {
-				self.process_builtin_chip(next_sub_chip);
+				self.process_builtin_chip(next_sub_chip, audio);
 			} else {
-				self.step_chip(next_sub_chip);
+				self.step_chip(next_sub_chip, audio);
 			}
 
 			self.propagate_outputs(next_sub_chip);
@@ -262,7 +270,7 @@ impl Simulator {
 	/// Like `step_chip`, but also determines (and records) a good traversal
 	/// order for the subchips as it goes, swapping them into place. Needed
 	/// once after any structural edit to the graph.
-	fn step_chip_reorder(&mut self, chip_idx: ChipIdx) {
+	fn step_chip_reorder(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
 		self.propagate_inputs(chip_idx);
 
 		let mut num_remaining = self.chips[chip_idx.0].sub_chips.len();
@@ -275,9 +283,9 @@ impl Simulator {
 			num_remaining -= 1;
 
 			if self.chips[next_sub_chip.0].chip_type == ChipType::Custom {
-				self.step_chip_reorder(next_sub_chip);
+				self.step_chip_reorder(next_sub_chip, audio);
 			} else {
-				self.process_builtin_chip(next_sub_chip);
+				self.process_builtin_chip(next_sub_chip, audio);
 			}
 
 			self.propagate_outputs(next_sub_chip);
@@ -419,7 +427,7 @@ impl Simulator {
 		self.needs_order_pass = true;
 	}
 
-	fn process_builtin_chip(&mut self, chip_idx: ChipIdx) {
+	fn process_builtin_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
 		use ChipType::*;
 		let chip_type = self.chips[chip_idx.0].chip_type;
 
@@ -552,7 +560,7 @@ impl Simulator {
 			Buzzer => {
 				let freq_index = pin_state::bit_states(in_state!(0)) as i32;
 				let volume_index = pin_state::bit_states(in_state!(1)) as u32;
-				self.registered_notes.push((freq_index, volume_index));
+				audio.register_note(freq_index, volume_index);
 			}
 			_ => {
 				if chip_type.is_bus_origin_type() {

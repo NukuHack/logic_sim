@@ -50,6 +50,14 @@ pub(crate) struct App {
 	/// `frame::build_menu_stack`). Immediate-mode, same as `ViewerState::stack`:
 	/// every click/wheel event dispatches against what was just drawn.
 	pub(crate) menu_stack: UiStack<UiAction>,
+
+	/// The app-wide buzzer-audio state handed to every opened viewer, plus
+	/// its output stream (`None` where no audio device is available -- the
+	/// app runs fine silently). Kept alive for the whole session like the
+	/// original's ever-present `AudioUnity` component.
+	pub(crate) audio: crate::audio::SharedAudioState,
+	#[allow(dead_code)] // held (not read) purely to keep the stream playing
+	pub(crate) audio_player: Option<crate::audio::AudioPlayer>,
 }
 
 use crate::render::menu_ui::UiAction;
@@ -58,6 +66,16 @@ impl App {
 	pub(crate) fn new(paths: SavePaths) -> Self {
 		let mut menu = MainMenu::new(paths.clone());
 		menu.on_menu_opened();
+
+		let audio = crate::audio::default_shared_state();
+		let audio_player = match crate::audio::spawn_player(std::sync::Arc::clone(&audio)) {
+			Ok(player) => Some(player),
+			Err(reason) => {
+				eprintln!("audio disabled: {reason}");
+				None
+			}
+		};
+
 		App {
 			paths,
 			menu,
@@ -69,6 +87,8 @@ impl App {
 			mouse_pos: Vec2::ZERO,
 			modifiers: winit::keyboard::ModifiersState::empty(),
 			menu_stack: UiStack::new(),
+			audio,
+			audio_player,
 		}
 	}
 
@@ -101,7 +121,7 @@ impl App {
 				let root_chip_name = unique_new_chip_name(&library);
 				library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
 
-				let mut v = ViewerState::new(name, library, root_chip_name.clone(), self.viewport);
+				let mut v = ViewerState::new(name, library, root_chip_name.clone(), self.viewport, std::sync::Arc::clone(&self.audio));
 				// In case modifier keys are already held down (e.g. Alt from the menu action that
 				// opened this project) by the time the viewer appears, rather than only picking them up on the next change.
 				v.sim.key_modifiers = encode_modifiers(self.modifiers);

@@ -55,7 +55,7 @@ fn simulates_the_loaded_not_chip_correctly() {
 	for &input_val in &[0u32, 1] {
 		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
 		for _ in 0..3 {
-			sim.run_simulation_step(&inputs);
+			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
 
 		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
@@ -939,7 +939,7 @@ fn simulates_the_loaded_not_chip_correctly2() {
 	for &input_val in &[0u32, 1] {
 		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
 		for _ in 0..3 {
-			sim.run_simulation_step(&inputs);
+			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
 
 		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
@@ -981,7 +981,7 @@ fn simulates_loaded_not_chip_with_serialization_roundtrip() {
 	for &input_val in &[0u32, 1] {
 		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
 		for _ in 0..3 {
-			sim.run_simulation_step(&inputs);
+			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
 
 		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");

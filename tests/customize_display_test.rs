@@ -44,7 +44,7 @@ fn embedded_display_states_resolve_through_the_live_simulator() {
 
 	let high = vec![ExternalInput { address: PinAddress::new(1, 0), state: 1 }];
 	for _ in 0..4 {
-		sim.run_simulation_step(&high);
+		sim.run_simulation_step(&high, &mut logic_sim::audio::SimAudio::new());
 	}
 
 	// Exactly the lookup the customize preview performs.
@@ -54,7 +54,7 @@ fn embedded_display_states_resolve_through_the_live_simulator() {
 
 	drop(lookup);
 	for _ in 0..4 {
-		sim.run_simulation_step(&[ExternalInput { address: PinAddress::new(1, 0), state: 0 }]);
+		sim.run_simulation_step(&[ExternalInput { address: PinAddress::new(1, 0), state: 0 }], &mut logic_sim::audio::SimAudio::new());
 	}
 	let lookup = SimulatorPinState { sim: &sim, scope: sim.root() };
 	assert_eq!(lookup.is_high(4, 0), Some(false), "back to low after driving low");
@@ -130,7 +130,7 @@ fn placed_panel_embedded_display_lights_on_canvas() {
 	let mut sim = Simulator::build(&host.clone(), &library);
 	let driven = vec![ExternalInput { address: PinAddress::new(9, 1), state: 1 }];
 	for _ in 0..4 {
-		sim.run_simulation_step(&driven);
+		sim.run_simulation_step(&driven, &mut logic_sim::audio::SimAudio::new());
 	}
 
 	let lookup = SimulatorPinState { sim: &sim, scope: sim.root() };
