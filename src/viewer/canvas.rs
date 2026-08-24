@@ -10,6 +10,7 @@ use crate::render::layout;
 use crate::render::scene::{self, SceneGeometry};
 use crate::render::theme;
 use crate::structs::Vec2;
+use crate::viewer::bus_wiring;
 use crate::viewer::state::ViewerState;
 use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
 use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireDescription};
@@ -90,13 +91,18 @@ fn try_start_pending_wire(v: &mut ViewerState, world_pos: Vec2) -> bool {
 /// `Some`) with a click at `world_pos`:
 ///  - landing on a pin of the *opposite* role (see `PinHit::is_wire_source`/
 ///    `PendingWireEnd::is_source`) completes the wire, connecting through
-///    any bend points collected so far;
+///    any bend points collected so far -- except that two bus chips may only
+///    join when they're a linked pair;
 ///  - landing on a pin of the *same* role (e.g. input-to-input,
 ///    output-to-output) is rejected with a status message, leaving the
 ///    placement active so the player can just try a different pin;
-///  - landing on an existing wire or a component body is ignored outright
-///    (deliberately *not* a "turn" -- see this method's caller's doc
-///    comment on the empty-space branch below);
+///  - landing on an existing wire *completes into it* ("wiring into the
+///    wire"): inputs may tap into any wire, outputs only into bus wires,
+///    and the electrical endpoints resolve from the tapped wire
+///    (bus-corrected on the target side) -- see `viewer::bus_wiring`;
+///  - landing on a component body is ignored outright (deliberately *not*
+///    a "turn" -- see this method's caller's doc comment on the
+///    empty-space branch below);
 ///  - anywhere else (empty canvas) adds a bend ("turn") point there and
 ///    leaves the placement active.
 fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
@@ -119,6 +125,19 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 				"Can't connect an input to an input".to_string()
 			});
 			return;
+		}
+
+		// A wire between two bus chips (origin output -> terminus input) is
+		// only allowed between a *linked* pair -- `CanCompleteWireConnection`'s
+		// `LinkedBusPairID` check.
+		if let PendingWireEnd::Pin { owner_id, .. } = pending.start {
+			let start_type = bus_wiring::owner_chip_type(root_desc, &v.library, owner_id);
+			let end_type = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id);
+			let both_bus = start_type.is_some_and(|t| t.is_bus_type()) && end_type.is_some_and(|t| t.is_bus_type());
+			if both_bus && !bus_wiring::bus_pair_linked(root_desc, &v.library, owner_id, hit.owner_id) {
+				*status = Some("Bus chips can only be wired to their linked partner".to_string());
+				return;
+			}
 		}
 
 		let pending = v.pending_wire.take().expect("checked above");
@@ -152,9 +171,45 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	}
 
 	let max_dist = wire_click_tolerance(&v.camera);
-	let on_wire = scene::hit_test_wire(root_desc, &v.library, world_pos, max_dist).is_some();
 	let on_component = scene::hit_test_sub_chip(&placed, world_pos).is_some();
-	if on_wire || on_component {
+
+	// Completing ONTO an existing wire ("wiring into the wire"). Only wires
+	// started from a real pin get here: a wire-tap start completing onto
+	// another wire is rejected inside `resolve_completion_on_wire`.
+	if !on_component && v.pending_wire.as_ref().is_some_and(|p| matches!(p.start, PendingWireEnd::Pin { .. })) {
+		let pending = v.pending_wire.as_ref().expect("checked above");
+		let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else { unreachable!("branch guarantees a pin start") };
+		if let Some(tap) = scene::closest_wire_hit(root_desc, &v.library, world_pos, max_dist) {
+			match bus_wiring::resolve_completion_on_wire(
+				root_desc,
+				&v.library,
+				tap.wire_index,
+				matches!(pending.start, PendingWireEnd::WireTap { .. }),
+				pending.start.is_source(),
+				owner_id,
+				pin_id,
+			) {
+				Ok((source, target)) => {
+					let pending = v.pending_wire.take().expect("checked above");
+					let mut wire = WireDescription::new_tapped_target(source, target, tap.wire_index as i32, tap.segment_index, tap.point);
+					wire.points = pending.bend_points;
+					if !pending.start.is_source() {
+						wire.points.reverse();
+					}
+					v.library.get_mut(&root_chip_name).wires.push(wire);
+					v.rebuild_sim();
+					*status = None;
+					return;
+				}
+				Err(reason) => {
+					*status = Some(reason.to_string());
+					return;
+				}
+			}
+		}
+	}
+
+	if on_component {
 		// Neither a pin nor empty space -- ignored outright (not a "turn"), so the placement just
 		// stays exactly as it was and the player can click somewhere more useful instead.
 		return;
@@ -260,10 +315,15 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 	// fresh dev-pin straight to the current chip's boundary instead of a subchip instance.
 	let chip_type = v.library.try_get(&name).map(|d| d.chip_type);
 	let io_template = chip_type.and_then(builtins::io_pin_template);
+	let terminus_type = chip_type.and_then(|t| t.corresponding_bus_terminus());
 
 	// Snap the drop position when the snapping pref (or held Ctrl) says so --
 	// `ChipInteractionController`'s `ShouldSnapToGrid` branch.
 	let place_pos = if v.should_snap_to_grid() { crate::render::layout::snap_to_grid_centred(world_pos) } else { world_pos };
+
+	// Resolved before the mutable borrow below: the terminus partner's
+	// library name, for the bus-pair placement branch.
+	let terminus_name = terminus_type.and_then(|t| v.library.iter().find(|d| d.chip_type == t).map(|d| d.name.clone()));
 
 	let chip = v.library.get_mut(&root_chip_name);
 	let id = next_component_id(chip);
@@ -276,6 +336,31 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 		} else {
 			chip.output_pins.push(new_pin);
 		}
+	} else if let Some(terminus_name) = terminus_name.as_deref() {
+		debug_assert!(chip_type.is_some_and(|t| t.corresponding_bus_terminus().is_some()));
+		// Placing a bus origin auto-places its terminus partner, linked to
+		// it in both directions via `internal_data[0]`
+		// (`ChipInteractionController`'s auto-place + `SetLinkedBusPair`).
+		// The origin sits left of the drop point so the two are both
+		// visible (the original spreads the pair by `GridSize * 8`).
+		let terminus_id = id + 1;
+		let pair_spacing = crate::render::layout::GRID_SIZE * 4.0;
+		chip.sub_chips.push(SubChipDescription {
+			name,
+			id,
+			internal_data: Some(vec![terminus_id as u32]),
+			position: place_pos - Vec2::new(pair_spacing, 0.0),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		chip.sub_chips.push(SubChipDescription {
+			name: terminus_name.to_string(),
+			id: terminus_id,
+			internal_data: Some(vec![id as u32]),
+			position: place_pos + Vec2::new(pair_spacing, 0.0),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
 	} else {
 		let internal_data = default_internal_data(chip_type);
 		chip.sub_chips.push(SubChipDescription { name, id, internal_data, position: place_pos, label: None, pin_colour_info: Vec::new() });
@@ -371,21 +456,41 @@ pub(crate) fn draw_pending_wire_preview(geo: &mut SceneGeometry, pending: &Pendi
 /// three lists it could actually be sitting in.
 pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
 	let root_chip_name = v.root_chip_name.clone();
-	let chip = v.library.get_mut(&root_chip_name);
 
+	// Bus chips go together with their linked partner (`GetNonIncludedLinkedBusElements`
+	// keeps the pair together on delete in the original).
+	let mut ids = vec![id];
 	loop {
-		let next = chip.wires.iter().position(|w| w.source_pin_address.pin_owner_id == id || w.target_pin_address.pin_owner_id == id);
-		match next {
-			Some(idx) => {
-				scene::delete_wire(chip, idx);
+		let mut added = false;
+		for s in &v.library.get(&root_chip_name).sub_chips {
+			let pairs_into_ids =
+				bus_wiring::bus_partner_id(v.library.get(&root_chip_name), &v.library, s.id).is_some_and(|partner| ids.contains(&partner));
+			if !ids.contains(&s.id) && pairs_into_ids {
+				ids.push(s.id);
+				added = true;
 			}
-			None => break,
+		}
+		if !added {
+			break;
 		}
 	}
 
-	chip.sub_chips.retain(|s| s.id != id);
-	chip.input_pins.retain(|p| p.id != id);
-	chip.output_pins.retain(|p| p.id != id);
+	let chip = v.library.get_mut(&root_chip_name);
+	for &id in &ids {
+		loop {
+			let next = chip.wires.iter().position(|w| w.source_pin_address.pin_owner_id == id || w.target_pin_address.pin_owner_id == id);
+			match next {
+				Some(idx) => {
+					scene::delete_wire(chip, idx);
+				}
+				None => break,
+			}
+		}
+	}
+
+	chip.sub_chips.retain(|s| !ids.contains(&s.id));
+	chip.input_pins.retain(|p| !ids.contains(&p.id));
+	chip.output_pins.retain(|p| !ids.contains(&p.id));
 	v.rebuild_sim();
 }
 

@@ -78,6 +78,19 @@ impl ChipType {
 	pub fn is_bus_type(self) -> bool {
 		self.is_bus_origin_type() || self.is_bus_terminus_type()
 	}
+
+	/// The bus-terminus chip type that pairs with this bus *origin* type --
+	/// `ChipTypeHelper.GetCorrespondingBusTerminusType`. `None` for anything
+	/// that isn't a bus origin (terminus types have no further pair of their
+	/// own).
+	pub fn corresponding_bus_terminus(self) -> Option<ChipType> {
+		match self {
+			ChipType::Bus1Bit => Some(ChipType::BusTerminus1Bit),
+			ChipType::Bus4Bit => Some(ChipType::BusTerminus4Bit),
+			ChipType::Bus8Bit => Some(ChipType::BusTerminus8Bit),
+			_ => None,
+		}
+	}
 	/// Reconstruct from an integer, matching the original C# enum order.
 	/// Invalid values fall back to `Custom`.
 	pub fn from_int(v: i32) -> Self {
@@ -479,6 +492,32 @@ impl WireDescription {
 			connected_wire_segment_index,
 			cached_source_point: tap_point,
 			cached_target_point: Vec2::default(),
+			points: Vec::new(),
+		}
+	}
+
+	/// The mirror of [`Self::new_tapped_source`] for a wire whose *target*
+	/// end lands on an existing wire's line (`WireConnectionType::ToWireTarget`)
+	/// -- how an input is fed from the middle of another wire ("wiring into
+	/// a wire"). `target_pin_address` is the tapped wire's resolved real
+	/// target pin (see `viewer::bus_wiring` for the bus-corrected form),
+	/// and `tap_point` seeds `cached_target_point` so rendering re-projects
+	/// this end onto the anchor segment exactly like a source-side tap.
+	pub fn new_tapped_target(
+		source_pin_address: PinAddress,
+		target_pin_address: PinAddress,
+		connected_wire_index: i32,
+		connected_wire_segment_index: i32,
+		tap_point: Vec2,
+	) -> Self {
+		Self {
+			source_pin_address,
+			target_pin_address,
+			connection_type: WireConnectionType::ToWireTarget,
+			connected_wire_index,
+			connected_wire_segment_index,
+			cached_source_point: Vec2::default(),
+			cached_target_point: tap_point,
 			points: Vec::new(),
 		}
 	}

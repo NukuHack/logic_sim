@@ -18,6 +18,7 @@
 
 pub mod actions;
 pub mod app;
+pub mod bus_wiring;
 pub mod canvas;
 pub mod context_menu;
 pub mod customize;
