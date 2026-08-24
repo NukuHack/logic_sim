@@ -79,6 +79,17 @@ impl ChipType {
 		self.is_bus_origin_type() || self.is_bus_terminus_type()
 	}
 
+	/// Dev-facing builtins (`dev.RAM-8` and the BUS-TERMINUS trio) that
+	/// release builds keep out of every player-facing list -- palette
+	/// defaults, collection syncing/rows, the bottom bar, and search (see
+	/// `viewer::library::is_listed_in_current_build`). They remain fully
+	/// registered in the library either way: placing a BUS still carries
+	/// its terminus partner along, and saved projects may reference either
+	/// type, so simulation needs them present.
+	pub fn is_dev_only(self) -> bool {
+		matches!(self, ChipType::DevRam8Bit | ChipType::BusTerminus1Bit | ChipType::BusTerminus4Bit | ChipType::BusTerminus8Bit)
+	}
+
 	/// The bus-terminus chip type that pairs with this bus *origin* type --
 	/// `ChipTypeHelper.GetCorrespondingBusTerminusType`. `None` for anything
 	/// that isn't a bus origin (terminus types have no further pair of their

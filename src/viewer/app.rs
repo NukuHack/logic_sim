@@ -137,6 +137,11 @@ impl App {
 					prefs.starred_list = default_starred_list();
 				}
 				v.prefs = prefs;
+				// Projects saved from a debug build may still list the
+				// dev-only builtins (dev.RAM-8, the bus termini); release
+				// builds drop those rows from the palette on open -- see
+				// `prune_hidden_chips_from_palette`.
+				crate::viewer::library::prune_hidden_chips_from_palette(&mut v.prefs, &v.library);
 				v.sync_sim_clock_pref();
 
 				self.screen = Screen::Viewer(Box::new(v));

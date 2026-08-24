@@ -55,6 +55,27 @@ fn chip_contains(library: &ChipLibrary, chip_name: &str, target: &str, visited: 
 	desc.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(target) || chip_contains(library, &s.name, target, visited))
 }
 
+/// Whether dev-only builtins (`ChipType::is_dev_only`) are hidden from
+/// player-facing lists in this build -- release builds hide them; debug
+/// builds list them like any other chip.
+pub(crate) fn dev_chips_hidden() -> bool {
+	cfg!(not(debug_assertions))
+}
+
+/// Whether `name` belongs in a player-facing chip list (library panel,
+/// bottom bar, search) in a build where dev-only chips are
+/// `include_dev`-visible. Resolves the name through `library`, so a custom
+/// chip shadowing a dev-only builtin stays listed (its type is `Custom`);
+/// names with no library entry are left alone.
+pub(crate) fn is_listed_in_build(library: &ChipLibrary, name: &str, include_dev: bool) -> bool {
+	include_dev || !library.try_get(name).is_some_and(|d| d.chip_type.is_dev_only())
+}
+
+/// [`is_listed_in_build`] against the build actually running.
+pub(crate) fn is_listed_in_current_build(library: &ChipLibrary, name: &str) -> bool {
+	is_listed_in_build(library, name, !dev_chips_hidden())
+}
+
 /// Ensures `prefs.chip_collections` has an `OTHER` collection and that
 /// every chip in `library` belongs to *some* collection, adding any
 /// stragglers to `OTHER` -- mirrors the collection-syncing half of
@@ -63,10 +84,20 @@ fn chip_contains(library: &ChipLibrary, chip_name: &str, target: &str, visited: 
 /// always still show up somewhere in the panel.
 ///
 /// Chips named in `unsaved_drafts` (never-saved Ctrl+N-style drafts --
-/// see `ViewerState::unsaved_drafts`) are deliberately skipped: they
-/// don't join the collections (and thus can't reach disk through any
-/// prefs write) until they've actually been saved with Ctrl+S.
+/// see `ViewerState::unsaved_drafts`) are deliberately skipped, and so
+/// are dev-only builtins in release builds (see `dev_chips_hidden`):
+/// neither joins the collections (and thus can't reach disk through any
+/// prefs write) until/unless they legitimately belong there.
 pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: &ChipLibrary, unsaved_drafts: &std::collections::HashSet<String>) {
+	sync_library_collections_gated(prefs, library, unsaved_drafts, !dev_chips_hidden())
+}
+
+fn sync_library_collections_gated(
+	prefs: &mut ProjectDescription,
+	library: &ChipLibrary,
+	unsaved_drafts: &std::collections::HashSet<String>,
+	include_dev: bool,
+) {
 	if !prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
 		prefs.chip_collections.push(ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
 	}
@@ -78,10 +109,37 @@ pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: 
 	let mut stray_names: Vec<String> = library
 		.iter()
 		.map(|d| d.name.clone())
-		.filter(|n| !already_collected.contains(&n.to_ascii_lowercase()) && !unsaved_drafts.contains(&n.to_ascii_lowercase()))
+		.filter(|n| {
+			!already_collected.contains(&n.to_ascii_lowercase())
+				&& !unsaved_drafts.contains(&n.to_ascii_lowercase())
+				&& is_listed_in_build(library, n, include_dev)
+		})
 		.collect();
 	stray_names.sort();
 	prefs.chip_collections[default_index].chips.extend(stray_names);
+}
+
+/// Drops dev-only builtins (`ChipType::is_dev_only`) from a project's
+/// in-memory palette bookkeeping -- every collection row plus any starred
+/// entries -- when running in a build that hides them (release; see
+/// `dev_chips_hidden`). Projects saved from a debug build may still carry
+/// those names on disk; pruning here (rather than at render time) keeps
+/// every row index the UI and its click handlers agree on. Nothing is
+/// written back to disk by this itself, and the library entry survives --
+/// placing a BUS still pairs with its terminus and sims of chips using
+/// `dev.RAM-8` keep working.
+pub(crate) fn prune_hidden_chips_from_palette(prefs: &mut ProjectDescription, library: &ChipLibrary) {
+	prune_hidden_chips_from_palette_gated(prefs, library, !dev_chips_hidden())
+}
+
+fn prune_hidden_chips_from_palette_gated(prefs: &mut ProjectDescription, library: &ChipLibrary, include_dev: bool) {
+	if include_dev {
+		return;
+	}
+	for collection in &mut prefs.chip_collections {
+		collection.chips.retain(|n| is_listed_in_build(library, n, include_dev));
+	}
+	prefs.starred_list.retain(|item| item.is_collection || is_listed_in_build(library, &item.name, include_dev));
 }
 
 /// Resets whichever inline popup (new/rename collection, delete
@@ -292,6 +350,68 @@ mod tests {
 
 		let other = prefs.chip_collections.iter().find(|c| c.name == "OTHER").unwrap();
 		assert_eq!(other.chips, vec!["Saved".to_string()], "the draft stays out, the saved stray is filed");
+	}
+
+	fn dev_builtin(chip_type: ChipType) -> ChipDescription {
+		ChipDescription::new(crate::builtins::name_for(chip_type), chip_type)
+	}
+
+	/// Release builds keep the dev-only builtins (`dev.RAM-8`, the bus
+	/// termini -- see `ChipType::is_dev_only`) out of the stray-filing sync;
+	/// debug builds list them like anything else.
+	#[test]
+	fn sync_library_collections_hides_dev_only_chips_when_hidden() {
+		let mut library = lib_with_chips(&["Alpha"]);
+		library.add(dev_builtin(ChipType::BusTerminus4Bit));
+		let no_drafts = std::collections::HashSet::new();
+
+		let mut release_prefs = ProjectDescription::default();
+		sync_library_collections_gated(&mut release_prefs, &library, &no_drafts, false);
+		let other = release_prefs.chip_collections.iter().find(|c| c.name == "OTHER").unwrap();
+		assert_eq!(other.chips, vec!["Alpha".to_string()], "the dev-only chip isn't filed");
+
+		let mut debug_prefs = ProjectDescription::default();
+		sync_library_collections_gated(&mut debug_prefs, &library, &no_drafts, true);
+		let other = debug_prefs.chip_collections.iter().find(|c| c.name == "OTHER").unwrap();
+		assert_eq!(other.chips.len(), 2, "with dev chips visible, both strays are filed");
+	}
+
+	/// Opening a project saved from a debug build in a build that hides the
+	/// dev-only builtins strips their rows from every collection and the
+	/// starred list, leaving everything else exactly as it was.
+	#[test]
+	fn pruning_hidden_chips_cleans_collections_and_stars_without_touching_the_rest() {
+		let (bus, terminus, dev_ram, custom) = (
+			crate::builtins::name_for(ChipType::Bus1Bit),
+			crate::builtins::name_for(ChipType::BusTerminus8Bit),
+			crate::builtins::name_for(ChipType::DevRam8Bit),
+			"MINE".to_string(),
+		);
+		let mut library = lib_with_chips(&[&custom]);
+		library.add(dev_builtin(ChipType::Bus1Bit));
+		library.add(dev_builtin(ChipType::BusTerminus8Bit));
+		library.add(dev_builtin(ChipType::DevRam8Bit));
+
+		let mut prefs = ProjectDescription::default();
+		prefs.chip_collections.push(ChipCollection::new("BUS", vec![bus.clone(), terminus.clone()]));
+		prefs.chip_collections.push(ChipCollection::new("MEMORY", vec![dev_ram.clone()]));
+		prefs.set_starred(&dev_ram, true, false);
+		prefs.set_starred("MY COLLECTION", true, true);
+		let before = prefs.clone();
+
+		prune_hidden_chips_from_palette_gated(&mut prefs, &library, false);
+
+		let bus_collection = prefs.chip_collections.iter().find(|c| c.name == "BUS").unwrap();
+		assert_eq!(bus_collection.chips, vec![bus], "the plain bus row survives, its terminus partner goes");
+		let memory = prefs.chip_collections.iter().find(|c| c.name == "MEMORY").unwrap();
+		assert!(memory.chips.is_empty(), "the dev RAM row goes");
+		assert!(!prefs.is_starred(&dev_ram, false), "a hidden chip can't stay starred");
+		assert!(prefs.is_starred("MY COLLECTION", true), "collection stars are untouched");
+
+		// A build that lists dev chips prunes nothing at all.
+		let mut debug_prefs = before.clone();
+		prune_hidden_chips_from_palette_gated(&mut debug_prefs, &library, true);
+		assert_eq!(debug_prefs, before, "with dev chips visible the palette is untouched");
 	}
 
 	#[test]

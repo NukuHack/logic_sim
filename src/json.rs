@@ -375,7 +375,7 @@ impl ChipCollection {
 /// metadata file saved at `<project>/ProjectDescription.json`. Field names
 /// match the original exactly (via `serde(rename)`) so files written by
 /// either the C# game or this port are interchangeable.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct ProjectDescription {
 	#[serde(rename = "ProjectName", default)]
 	pub project_name: String,

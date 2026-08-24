@@ -23,7 +23,7 @@ use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks};
 
 use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, PENDING_PLACEMENT_ALPHA};
-use crate::viewer::library::{is_custom_chip, would_create_cycle};
+use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};
 use crate::viewer::save_flow::save_chip_mode;
 use crate::viewer::state::{editor_action, NamingPurpose, Overlay, ViewerAction, ViewerState};
 
@@ -424,7 +424,9 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			editor_ui::build_chip_library_panel(&state, vw, vh, mouse)
 		}
 		Overlay::Search => {
-			let mut names: Vec<String> = v.library.iter().map(|d| d.name.clone()).collect();
+			// Release builds keep the dev-only builtins (dev.RAM-8, the bus
+			// termini) out of the results -- see `is_listed_in_current_build`.
+			let mut names: Vec<String> = v.library.iter().map(|d| d.name.clone()).filter(|n| is_listed_in_current_build(&v.library, n)).collect();
 			names.sort();
 			editor_ui::build_search_popup(&names, &v.search_query, vw, vh, mouse)
 		}
