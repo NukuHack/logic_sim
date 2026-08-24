@@ -64,7 +64,10 @@ fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 	let name = v.root_chip_name.clone();
 	let desc = v.library.get(&name).clone();
 	match Saver::save_chip(paths, &v.project_name, &desc) {
-		Ok(()) => *status = Some(format!("Saved '{name}'")),
+		Ok(()) => {
+			v.mark_saved(&name);
+			*status = Some(format!("Saved '{name}'"));
+		}
 		Err(e) => *status = Some(format!("Failed to save '{name}': {e}")),
 	}
 }
@@ -87,6 +90,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 	match Saver::save_chip(paths, &v.project_name, &new_desc) {
 		Ok(()) => {
 			v.library.add(new_desc);
+			v.mark_saved(new_name);
 			register_chip_name_in_project(v, paths, None, new_name);
 
 			if !old_name.eq_ignore_ascii_case(new_name) {
@@ -141,6 +145,8 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			}
 			v.library.remove(&old_name);
 			v.library.add(new_desc);
+			v.mark_saved(new_name);
+			v.mark_saved(&old_name);
 			register_chip_name_in_project(v, paths, Some(&old_name), new_name);
 			v.root_chip_name = new_name.to_string();
 			*status = Some(format!("Renamed '{old_name}' to '{new_name}'"));
@@ -259,17 +265,19 @@ pub(crate) fn unique_new_chip_name(library: &ChipLibrary) -> String {
 /// same as any other switch (see `discard_unsaved_changes`), so Ctrl+N
 /// can't be used to accidentally lose track of that.
 ///
-/// The new chip lives only in `v.library` until it's actually saved --
-/// it isn't added to the project's `all_custom_chip_names`/library
-/// sidebar (that's `register_chip_name_in_project`'s job, run from the
-/// save flow) until then, so an uncommitted "New Chip" draft won't
-/// clutter the sidebar or survive a switch away from it without being
-/// saved first.
+/// Nothing is persisted: the new chip lives only in `v.library`, marked
+/// as an unsaved draft (`ViewerState::unsaved_drafts`) -- so it isn't
+/// added to the project's `all_custom_chip_names`/library sidebar (that's
+/// `register_chip_name_in_project`'s job, run from the save flow) and
+/// `sync_library_collections` skips it too, meaning no prefs write can
+/// ever sneak its name into the sidebar or onto disk. Only an actual
+/// Ctrl+S save promotes the draft to a real, listed chip.
 pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	discard_unsaved_changes(v, paths);
 
 	let name = unique_new_chip_name(&v.library);
 	v.library.add(ChipDescription::new(&name, ChipType::Custom));
+	v.mark_unsaved_draft(&name);
 
 	v.root_chip_name = name.clone();
 	reset_all_driven_inputs(&mut v.library);
@@ -325,6 +333,8 @@ pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: 
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::viewer::actions::open_library_panel;
+	use crate::viewer::state::open_save_chip;
 
 	#[test]
 	fn unique_new_chip_name_never_collides_with_existing_drafts() {
@@ -376,5 +386,55 @@ mod tests {
 			|| v.pending_wire.is_some()
 			|| !v.selected_ids.is_empty()
 			|| !matches!(v.canvas_interaction, crate::viewer::chip_interaction::CanvasInteraction::None)
+	}
+
+	/// The Ctrl+N contract end-to-end: a brand-new chip lives only in
+	/// memory until an explicit Ctrl+S -- opening the library panel (whose
+	/// sync files strays into collections) and any subsequent prefs write
+	/// must keep it out of both the sidebar state and the on-disk project
+	/// description. Only the real save flow promotes it.
+	#[test]
+	fn new_chip_stays_out_of_library_and_disk_until_saved() {
+		let root = crate::save_system::test_util::temp_dir("new_chip_unsaved");
+		let paths = SavePaths::new(&root);
+		let project = crate::create_project(&paths, "P").expect("project created");
+
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		let mut v =
+			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		v.prefs = project.description;
+
+		let mut status = None;
+		start_new_chip(&mut v, &paths, &mut status);
+		let name = v.root_chip_name.clone();
+		assert_eq!(name, "New Chip");
+		assert!(v.unsaved_drafts.contains("new chip"), "the fresh chip starts life as an unsaved draft");
+
+		// Opening the library panel must not file the draft into any collection...
+		open_library_panel(&mut v);
+		assert!(
+			v.prefs.chip_collections.iter().flat_map(|c| c.chips.iter()).all(|n| !n.eq_ignore_ascii_case(&name)),
+			"draft leaked into the sidebar collections"
+		);
+		// ...and a prefs write happening afterwards must not put it on disk either.
+		let mut desc = v.prefs.clone();
+		Saver::save_project_description(&paths, &mut desc).expect("description saved");
+		let text = std::fs::read_to_string(paths.project_description_path("P")).expect("description readable");
+		assert!(!text.to_ascii_lowercase().contains("new chip"), "draft leaked into the saved description: {text}");
+
+		// An actual Ctrl+S (same-name confirm) promotes the draft: file written, marker cleared...
+		open_save_chip(&mut v);
+		confirm_save_chip_popup(&mut v, &paths, &mut status);
+		assert!(paths.chips_path("P").join("New Chip.json").is_file(), "chip file written by the save");
+		assert!(!v.unsaved_drafts.contains("new chip"), "saving clears the draft marker");
+
+		// ...and from then on the library panel does list it.
+		open_library_panel(&mut v);
+		let other = v.prefs.chip_collections.iter().find(|c| c.name == "OTHER").expect("OTHER collection exists");
+		assert!(other.chips.iter().any(|n| n.eq_ignore_ascii_case(&name)), "saved chip joins the library");
+
+		let _ = std::fs::remove_dir_all(&root);
 	}
 }

@@ -159,6 +159,15 @@ pub(crate) struct ViewerState {
 	/// preferences/library overlays and written back to disk on Apply.
 	pub(crate) prefs: ProjectDescription,
 
+	/// Names (lower-cased) of custom chips that exist only in
+	/// [`Self::library`] so far -- created with Ctrl+N (or the blank chip
+	/// every project opens onto) but never saved with Ctrl+S. They stay
+	/// out of the library sidebar/collections and off disk entirely:
+	/// `sync_library_collections` skips them, so no prefs write can ever
+	/// persist one. Cleared by every successful save path (see
+	/// `viewer::save_flow`).
+	pub(crate) unsaved_drafts: std::collections::HashSet<String>,
+
 	/// Pacing/throughput state for stepping the simulation (see [`SimPacing`]).
 	pub(crate) sim_pacing: SimPacing,
 	/// Set when the player requests one single step while the sim is
@@ -310,6 +319,7 @@ impl ViewerState {
 			camera_fitted: false,
 			audio,
 			prefs: ProjectDescription::default(),
+			unsaved_drafts: std::collections::HashSet::new(),
 			sim_pacing: SimPacing::default(),
 			advance_single_step: false,
 			paused_step_counter: 0,
@@ -343,6 +353,19 @@ impl ViewerState {
 		v.sync_sim_clock_pref();
 		v
 	}
+	// ---- Unsaved-draft bookkeeping (see `unsaved_drafts`) ----
+
+	/// Records `name` as a never-saved draft (case-insensitively).
+	pub(crate) fn mark_unsaved_draft(&mut self, name: &str) {
+		self.unsaved_drafts.insert(name.to_ascii_lowercase());
+	}
+
+	/// Records that `name` has actually been saved to disk (case-insensitively),
+	/// letting it join -- and be persisted with -- the project's library.
+	pub(crate) fn mark_saved(&mut self, name: &str) {
+		self.unsaved_drafts.remove(&name.to_ascii_lowercase());
+	}
+
 	/// Rebuilds `self.sim` from `self.library`'s current copy of
 	/// `self.root_chip_name` -- called after any edit that changes the
 	/// simulated structure (deleting a component/wire, re-configuring a

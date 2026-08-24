@@ -185,11 +185,14 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 	}
 }
 
-/// Tab into the library: sync collections first so newly created chips
-/// show up, then open the panel. Shared by its keyboard shortcut and any
-/// future mouse affordance.
+/// Tab into the library: sync collections first so chips that exist but
+/// were never explicitly filed still show up -- while never-saved
+/// Ctrl+N-style drafts stay out (see `sync_library_collections`), so the
+/// panel and the project description can't pick one up before it's been
+/// saved with Ctrl+S. Shared by its keyboard shortcut and any future
+/// mouse affordance.
 pub(crate) fn open_library_panel(v: &mut ViewerState) {
-	sync_library_collections(&mut v.prefs, &v.library);
+	sync_library_collections(&mut v.prefs, &v.library, &v.unsaved_drafts);
 	open_overlay(v, Overlay::Library);
 }
 

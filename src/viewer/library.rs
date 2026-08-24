@@ -59,9 +59,14 @@ fn chip_contains(library: &ChipLibrary, chip_name: &str, target: &str, visited: 
 /// every chip in `library` belongs to *some* collection, adding any
 /// stragglers to `OTHER` -- mirrors the collection-syncing half of
 /// `ChipLibraryMenu.OnMenuOpened`. Called whenever the library overlay
-/// is opened, so newly-created/loaded chips that were never explicitly
-/// filed always still show up somewhere in the panel.
-pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: &ChipLibrary) {
+/// is opened, so newly-loaded chips that were never explicitly filed
+/// always still show up somewhere in the panel.
+///
+/// Chips named in `unsaved_drafts` (never-saved Ctrl+N-style drafts --
+/// see `ViewerState::unsaved_drafts`) are deliberately skipped: they
+/// don't join the collections (and thus can't reach disk through any
+/// prefs write) until they've actually been saved with Ctrl+S.
+pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: &ChipLibrary, unsaved_drafts: &std::collections::HashSet<String>) {
 	if !prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
 		prefs.chip_collections.push(ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
 	}
@@ -70,8 +75,11 @@ pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: 
 	let default_index =
 		prefs.chip_collections.iter().position(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
 
-	let mut stray_names: Vec<String> =
-		library.iter().map(|d| d.name.clone()).filter(|n| !already_collected.contains(&n.to_ascii_lowercase())).collect();
+	let mut stray_names: Vec<String> = library
+		.iter()
+		.map(|d| d.name.clone())
+		.filter(|n| !already_collected.contains(&n.to_ascii_lowercase()) && !unsaved_drafts.contains(&n.to_ascii_lowercase()))
+		.collect();
 	stray_names.sort();
 	prefs.chip_collections[default_index].chips.extend(stray_names);
 }
@@ -147,6 +155,7 @@ pub(crate) fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, s
 	v.prefs.set_starred(name, false, false);
 	v.prefs.all_custom_chip_names.retain(|c| !c.eq_ignore_ascii_case(name));
 	v.library.remove(name);
+	v.mark_saved(name);
 	v.library_selection = LibrarySelection::None;
 }
 
@@ -263,20 +272,35 @@ mod tests {
 		let mut prefs = ProjectDescription::default();
 		let library = lib_with_chips(&["Alpha", "Beta"]);
 
-		sync_library_collections(&mut prefs, &library);
+		sync_library_collections(&mut prefs, &library, &std::collections::HashSet::new());
 
 		assert!(prefs.chip_collections.iter().any(|c| c.name == "OTHER"));
 		let other = prefs.chip_collections.iter().find(|c| c.name == "OTHER").unwrap();
 		assert_eq!(other.chips.len(), 2);
 	}
 
+	/// Never-saved Ctrl+N drafts must stay out of the collections -- they
+	/// only join the (persisted) library once actually saved with Ctrl+S.
+	#[test]
+	fn sync_library_collections_skips_unsaved_drafts() {
+		let mut prefs = ProjectDescription::default();
+		let library = lib_with_chips(&["Saved", "New Chip"]);
+		let mut drafts = std::collections::HashSet::new();
+		drafts.insert("new chip".to_string());
+
+		sync_library_collections(&mut prefs, &library, &drafts);
+
+		let other = prefs.chip_collections.iter().find(|c| c.name == "OTHER").unwrap();
+		assert_eq!(other.chips, vec!["Saved".to_string()], "the draft stays out, the saved stray is filed");
+	}
+
 	#[test]
 	fn sync_library_collections_is_idempotent() {
 		let mut prefs = ProjectDescription::default();
 		let library = lib_with_chips(&["Alpha"]);
-		sync_library_collections(&mut prefs, &library);
+		sync_library_collections(&mut prefs, &library, &std::collections::HashSet::new());
 		let snapshot = prefs.chip_collections.clone();
-		sync_library_collections(&mut prefs, &library);
+		sync_library_collections(&mut prefs, &library, &std::collections::HashSet::new());
 		assert_eq!(prefs.chip_collections.len(), snapshot.len());
 	}
 
