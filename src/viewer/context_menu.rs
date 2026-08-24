@@ -239,4 +239,51 @@ mod tests {
 		let bus_items = context_menu_items_for_component(&library, "BUS-4");
 		assert!(bus_items.iter().any(|i| matches!(i.id, ContextMenuAction::Flip)));
 	}
+
+	fn viewer_with_output_pin(bit_count: crate::PinBitCount, mode: crate::ValueDisplayMode) -> ViewerState {
+		use crate::ChipDescription;
+		let mut library = ChipLibrary::new();
+		let mut chip = ChipDescription::new("ROOT", ChipType::Custom);
+		let mut pin = crate::PinDescription::new("DATA", 4, bit_count);
+		pin.value_display_mode = mode;
+		chip.output_pins.push(pin);
+		library.add(chip);
+		ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	/// Right-click "Edit" on a boundary dev-pin opens the pin-edit popup
+	/// pre-seeded from the pin: the name draft in the shared buffer and
+	/// the Decimal Display wheel on the pin's current mode.
+	#[test]
+	fn devpin_configure_opens_pin_edit_seeded_from_the_pin() {
+		let root = std::env::temp_dir().join(format!("devpin_cfg_{}", std::process::id()));
+		let paths = SavePaths::new(&root);
+		let mut v = viewer_with_output_pin(crate::PinBitCount::Bit8, crate::ValueDisplayMode::Hex);
+
+		apply_context_menu_action(&mut v, &paths, &mut None, "devpin:out:4", ContextMenuAction::Configure);
+
+		assert_eq!(v.overlays, vec![Overlay::PinEdit], "the popup opened on top");
+		assert_eq!(v.overlay_text_input, "DATA", "the name field starts from the pin's name");
+		assert_eq!(
+			v.pin_edit,
+			Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: crate::ValueDisplayMode::Hex as usize }),
+			"the wheel starts from the pin's current mode"
+		);
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// An id that doesn't resolve (stale popup target) opens nothing.
+	#[test]
+	fn devpin_configure_ignores_unknown_pin_ids() {
+		let root = std::env::temp_dir().join(format!("devpin_cfg_miss_{}", std::process::id()));
+		let paths = SavePaths::new(&root);
+		let mut v = viewer_with_output_pin(crate::PinBitCount::Bit1, crate::ValueDisplayMode::None);
+
+		apply_context_menu_action(&mut v, &paths, &mut None, "devpin:out:999", ContextMenuAction::Configure);
+
+		assert!(v.overlays.is_empty() && v.pin_edit.is_none());
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
 }

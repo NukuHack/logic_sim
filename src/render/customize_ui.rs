@@ -459,10 +459,13 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 	// suppressed mid-interaction (the click then commits instead).
 	let placed_rect = |display: &DisplayDescription, resolved: &ChipDescription| -> Option<(UiRect, UiRect)> {
 		// Follows the painted extent (custom cascades included), so grab
-		// and scale hotspots always sit exactly on what's drawn.
+		// and scale hotspots always sit exactly on what's drawn:
+		// `display_entry_bounds` is relative to the entry's own anchor,
+		// which for a body-placed display is its `position`.
 		let (offset, dsize) = displays::display_entry_bounds(display, resolved, ctx.library)?;
-		let tl = map(offset + Vec2::new(-dsize.x / 2.0, dsize.y / 2.0));
-		let br = map(offset + Vec2::new(dsize.x / 2.0, -dsize.y / 2.0));
+		let centre = display.position + offset;
+		let tl = map(centre + Vec2::new(-dsize.x / 2.0, dsize.y / 2.0));
+		let br = map(centre + Vec2::new(dsize.x / 2.0, -dsize.y / 2.0));
 		Some((rect_from_corners(tl, br), UiRect::new(br.x - 11.0, br.y - 11.0, 11.0, 11.0)))
 	};
 
@@ -748,6 +751,98 @@ mod tests {
 		let placed_row =
 			out.frame.buttons.iter().find(|b| matches!(b.action, EditorAction::CustomizePlaceEntry(0))).expect("placed entry still listed");
 		assert!(placed_row.enabled, "clicking a placed display's name must stay live so it can remove it");
+	}
+
+	/// Regression: every placed display's move/scale hotspots used to be
+	/// anchored at the preview origin, so all interactions landed on the
+	/// body centre no matter where the displays actually were. Each
+	/// display's hitboxes must sit on *its own* painted rect -- builtin
+	/// entries at `position`, cascade entries at `position + union
+	/// offset` -- with the scale corner at that rect's bottom-right.
+	#[test]
+	fn placed_display_hotspots_sit_on_their_own_displays_not_the_body_centre() {
+		let mut led = ChipDescription::new("LED", ChipType::DisplayLed);
+		led.input_pins.push(crate::PinDescription::new("IN", 0, PinBitCount::Bit1));
+		let mut panel = ChipDescription::new("PANEL", ChipType::Custom);
+		panel.sub_chips.push(crate::SubChipDescription {
+			name: "LED".into(),
+			id: 1,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		panel.displays.push(DisplayDescription::new(1, Vec2::new(0.25, -0.25), 2.0)); // 0.375-unit tile
+
+		let mut draft = ChipDescription::new("D", ChipType::Custom);
+		draft.size = Vec2::new(6.0, 5.0);
+		for (name, id) in [("7Seg", 4), ("LED", 5), ("PANEL", 6)] {
+			draft.sub_chips.push(crate::SubChipDescription {
+				name: name.into(),
+				id,
+				internal_data: None,
+				position: Vec2::ZERO,
+				label: None,
+				pin_colour_info: vec![],
+			});
+		}
+		// Leaf entries away from the centre; the cascade entry composes
+		// its union offset on top of its own position.
+		let placed = vec![
+			DisplayDescription::new(4, Vec2::new(-2.0, 1.5), 1.0),   // seg: 1 x 1.75
+			DisplayDescription::new(5, Vec2::new(2.25, -1.75), 1.0), // led: 0.1875 square
+			DisplayDescription::new(6, Vec2::new(0.5, 0.25), 1.0),   // panel cascade -> tile at (0.75, 0.0)
+		];
+		draft.displays = placed.clone();
+
+		let mut library = ChipLibrary::new();
+		library.add(seg_desc());
+		library.add(led);
+		library.add(panel);
+
+		let entries = display_entries(&draft, &library);
+		let ctx = CustomizeCtx {
+			draft: &draft,
+			library: &library,
+			entries: &entries,
+			interaction: CustomizeInteraction::None,
+			hex_text: "#FFFFFF",
+			list_scroll: 0.0,
+			zoom_factor: 1.0,
+			pin_state: &AllLow,
+		};
+		let out = build_chip_customizer(&ctx, 1280.0, 800.0, Vec2::new(400.0, 400.0));
+		let lay = out.layout;
+		assert!(lay.valid);
+		let map = |world: Vec2| Vec2::new(lay.chip_centre_px.x + world.x * lay.px_per_unit, lay.chip_centre_px.y - world.y * lay.px_per_unit);
+
+		// (painted-content centre, painted size) per entry, hand-derived:
+		// leaves anchor at their position with their base*scale extent;
+		// the panel's tile sits at position + its inner child offset.
+		let expected =
+			[(placed[0].position, Vec2::new(1.0, 1.75)), (placed[1].position, Vec2::splat(0.1875)), (Vec2::new(0.75, 0.0), Vec2::splat(0.375))];
+		for (i, (world_centre, dsize)) in expected.iter().enumerate() {
+			let expected_move_centre = map(*world_centre);
+			let move_btn = out.frame.buttons.iter().find(|b| b.action == EditorAction::CustomizeGrabDisplayMove(i)).expect("move hotspot");
+			assert!(
+				(move_btn.rect.centre() - expected_move_centre).magnitude() < 1e-3,
+				"display {i} move hotspot at {:?}, expected {:?}",
+				move_btn.rect.centre(),
+				expected_move_centre
+			);
+
+			// The scale corner rides the rect's SCREEN bottom-right, which
+			// (screen y grows downward) is world +x / -y.
+			let br = map(*world_centre + Vec2::new(dsize.x * 0.5, -dsize.y * 0.5));
+			let scale_btn = out.frame.buttons.iter().find(|b| b.action == EditorAction::CustomizeGrabDisplayScale(i)).expect("scale hotspot");
+			let scale_centre = scale_btn.rect.centre();
+			assert!(
+				(scale_centre.x - (br.x - 5.5)).abs() < 1e-3 && (scale_centre.y - (br.y - 5.5)).abs() < 1e-3,
+				"scale corner rides the rect's bottom-right: got {scale_centre:?}, expected ({:.3},{:.3})",
+				br.x - 5.5,
+				br.y - 5.5
+			);
+		}
 	}
 
 	#[test]

@@ -622,6 +622,43 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&root);
 	}
 
+	/// A clean chip switches immediately -- no prompt -- and the library
+	/// variant still does its leave-the-library cleanup on the way.
+	#[test]
+	fn clean_chip_switches_without_prompting() {
+		let root = crate::save_system::test_util::temp_dir("unsaved_gate_clean");
+		let paths = SavePaths::new(&root);
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+
+		open_library_panel(&mut v);
+		request_open_chip(&mut v, &paths, &mut None, "OTHER", true);
+		assert_eq!(v.root_chip_name, "OTHER", "switched straight away");
+		assert!(v.overlays.is_empty() && v.pending_unsaved_action.is_none(), "no prompt; library left as usual");
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// The bar/context-menu open path (`close_overlays == false`) must
+	/// switch on Continue without tearing down whatever panels were open
+	/// underneath the prompt.
+	#[test]
+	fn confirmed_open_without_cleanup_leaves_other_overlays_open() {
+		let root = crate::save_system::test_util::temp_dir("unsaved_gate_nocleanup");
+		let paths = SavePaths::new(&root);
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+		place_a_nand(&mut v);
+
+		crate::viewer::state::open_search(&mut v); // some panel under the prompt
+		request_open_chip(&mut v, &paths, &mut None, "OTHER", false);
+		assert_eq!(v.overlays.last(), Some(&Overlay::UnsavedChanges));
+
+		confirm_unsaved_changes_popup(&mut v, &paths, &mut None);
+		assert_eq!(v.root_chip_name, "OTHER", "the switch happened");
+		assert_eq!(v.overlays, vec![Overlay::Search], "only the prompt closed; Search stays");
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
 	/// A clean chip never prompts: Escape-to-menu requests the exit
 	/// straight away, Ctrl+N switches immediately, and a *dirty* chip
 	/// routes both through the popup whose Continue finishes them.
@@ -639,6 +676,13 @@ mod tests {
 		place_a_nand(&mut v);
 		request_exit_to_menu(&mut v, &paths);
 		assert!(!v.exit_requested, "dirty chip: prompt instead of leaving");
+
+		// Cancel keeps you in the editor with nothing pending.
+		close_top_overlay(&mut v);
+		assert!(!v.exit_requested && v.pending_unsaved_action.is_none());
+
+		// Re-request, then Continue resumes the exit.
+		request_exit_to_menu(&mut v, &paths);
 		confirm_unsaved_changes_popup(&mut v, &paths, &mut None);
 		assert!(v.exit_requested, "continue resumes the exit");
 

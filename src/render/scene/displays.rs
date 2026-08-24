@@ -684,6 +684,68 @@ mod tests {
 		assert_eq!(rects_drawn(&geo), 0, "an empty cascade has nothing to back or draw");
 	}
 
+	/// The bounds contract the customize preview's hitboxes lean on:
+	/// leaves anchor at the entry position with their base*scale extent;
+	/// a cascade's union can sit off-centre from it.
+	#[test]
+	fn entry_bounds_match_painted_extents_for_leaves_and_cascades() {
+		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let seg = seg_desc();
+
+		assert_eq!(
+			display_entry_bounds(&DisplayDescription::new(0, Vec2::ZERO, 2.0), &led, &ChipLibrary::new()),
+			Some((Vec2::ZERO, Vec2::splat(0.375)))
+		);
+		assert_eq!(
+			display_entry_bounds(&DisplayDescription::new(0, Vec2::ZERO, 1.0), &seg, &ChipLibrary::new()),
+			Some((Vec2::ZERO, Vec2::new(1.0, 1.75)))
+		);
+
+		// Panel with an LED at its origin and a 7-seg at (2, 0): union
+		// spans x[-0.09375, 2.5], y[-0.875, 0.875].
+		let mut panel = ChipDescription::new("PANEL", ChipType::Custom);
+		panel.sub_chips.push(SubChipDescription {
+			name: "LED".into(),
+			id: 1,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		panel.sub_chips.push(SubChipDescription {
+			name: "7Seg".into(),
+			id: 2,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		panel.displays.push(DisplayDescription::new(1, Vec2::ZERO, 1.0));
+		panel.displays.push(DisplayDescription::new(2, Vec2::new(2.0, 0.0), 1.0));
+
+		let mut library = ChipLibrary::new();
+		library.add(led);
+		library.add(seg);
+		library.add(panel.clone());
+
+		let (offset, size) = display_entry_bounds(&DisplayDescription::new(0, Vec2::ZERO, 1.0), &panel, &library).unwrap();
+		assert!((offset.x - 1.203125).abs() < 1e-4 && offset.y.abs() < 1e-4, "union centre {offset:?}");
+		assert!((size.x - 2.59375).abs() < 1e-4 && (size.y - 1.75).abs() < 1e-4, "union size {size:?}");
+
+		// Nothing drawable anywhere in the tree -> no bounds at all.
+		let mut bare = ChipDescription::new("BARE", ChipType::Custom);
+		bare.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id: 3,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		assert_eq!(display_entry_bounds(&DisplayDescription::new(3, Vec2::ZERO, 1.0), &bare, &library), None);
+		library.add(bare);
+	}
+
 	/// A hand-edited save could make a chip's display point back at
 	/// itself; the depth guard must keep drawing/bounds from recursing
 	/// forever. A real LED sits beside the cycle so there's genuine

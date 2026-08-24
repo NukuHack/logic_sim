@@ -6,9 +6,10 @@
 use logic_sim::json::{ChipCollection, ProjectDescription, StarredItem};
 use logic_sim::render::context_menu::{build_context_menu, ContextMenuAction, ContextMenuItem, ContextMenuState};
 use logic_sim::render::editor_ui::{
-	build_chip_library_panel, build_key_select_popup, build_preferences_panel, build_rom_editor_popup, build_save_chip_popup, build_search_popup,
-	build_simple_naming_popup, build_starred_bottom_bar, build_starred_collection_popup, ChipLibraryState, EditorAction, LibrarySelection,
-	PrefValueField, PrefsPanelState, SaveChipMode, BOTTOM_BAR_HEIGHT, KEY_SELECT_ALLOWED_CHARS, ROM_WORD_COUNT,
+	build_chip_library_panel, build_key_select_popup, build_pin_edit_popup, build_preferences_panel, build_rom_editor_popup, build_save_chip_popup,
+	build_search_popup, build_simple_naming_popup, build_starred_bottom_bar, build_starred_collection_popup, build_unsaved_changes_popup,
+	ChipLibraryState, EditorAction, LibrarySelection, PrefValueField, PrefsPanelState, SaveChipMode, BOTTOM_BAR_HEIGHT, KEY_SELECT_ALLOWED_CHARS,
+	ROM_WORD_COUNT,
 };
 use logic_sim::render::menu_ui::{build, build_popup_frame, build_screen, status_label, UiAction};
 use logic_sim::render::ui_kit::{hovered_button, text_field_row, Button, Frame, FONT_SIZE};
@@ -463,6 +464,52 @@ fn key_select_popup_disables_confirm_until_a_key_is_chosen() {
 	let confirm_some = frame_some.buttons.iter().find(|b| b.action == EditorAction::ConfirmKey).unwrap();
 	assert!(confirm_some.enabled);
 	assert!(frame_some.geometry.labels.iter().any(|l| l.text == "Q"));
+}
+
+#[test]
+fn pin_edit_popup_offers_the_display_wheel_only_when_asked() {
+	// Multi-bit call: one option button per Decimal Display mode plus
+	// Confirm/Cancel, with the chosen mode's tile highlighted.
+	let multi = build_pin_edit_popup("BUS", true, 2, 1280.0, 800.0, Vec2::ZERO);
+	for i in 0..4 {
+		assert!(multi.buttons.iter().any(|b| b.action == EditorAction::PinEditSetDisplayMode(i)), "Decimal Display option {i} must be clickable");
+	}
+	assert!(multi.buttons.iter().any(|b| b.action == EditorAction::ConfirmPinEdit));
+	assert!(multi.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
+	assert!(multi.text_field.is_some(), "the pin name field owns typing");
+	let active_highlight = [0.3f32, 0.42, 0.58, 1.0].map(f32::to_bits);
+	assert!(multi.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == active_highlight), "the selected wheel option is highlighted");
+
+	// 1-bit call: no wheel at all, and no highlight tiles.
+	let single = build_pin_edit_popup("CLK", false, 1, 1280.0, 800.0, Vec2::ZERO);
+	assert!(!single.buttons.iter().any(|b| matches!(b.action, EditorAction::PinEditSetDisplayMode(_))));
+	assert!(!single.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == active_highlight));
+}
+
+#[test]
+fn pin_edit_popup_gates_confirm_on_name_presence_and_length() {
+	let confirm_for = |name: &str| {
+		build_pin_edit_popup(name, false, 0, 1280.0, 800.0, Vec2::ZERO)
+			.buttons
+			.iter()
+			.find(|b| b.action == EditorAction::ConfirmPinEdit)
+			.unwrap()
+			.enabled
+	};
+
+	assert!(!confirm_for(""), "empty draft keeps Confirm off");
+	assert!(confirm_for("CLK"));
+	assert!(confirm_for("MY LONG PIN NAME"), "exactly the max length is allowed");
+	assert!(!confirm_for("MY LONG PIN NAME+"), "one past the max is rejected");
+}
+
+#[test]
+fn unsaved_changes_popup_warns_and_offers_continue_or_cancel() {
+	let frame = build_unsaved_changes_popup(1280.0, 800.0, Vec2::ZERO);
+	let cont = frame.buttons.iter().find(|b| b.action == EditorAction::UnsavedChangesConfirm).unwrap();
+	assert!(cont.enabled, "Continue is always available");
+	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ClosePopup), "Cancel closes without acting");
+	assert!(frame.geometry.labels.iter().any(|l| l.text.contains("unsaved changes")), "the warning copy is shown");
 }
 
 #[test]

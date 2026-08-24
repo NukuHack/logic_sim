@@ -301,4 +301,26 @@ mod tests {
 		draw_dev_pin_value_label(&mut off_geo, Vec2::ZERO, PinBitCount::Bit4, ValueDisplayMode::None, &Bits(0b0011), 0);
 		assert!(off_geo.triangles.is_empty() && off_geo.labels.is_empty(), "mode Off draws nothing");
 	}
+
+	/// Scene-level: a boundary dev-pin configured with a Decimal Display
+	/// mode shows its live value when the chip is drawn; an unconfigured
+	/// one stays label-free.
+	#[test]
+	fn draw_pins_shows_the_value_readout_for_configured_multi_bit_pins() {
+		use crate::description::PinDescription;
+
+		let mut chip = crate::description::ChipDescription::new("T", crate::description::ChipType::Custom);
+		chip.output_pins.push(PinDescription::from_saved("BUS", 4, Vec2::new(3.0, 2.0), PinBitCount::Bit8, Color::White, ValueDisplayMode::Decimal));
+
+		let mut geo = SceneGeometry::default();
+		draw_pins(&mut geo, &chip, &[], &Bits(0b101), None);
+		let readout = geo.labels.iter().find(|l| l.text == "5").expect("the live value must appear in the drawn scene");
+		assert!(readout.pos.y < 2.0, "the read-out sits below the pin at (3, 2)");
+
+		// Unconfigured: no value text anywhere.
+		chip.output_pins[0].value_display_mode = ValueDisplayMode::None;
+		let mut quiet = SceneGeometry::default();
+		draw_pins(&mut quiet, &chip, &[], &Bits(0b101), None);
+		assert!(quiet.labels.is_empty(), "no hover target given and no display mode -> no labels");
+	}
 }
