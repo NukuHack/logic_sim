@@ -1,7 +1,11 @@
 //! Canvas interaction: what a click on the chip-editing surface means --
-//! starting/continuing wire placements, dropping a pending chip
-//! placement, toggling an input dev-pin's bits -- plus the scene-space
+//! starting/continuing wire placements, dropping a pending multi-component
+//! placement, selecting/dragging placed components, rubber-band box
+//! selection, toggling an input dev-pin's bits -- plus the scene-space
 //! previews (in-progress wire, placement ghost) those interactions draw.
+//! The selection/drag/box-select state machine itself lives in
+//! `viewer::chip_interaction`; this module routes clicks between it and
+//! the wire-placement flow.
 
 use crate::description::ChipDescription;
 use crate::pin_state;
@@ -11,6 +15,7 @@ use crate::render::scene::{self, SceneGeometry};
 use crate::render::theme;
 use crate::structs::Vec2;
 use crate::viewer::bus_wiring;
+use crate::viewer::chip_interaction;
 use crate::viewer::state::ViewerState;
 use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
 use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireDescription};
@@ -264,155 +269,162 @@ fn default_internal_data(chip_type: Option<ChipType>) -> Option<Vec<u32>> {
 	}
 }
 
-/// Attempts to drop `v.pending_place`'s chip (assumed `Some`) at
-/// `world_pos`. Only actually places it -- and clears `v.pending_place`
-/// -- when the click lands on genuinely free canvas space: not a
-/// subchip's pin, one of the current chip's own boundary dev-pins, an
-/// existing placed component's body, or a wire. Landing on any of those
-/// just leaves the pending placement active untouched, so the player can
+/// Attempts to drop `v.pending_place`'s carried components (assumed
+/// non-empty) at `world_pos`. Only actually places anything -- and clears
+/// `v.pending_place` -- when the click lands on genuinely free canvas
+/// space: not a subchip's pin, one of the current chip's own boundary
+/// dev-pins, an existing placed component's body, or a wire. Landing on
+/// any of those just leaves the pending carry untouched, so the player can
 /// simply try again elsewhere (mirrors `try_continue_pending_wire`'s
-/// "component/wire clicks are ignored outright" behaviour). The new
-/// instance gets a fresh id (`next_component_id`), no label, no saved
-/// internal data beyond `default_internal_data`, and no output-pin colour
-/// overrides. An "IN/OUT" palette entry is the one exception: it adds a
-/// boundary dev-pin to the current chip instead of a subchip instance --
-/// see the branch below.
+/// "component/wire clicks are ignored outright" behaviour). Each entry is
+/// dropped at the cursor plus its carried offset (grid-snapped when the
+/// snapping pref -- or held Ctrl -- says so), with consecutive fresh ids
+/// (`next_component_id`). An "IN/OUT" palette entry is the one exception:
+/// it adds a boundary dev-pin to the current chip instead of a subchip
+/// instance. Bus-pair entries (see `chip_interaction::start_placing`)
+/// write their mutual link into both halves' `internal_data[0]` on drop,
+/// exactly what the original's auto-place + `SetLinkedBusPair` produced --
+/// everything downstream of that link (pair-wiring rules, tap merging,
+/// paired deletion) keys off it unchanged.
 ///
-/// Also defensively re-checks `would_create_cycle` -- unlike a free-space
-/// miss, this can never be resolved by clicking somewhere else, so
-/// (unlike the free-space case) it cancels the pending placement outright
-/// and reports why via `status`, rather than leaving it dangling for a
-/// retry that could never succeed.
-fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
-	let root_chip_name = v.root_chip_name.clone();
-	let root_desc = v.library.get(&root_chip_name);
-	let placed = scene::place_sub_chips(root_desc, &v.library);
-
-	let max_dist = wire_click_tolerance(&v.camera);
-	let blocked = scene::hit_test_any_pin(root_desc, &placed, world_pos).is_some()
-		|| scene::hit_test_dev_pin(root_desc, world_pos).is_some()
-		|| scene::hit_test_sub_chip(&placed, world_pos).is_some()
-		|| scene::hit_test_wire(root_desc, &v.library, world_pos, max_dist).is_some();
+/// Also defensively re-checks `would_create_cycle` per distinct name --
+/// unlike a free-space miss, this can never be resolved by clicking
+/// somewhere else, so (unlike the free-space case) it cancels the whole
+/// pending carry outright and reports why via `status`, rather than
+/// leaving it dangling for a retry that could never succeed.
+pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
+	// Everything the drop decision needs, resolved against the *current*
+	// chip before any mutation below.
+	let blocked = {
+		let root_desc = v.library.get(&v.root_chip_name);
+		let placed = scene::place_sub_chips(root_desc, &v.library);
+		let max_dist = wire_click_tolerance(&v.camera);
+		scene::hit_test_any_pin(root_desc, &placed, world_pos).is_some()
+			|| scene::hit_test_dev_pin(root_desc, world_pos).is_some()
+			|| scene::hit_test_sub_chip(&placed, world_pos).is_some()
+			|| scene::hit_test_wire(root_desc, &v.library, world_pos, max_dist).is_some()
+	};
 	if blocked {
 		return;
 	}
 
-	// Defensive re-check: the "USE"/bottom-bar buttons that set `pending_place` in the first
-	// place are already greyed out for a chip that would cycle (see `would_create_cycle`'s
-	// docs), but a click always gets the final say rather than trusting that alone.
-	let name = v.pending_place.take().expect("caller only calls this with a pending placement");
-	if crate::viewer::library::would_create_cycle(&v.library, &root_chip_name, &name) {
-		*status = Some(format!("Can't place '{name}' inside '{root_chip_name}' -- it would contain itself"));
-		return;
+	// Defensive re-check: the "USE"/bottom-bar buttons that fill
+	// `pending_place` in the first place are already greyed out for a chip
+	// that would cycle (see `would_create_cycle`'s docs), but a click
+	// always gets the final say rather than trusting that alone.
+	let carry = std::mem::take(&mut v.pending_place);
+	for (_, component) in &carry {
+		if crate::viewer::library::would_create_cycle(&v.library, &v.root_chip_name, &component.name) {
+			*status = Some(format!("Can't place '{}' inside '{}' -- it would contain itself", component.name, v.root_chip_name));
+			return;
+		}
 	}
 
 	// "IN/OUT" palette entries (`In1Bit` .. `Out8Bit`) aren't real placeable components -- they're
 	// the boundary I/O pins a custom chip is parsed with from its saved JSON. Placing one adds a
 	// fresh dev-pin straight to the current chip's boundary instead of a subchip instance.
-	let chip_type = v.library.try_get(&name).map(|d| d.chip_type);
-	let io_template = chip_type.and_then(builtins::io_pin_template);
-	let terminus_type = chip_type.and_then(|t| t.corresponding_bus_terminus());
+	let chip_types: Vec<Option<ChipType>> = carry.iter().map(|(_, c)| v.library.try_get(&c.name).map(|d| d.chip_type)).collect();
 
-	// Snap the drop position when the snapping pref (or held Ctrl) says so --
-	// `ChipInteractionController`'s `ShouldSnapToGrid` branch.
-	let place_pos = if v.should_snap_to_grid() { crate::render::layout::snap_to_grid_centred(world_pos) } else { world_pos };
+	// Every entry drops at the cursor plus its carried offset, each snapped
+	// individually when snapping says so (a pair's spacing is an exact grid
+	// multiple, so snapping preserves it).
+	let snap = v.should_snap_to_grid();
 
-	// Resolved before the mutable borrow below: the terminus partner's
-	// library name, for the bus-pair placement branch.
-	let terminus_name = terminus_type.and_then(|t| v.library.iter().find(|d| d.chip_type == t).map(|d| d.name.clone()));
+	let first_id = next_component_id(v.library.get(&v.root_chip_name));
+	let chip = v.library.get_mut(&v.root_chip_name);
+	for (index, (offset, component)) in carry.iter().enumerate() {
+		let id = first_id + index as i32;
+		let place_pos = if snap { crate::render::layout::snap_to_grid_centred(world_pos + *offset) } else { world_pos + *offset };
 
-	let chip = v.library.get_mut(&root_chip_name);
-	let id = next_component_id(chip);
-
-	if let Some((is_input, template)) = io_template {
-		let mut new_pin = PinDescription::new(template.name, id, template.bit_count);
-		new_pin.position = place_pos;
-		if is_input {
-			chip.input_pins.push(new_pin);
-		} else {
-			chip.output_pins.push(new_pin);
+		if let Some((is_input, template)) = chip_types[index].and_then(builtins::io_pin_template) {
+			let mut new_pin = PinDescription::new(template.name, id, template.bit_count);
+			new_pin.position = place_pos;
+			if is_input {
+				chip.input_pins.push(new_pin);
+			} else {
+				chip.output_pins.push(new_pin);
+			}
+			continue;
 		}
-	} else if let Some(terminus_name) = terminus_name.as_deref() {
-		debug_assert!(chip_type.is_some_and(|t| t.corresponding_bus_terminus().is_some()));
-		// Placing a bus origin auto-places its terminus partner, linked to
-		// it in both directions via `internal_data[0]`
-		// (`ChipInteractionController`'s auto-place + `SetLinkedBusPair`).
-		// The origin sits left of the drop point so the two are both
-		// visible (the original spreads the pair by `GridSize * 8`).
-		let terminus_id = id + 1;
-		let pair_spacing = crate::render::layout::GRID_SIZE * 4.0;
+
+		let internal_data = match component.linked_bus_partner {
+			Some(partner_index) => Some(vec![(first_id + partner_index as i32) as u32]),
+			None => default_internal_data(chip_types[index]),
+		};
 		chip.sub_chips.push(SubChipDescription {
-			name,
+			name: component.name.clone(),
 			id,
-			internal_data: Some(vec![terminus_id as u32]),
-			position: place_pos - Vec2::new(pair_spacing, 0.0),
+			internal_data,
+			position: place_pos,
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
-		chip.sub_chips.push(SubChipDescription {
-			name: terminus_name.to_string(),
-			id: terminus_id,
-			internal_data: Some(vec![id as u32]),
-			position: place_pos + Vec2::new(pair_spacing, 0.0),
-			label: None,
-			pin_colour_info: Vec::new(),
-		});
-	} else {
-		let internal_data = default_internal_data(chip_type);
-		chip.sub_chips.push(SubChipDescription { name, id, internal_data, position: place_pos, label: None, pin_colour_info: Vec::new() });
 	}
 	v.rebuild_sim();
 }
 
-/// Builds the translucent "ghost" preview of the chip currently pending
-/// placement, floating at the cursor's live world position. Reuses the
-/// exact same `build_scene` pipeline a real placed component draws
-/// through -- body, pins, name label, and any type-specific rendering
-/// (a Key's bound letter, an LED's tint, a display's live pixels, ...)
-/// -- by wrapping the chip in a throwaway single-subchip `ChipDescription`,
-/// so the preview can never drift out of sync with what actually gets
-/// placed. Faded to [`PENDING_PLACEMENT_ALPHA`] via `scene::apply_alpha`.
-/// Returns `None` if `chip_name` no longer resolves in `library` (e.g. it
-/// was deleted while pending -- shouldn't normally happen, but avoids a
-/// panic in `place_sub_chips` if it somehow does).
+/// Builds the translucent "ghost" preview of everything currently carried
+/// by a pending placement (`pending`), floating at the cursor's live world
+/// position -- each entry at the cursor plus its carried offset (snapped
+/// when `snap_to_grid`). Reuses the exact same `build_scene` pipeline real
+/// placed components draw through -- body, pins, name label, and any
+/// type-specific rendering (a Key's bound letter, an LED's tint, ...) --
+/// by wrapping them in a throwaway single-level `ChipDescription`, so the
+/// preview can never drift out of sync with what actually gets placed.
+/// Faded to [`PENDING_PLACEMENT_ALPHA`] via `scene::apply_alpha`. Entries
+/// whose chip no longer resolves in `library` are skipped defensively
+/// (shouldn't normally happen, but avoids a panic in `place_sub_chips` if
+/// it somehow does).
 ///
 /// An "IN/OUT" palette entry previews as a boundary dev-pin instead (see
-/// `try_place_pending_chip`), so its ghost is built the same way -- a
-/// throwaway chip with the pin added straight to `input_pins`/`output_pins`
-/// -- rather than wrapping it as a subchip, so the preview never shows the
-/// wrong body shape for what's actually about to be placed.
-pub(crate) fn build_pending_place_scene(library: &ChipLibrary, chip_name: &str, cursor_world_pos: Vec2) -> Option<SceneGeometry> {
-	let chip_type = library.try_get(chip_name)?.chip_type;
-
+/// `try_place_pending_components`), so its ghost is built the same way -- a
+/// throwaway pin added straight to `input_pins`/`output_pins` -- rather
+/// than wrapping it as a subchip, so the preview never shows the wrong
+/// body shape for what's actually about to be placed.
+pub(crate) fn build_pending_place_scene(
+	library: &ChipLibrary,
+	pending: &[(Vec2, crate::viewer::chip_interaction::PendingComponent)],
+	cursor_world_pos: Vec2,
+	snap_to_grid: bool,
+) -> SceneGeometry {
 	let mut ghost = ChipDescription::new("__pending_placement_ghost__", ChipType::Custom);
-	if let Some((is_input, template)) = builtins::io_pin_template(chip_type) {
-		let mut new_pin = PinDescription::new(template.name, 0, template.bit_count);
-		new_pin.position = cursor_world_pos;
-		if is_input {
-			ghost.input_pins.push(new_pin);
+
+	for (index, (offset, component)) in pending.iter().enumerate() {
+		let position =
+			if snap_to_grid { crate::render::layout::snap_to_grid_centred(cursor_world_pos + *offset) } else { cursor_world_pos + *offset };
+		let Some(chip_type) = library.try_get(&component.name).map(|d| d.chip_type) else { continue };
+
+		if let Some((is_input, template)) = builtins::io_pin_template(chip_type) {
+			let mut new_pin = PinDescription::new(template.name, index as i32, template.bit_count);
+			new_pin.position = position;
+			if is_input {
+				ghost.input_pins.push(new_pin);
+			} else {
+				ghost.output_pins.push(new_pin);
+			}
 		} else {
-			ghost.output_pins.push(new_pin);
+			ghost.sub_chips.push(SubChipDescription {
+				name: component.name.clone(),
+				id: index as i32,
+				internal_data: None,
+				position,
+				label: None,
+				pin_colour_info: Vec::new(),
+			});
 		}
-	} else {
-		ghost.sub_chips.push(SubChipDescription {
-			name: chip_name.to_string(),
-			id: 0,
-			internal_data: None,
-			position: cursor_world_pos,
-			label: None,
-			pin_colour_info: Vec::new(),
-		});
 	}
 
 	let mut geo = scene::build_scene(&ghost, library, &scene::AllLow, None);
 	scene::apply_alpha(&mut geo, PENDING_PLACEMENT_ALPHA);
-	Some(geo)
+	geo
 }
 
 /// Alpha applied to a chip's translucent placement preview (see
 /// [`build_pending_place_scene`]) -- 75%, so the ghost reads clearly as
 /// "not yet placed" without being hard to make out against the canvas.
-const PENDING_PLACEMENT_ALPHA: f32 = 0.75;
+/// Dragging fades carried components by the same amount, so both kinds of
+/// "in the hand" state read identically.
+pub(crate) const PENDING_PLACEMENT_ALPHA: f32 = 0.75;
 
 /// Draws the in-progress wire preview: a line from its start endpoint,
 /// through any turn points placed so far, to the cursor's current world
@@ -496,15 +508,16 @@ pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
 pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
 	// A chip picked up for placement claims every click ahead of anything else below,
 	// same "claims the click" priority a wire in progress gets just below -- see
-	// `try_place_pending_chip`'s doc comment for what actually happens with the click.
-	if v.pending_place.is_some() {
-		try_place_pending_chip(v, world_pos, status);
+	// `try_place_pending_components`'s doc comment for what actually happens with the click.
+	if !v.pending_place.is_empty() {
+		try_place_pending_components(v, world_pos, status);
 		return;
 	}
 
 	// A wire already being placed claims every click ahead of anything else below --
-	// including the input-pin toggle, so clicking a switch's pin finishes/bends the
-	// wire instead of flipping it (see `try_continue_pending_wire`'s doc comment).
+	// including the input-pin toggle and component selection, so clicking a switch's
+	// pin finishes/bends the wire instead of flipping it (see
+	// `try_continue_pending_wire`'s doc comment).
 	if v.pending_wire.is_some() {
 		try_continue_pending_wire(v, world_pos, status);
 		return;
@@ -513,11 +526,28 @@ pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: 
 		return;
 	}
 
+	{
+		let root_desc = v.library.get(&v.root_chip_name);
+		let placed = scene::place_sub_chips(root_desc, &v.library);
+
+		// A press on a placed component's *body* selects it and starts carrying
+		// the selection around -- pins stick out past the body (and wires sit
+		// beneath everything), so they've each already had their say above.
+		if let Some(sub) = scene::hit_test_sub_chip(&placed, world_pos) {
+			chip_interaction::begin_drag_on_component(v, sub.id, world_pos);
+			return;
+		}
+	}
+
 	let root_desc = v.library.get(&v.root_chip_name);
 	if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
 		let root_chip_name = v.root_chip_name.clone();
 		toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+		return;
 	}
+
+	// Empty canvas (the click reached the grid): rubber-band select from here.
+	chip_interaction::begin_selection_box(v, world_pos);
 }
 
 #[cfg(test)]
@@ -586,10 +616,10 @@ mod tests {
 	#[test]
 	fn placing_a_bus_places_its_linked_terminus_pair() {
 		let mut v = viewer_with_builtins();
-		v.pending_place = Some("BUS-4".to_string());
+		chip_interaction::start_placing(&mut v, "BUS-4");
 		let mut status = None;
 
-		try_place_pending_chip(&mut v, Vec2::new(10.0, 10.0), &mut status);
+		try_place_pending_components(&mut v, Vec2::new(10.0, 10.0), &mut status);
 
 		assert_eq!(status, None);
 		let chip = v.library.get("ROOT");
@@ -607,19 +637,110 @@ mod tests {
 	#[test]
 	fn deleting_one_bus_half_takes_the_other_and_their_wires() {
 		let mut v = viewer_with_builtins();
-		v.pending_place = Some("BUS-4".to_string());
-		try_place_pending_chip(&mut v, Vec2::ZERO, &mut None);
+		chip_interaction::start_placing(&mut v, "BUS-4");
+		try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
 
 		// Wire something across the pair so deletion must cascade it away.
-		let chip = v.library.get_mut("ROOT");
-		let (origin_id, terminus_id) = (chip.sub_chips[0].id, chip.sub_chips[1].id);
-		chip.wires.push(WireDescription::new(PinAddress::new(origin_id, 1), PinAddress::new(terminus_id, 0)));
-		drop(chip);
+		let (origin_id, terminus_id) = {
+			let chip = v.library.get_mut("ROOT");
+			let (origin_id, terminus_id) = (chip.sub_chips[0].id, chip.sub_chips[1].id);
+			chip.wires.push(WireDescription::new(PinAddress::new(origin_id, 1), PinAddress::new(terminus_id, 0)));
+			(origin_id, terminus_id)
+		};
 
 		delete_component(&mut v, origin_id);
 
 		let chip = v.library.get("ROOT");
 		assert!(chip.sub_chips.is_empty(), "both halves go together");
 		assert!(chip.wires.is_empty(), "wires attached to either half go too");
+	}
+
+	/// World-space position of a placed subchip's pin, resolved the same way
+	/// the renderer lays pins out (`place_sub_chips` + `pin_world_position`).
+	fn pin_pos(v: &ViewerState, owner_id: i32, pin_id: i32) -> Vec2 {
+		let root_desc = v.library.get(&v.root_chip_name);
+		let placed = scene::place_sub_chips(root_desc, &v.library);
+		let sub = placed.iter().find(|p| p.id == owner_id).expect("owner placed");
+		if let Some((i, _)) = sub.desc.input_pins.iter().enumerate().find(|(_, p)| p.id == pin_id) {
+			layout::pin_world_position(sub.centre, sub.size, sub.input_pin_y[i], true)
+		} else {
+			let (i, _) = sub.desc.output_pins.iter().enumerate().find(|(_, p)| p.id == pin_id).expect("pin exists");
+			layout::pin_world_position(sub.centre, sub.size, sub.output_pin_y[i], false)
+		}
+	}
+
+	/// The full placement -> linking -> wiring story through the real click
+	/// flow: dropping the carried pair must leave it wireable exactly like
+	/// the original's auto-placed pairs -- origin output to terminus input
+	/// completes as a bus wire.
+	#[test]
+	fn dropped_bus_pair_wires_together_as_a_bus_wire_through_the_click_flow() {
+		let mut v = viewer_with_builtins();
+		chip_interaction::start_placing(&mut v, "BUS-4");
+		try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
+		let chip = v.library.get("ROOT").clone();
+		let (origin_id, terminus_id) = (chip.sub_chips[0].id, chip.sub_chips[1].id);
+
+		let mut status = None;
+		let origin_out = pin_pos(&v, origin_id, 1);
+		let terminus_in = pin_pos(&v, terminus_id, 0);
+		handle_canvas_click(&mut v, origin_out, &mut status); // origin OUT starts the wire
+		assert!(status.is_none() && v.pending_wire.is_some(), "clicking the origin's output pin starts a wire");
+		handle_canvas_click(&mut v, terminus_in, &mut status); // terminus IN completes it
+
+		assert_eq!(status, None);
+		assert!(v.pending_wire.is_none(), "the placement completed");
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.wires.len(), 1);
+		assert!(bus_wiring::is_bus_wire(chip, &v.library, &chip.wires[0]), "the linked pair wires together as a bus wire");
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(origin_id, 1));
+		assert_eq!(chip.wires[0].target_pin_address, PinAddress::new(terminus_id, 0));
+	}
+
+	/// Two independently-dropped pairs are NOT linked: crossing them
+	/// (origin A -> terminus B) is refused and leaves the wire placement
+	/// active so the player can pick the right partner instead.
+	#[test]
+	fn unlinked_bus_pairs_refuse_cross_pair_wiring() {
+		let mut v = viewer_with_builtins();
+		for pos in [Vec2::ZERO, Vec2::new(20.0, 0.0)] {
+			chip_interaction::start_placing(&mut v, "BUS-4");
+			try_place_pending_components(&mut v, pos, &mut None);
+		}
+		let chip = v.library.get("ROOT").clone();
+		let ids: Vec<i32> = chip.sub_chips.iter().map(|s| s.id).collect();
+		let (origin_a, terminus_b) = (ids[0], ids[3]);
+
+		let mut status = None;
+		let origin_a_out = pin_pos(&v, origin_a, 1);
+		let terminus_b_in = pin_pos(&v, terminus_b, 0);
+		handle_canvas_click(&mut v, origin_a_out, &mut status);
+		handle_canvas_click(&mut v, terminus_b_in, &mut status);
+
+		assert!(status.as_deref().is_some_and(|m| m.contains("linked partner")), "cross-pair wiring explains itself");
+		assert!(v.pending_wire.is_some(), "the placement stays active for a retry");
+		assert!(v.library.get("ROOT").wires.is_empty(), "no wire got created between unlinked buses");
+	}
+
+	/// The ghost preview draws every entry of the carry, not just one --
+	/// doubling an identical carry doubles its geometry.
+	#[test]
+	fn ghost_preview_renders_every_carried_entry() {
+		use crate::viewer::chip_interaction::PendingComponent;
+		let library = {
+			let mut lib = ChipLibrary::new();
+			crate::register_all_builtins(&mut lib);
+			lib
+		};
+		let single = vec![(Vec2::ZERO, PendingComponent { name: "NAND".into(), linked_bus_partner: None })];
+		let doubled = vec![single[0].clone(), (Vec2::new(4.0, 0.0), PendingComponent { name: "NAND".into(), linked_bus_partner: None })];
+
+		let one = build_pending_place_scene(&library, &single, Vec2::ZERO, false);
+		let two = build_pending_place_scene(&library, &doubled, Vec2::ZERO, false);
+
+		assert!(!one.triangles.is_empty());
+		assert_eq!(two.triangles.len(), one.triangles.len() * 2, "each carried entry contributes its own ghost geometry");
+		assert!(one.triangles.iter().all(|v| v.pos.x < 0.4), "the single ghost hugs the cursor");
+		assert!(two.triangles.iter().any(|v| v.pos.x > 3.7), "the second entry's ghost sits at cursor + its own offset");
 	}
 }

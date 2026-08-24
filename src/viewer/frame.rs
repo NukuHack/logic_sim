@@ -13,15 +13,16 @@ use crate::render::context_menu;
 use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
 use crate::render::layout::{force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
-use crate::render::scene::{bounding_box, build_grid, build_scene, AllLow, SceneGeometry, SimulatorPinState};
+use crate::render::scene::{bounding_box, build_grid, build_scene, build_scene_with_spans, fade_component, AllLow, SceneGeometry, SimulatorPinState};
 use crate::render::theme;
 use crate::render::ui_kit::{pin_geometry_to_screen, Button, UiCtx, UiRect};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
+use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks};
 
-use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview};
+use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, PENDING_PLACEMENT_ALPHA};
 use crate::viewer::library::{is_custom_chip, would_create_cycle};
 use crate::viewer::save_flow::save_chip_mode;
 use crate::viewer::state::{editor_action, NamingPurpose, Overlay, ViewerAction, ViewerState};
@@ -212,11 +213,25 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 
 	let root_desc = v.library.get(&v.root_chip_name).clone();
 	let hover_world_pos = v.camera.screen_to_world(mouse);
-	let chip_scene = {
+	let (mut chip_scene, component_spans) = {
 		let root_ref = v.library.get(&v.root_chip_name);
 		let lookup = SimulatorPinState { sim: &v.sim, scope: v.sim.root() };
-		build_scene(root_ref, &v.library, &lookup, Some(hover_world_pos))
+		build_scene_with_spans(root_ref, &v.library, &lookup, Some(hover_world_pos))
 	};
+
+	// A selection being dragged renders translucently -- deliberately the
+	// same read as a placement ghost -- by fading exactly the carried
+	// components' own geometry (bodies, labels, embedded displays). Their
+	// wires stretch along at full strength. Fading happens here, before the
+	// scene merges with the grid layer, because the spans index into the
+	// chip scene's buffers alone.
+	if let CanvasInteraction::MovingSelection { originals, .. } = &v.canvas_interaction {
+		for &(id, _) in originals {
+			if let Some(span) = component_spans.get(id) {
+				fade_component(&mut chip_scene, span, PENDING_PLACEMENT_ALPHA);
+			}
+		}
+	}
 
 	if !v.camera_fitted {
 		let bounds = bounding_box(&chip_scene).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
@@ -243,13 +258,14 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		}
 		draw_pending_wire_preview(&mut scene_geo, pending, end);
 	}
-	if let Some(chip_name) = &v.pending_place {
-		let ghost_pos = if v.should_snap_to_grid() { snap_to_grid_centred(hover_world_pos) } else { hover_world_pos };
-		if let Some(ghost) = build_pending_place_scene(&v.library, chip_name, ghost_pos) {
-			scene_geo.triangles.extend(ghost.triangles);
-			scene_geo.labels.extend(ghost.labels);
-		}
+	if !v.pending_place.is_empty() {
+		let ghost = build_pending_place_scene(&v.library, &v.pending_place, hover_world_pos, v.should_snap_to_grid());
+		scene_geo.triangles.extend(ghost.triangles);
+		scene_geo.labels.extend(ghost.labels);
 	}
+	// Selection highlights and any rubber band draw last of all, on top of
+	// everything else in the canvas layer.
+	chip_interaction::append_selection_geometry(&mut scene_geo, v, hover_world_pos);
 	let mut viewer_stack: UiStack<ViewerAction> = UiStack::new();
 	viewer_stack.push(StackLayer::<ViewerAction>::new(LayerId::Canvas, Capture::None).with_geometry(scene_geo));
 

@@ -19,6 +19,7 @@ use winit::window::WindowId;
 
 use crate::viewer::actions::apply_editor_action;
 use crate::viewer::canvas::{handle_canvas_click, wire_click_tolerance};
+use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::context_menu::{apply_context_menu_action, context_menu_items_for_component};
 use crate::viewer::frame::{build_menu_stack, build_viewer_stack};
 use crate::viewer::input::{encode_modifiers, handle_viewer_key, KeyOutcome};
@@ -93,6 +94,13 @@ impl ApplicationHandler for App {
 				let cursor = Vec2::new(position.x as f32, position.y as f32);
 				self.mouse_pos = cursor;
 				if let Screen::Viewer(v) = &mut self.screen {
+					// A selection being carried follows the cursor in world
+					// space (its components' positions update live; see
+					// `chip_interaction::update_move_to_cursor`).
+					if matches!(v.canvas_interaction, CanvasInteraction::MovingSelection { .. }) {
+						let world_pos = v.camera.screen_to_world(cursor);
+						chip_interaction::update_move_to_cursor(v, world_pos);
+					}
 					if v.dragging {
 						let before = v.camera.screen_to_world(v.last_cursor);
 						let after = v.camera.screen_to_world(cursor);
@@ -118,8 +126,12 @@ impl App {
 	/// region contains it -- exactly the priority chain the old hand-rolled
 	/// sequence of `last_*_buttons` checks implemented, now expressed as
 	/// stack order instead. A click that propagates past every UI layer is
-	/// a canvas click (`handle_canvas_click`). Camera panning is *not*
-	/// handled here -- see `handle_middle_mouse_button`.
+	/// a canvas click (`handle_canvas_click`); its *release* ends whatever
+	/// that press started over the canvas (a selection drag or a rubber
+	/// band -- see `chip_interaction::handle_canvas_release`; releases are
+	/// self-guarding, so a press a UI layer swallowed never reaches it).
+	/// Camera panning is *not* handled here -- see
+	/// `handle_middle_mouse_button`.
 	fn handle_mouse_button(&mut self, btn_state: ElementState, event_loop: &ActiveEventLoop) {
 		match &mut self.screen {
 			Screen::Menu => {
@@ -130,59 +142,62 @@ impl App {
 					}
 				}
 			}
-			Screen::Viewer(v) => {
-				if btn_state != ElementState::Pressed {
-					return;
-				}
-				sync_stack_with_state(v);
-				let world_pos = v.camera.screen_to_world(self.mouse_pos);
-				let dispatch = v.stack.dispatch_click(self.mouse_pos);
-				match dispatch.result {
-					// Nobody wanted it: it falls through the whole stack to the canvas.
-					InputResult::Propagate => {
-						// Same as ever, a click anywhere outside the bar closes its open flyout --
-						// with the bar no longer swallowing clicks in its padding, "outside" now
-						// includes the strip between/around its buttons.
-						v.bottom_bar_open_collection = None;
-						handle_canvas_click(v, world_pos, &mut self.status);
-					}
-					InputResult::Stop => {}
-					InputResult::Handled => match dispatch.layer {
-						// A row inside an open starred-collection flyout acts *and* closes the
-						// flyout; the flyout's own capture region swallows everything else.
-						Some(LayerId::BottomBarFlyout) => {
-							if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
-								apply_editor_action(v, &self.paths, &mut self.status, action);
-							}
+			Screen::Viewer(v) => match btn_state {
+				ElementState::Pressed => {
+					sync_stack_with_state(v);
+					let world_pos = v.camera.screen_to_world(self.mouse_pos);
+					let dispatch = v.stack.dispatch_click(self.mouse_pos);
+					match dispatch.result {
+						// Nobody wanted it: it falls through the whole stack to the canvas.
+						InputResult::Propagate => {
+							// Same as ever, a click anywhere outside the bar closes its open flyout --
+							// with the bar no longer swallowing clicks in its padding, "outside" now
+							// includes the strip between/around its buttons.
 							v.bottom_bar_open_collection = None;
+							handle_canvas_click(v, world_pos, &mut self.status);
 						}
-						// The context menu's layer either picks one of its rows or just dismisses
-						// it -- either way the click is swallowed, never reaching what's underneath.
-						Some(LayerId::ContextMenu) => {
-							if let (Some(ViewerAction::Context(id)), Some(target)) =
-								(dispatch.button.map(|b| b.action.clone()), v.context_menu.take().map(|s| s.target))
-							{
-								apply_context_menu_action(v, &self.paths, &mut self.status, &target, id);
+						InputResult::Stop => {}
+						InputResult::Handled => match dispatch.layer {
+							// A row inside an open starred-collection flyout acts *and* closes the
+							// flyout; the flyout's own capture region swallows everything else.
+							Some(LayerId::BottomBarFlyout) => {
+								if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
+									apply_editor_action(v, &self.paths, &mut self.status, action);
+								}
+								v.bottom_bar_open_collection = None;
 							}
-						}
-						// The customize workspace: hotspot clicks go through the
-						// action funnel; a click landing on the preview's padding
-						// commits whatever's being carried (drop placement /
-						// finish resize), mirroring the canvas's own
-						// "background click" idiom.
-						Some(LayerId::CustomizePanel) => match dispatch.button.map(|b| b.action.clone()) {
-							Some(ViewerAction::Editor(action)) => apply_editor_action(v, &self.paths, &mut self.status, action),
-							None => crate::viewer::customize::handle_preview_click(v),
-							_ => {}
+							// The context menu's layer either picks one of its rows or just dismisses
+							// it -- either way the click is swallowed, never reaching what's underneath.
+							Some(LayerId::ContextMenu) => {
+								if let (Some(ViewerAction::Context(id)), Some(target)) =
+									(dispatch.button.map(|b| b.action.clone()), v.context_menu.take().map(|s| s.target))
+								{
+									apply_context_menu_action(v, &self.paths, &mut self.status, &target, id);
+								}
+							}
+							// The customize workspace: hotspot clicks go through the
+							// action funnel; a click landing on the preview's padding
+							// commits whatever's being carried (drop placement /
+							// finish resize), mirroring the canvas's own
+							// "background click" idiom.
+							Some(LayerId::CustomizePanel) => match dispatch.button.map(|b| b.action.clone()) {
+								Some(ViewerAction::Editor(action)) => apply_editor_action(v, &self.paths, &mut self.status, action),
+								None => crate::viewer::customize::handle_preview_click(v),
+								_ => {}
+							},
+							_ => {
+								if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
+									apply_editor_action(v, &self.paths, &mut self.status, action);
+								}
+							}
 						},
-						_ => {
-							if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
-								apply_editor_action(v, &self.paths, &mut self.status, action);
-							}
-						}
-					},
+					}
 				}
-			}
+				ElementState::Released => {
+					let world_pos = v.camera.screen_to_world(self.mouse_pos);
+					chip_interaction::handle_canvas_release(v, world_pos);
+				}
+			},
 		}
 	}
 
@@ -221,10 +236,12 @@ impl App {
 		// replaces the previous context menu rather than stacking).
 		v.context_menu = None;
 		// Also the standard "cancel" gesture for an in-progress wire
-		// placement or a chip pending placement, same as Escape (see
-		// the keyboard handler).
+		// placement, a chip pending placement, a selection drag (reverting
+		// it), and the selection itself -- same as Escape (see the keyboard
+		// handler).
 		v.pending_wire = None;
-		v.pending_place = None;
+		v.pending_place.clear();
+		chip_interaction::cancel_all(v);
 		// ...and for a customize-workspace grab/resize in flight.
 		crate::viewer::customize::cancel_interaction(v);
 

@@ -200,6 +200,18 @@ fn load_single_chip_from_disk(paths: &SavePaths, project_name: &str, chip_name: 
 	crate::json::parse_chip_description(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// Drops every canvas interaction draft that references the *previous*
+/// root chip's contents (pending wire endpoints and carry entries key off
+/// subchip ids/positions; a selection or in-flight drag would silently
+/// refer to whatever now sits at those ids in the new chip) -- the same
+/// trigger set `pending_wire`'s docs describe, shared by both chip-switch
+/// flows above.
+fn reset_canvas_interaction(v: &mut ViewerState) {
+	v.pending_wire = None;
+	v.pending_place.clear();
+	crate::viewer::chip_interaction::cancel_all(v);
+}
+
 /// Discards whatever unsaved edits this session made to whichever chip
 /// is currently open (`v.root_chip_name`), by reloading its pristine
 /// on-disk copy back over its `v.library` entry (same "reload from disk"
@@ -263,8 +275,7 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 	reset_all_driven_inputs(&mut v.library);
 	v.rebuild_sim();
 	v.camera_fitted = false;
-	v.pending_wire = None;
-	v.pending_place = None;
+	reset_canvas_interaction(v);
 	*status = Some(format!("New chip '{name}'"));
 }
 
@@ -302,8 +313,7 @@ pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: 
 		v.rebuild_sim();
 		if switching {
 			v.camera_fitted = false;
-			v.pending_wire = None;
-			v.pending_place = None;
+			reset_canvas_interaction(v);
 		}
 	} else if v.library.try_get(name).is_some() {
 		*status = Some(format!("Chip '{}' is a builtin component", name));
@@ -326,5 +336,45 @@ mod tests {
 
 		library.add(ChipDescription::new("new chip 2", ChipType::Custom));
 		assert_eq!(unique_new_chip_name(&library), "New Chip 3");
+	}
+
+	/// Switching chips must drop every canvas draft that references the
+	/// *previous* chip's ids -- pendings, selection, and any drag in flight.
+	#[test]
+	fn switching_chips_clears_pendings_selection_and_drag_state() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		library.add(ChipDescription::new("OTHER", ChipType::Custom));
+
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let root = v.root_chip_name.clone();
+
+		// Fill every kind of canvas draft state on ROOT.
+		crate::viewer::chip_interaction::start_placing(&mut v, "NAND");
+		try_place_pending_components_via_public_path(&mut v);
+		let id = v.library.get(&root).sub_chips[0].id;
+		v.selected_ids.push(id);
+		crate::viewer::chip_interaction::begin_drag_on_component(&mut v, id, crate::structs::Vec2::ZERO);
+		v.pending_wire = None;
+		assert!(has_draft_state(&v), "precondition: drafts exist");
+
+		reset_canvas_interaction(&mut v);
+
+		assert!(v.pending_place.is_empty());
+		assert!(v.pending_wire.is_none());
+		assert!(v.selected_ids.is_empty());
+		assert_eq!(v.canvas_interaction, crate::viewer::chip_interaction::CanvasInteraction::None);
+	}
+
+	fn try_place_pending_components_via_public_path(v: &mut ViewerState) {
+		crate::viewer::canvas::try_place_pending_components(v, crate::structs::Vec2::ZERO, &mut None);
+	}
+
+	fn has_draft_state(v: &ViewerState) -> bool {
+		!v.pending_place.is_empty()
+			|| v.pending_wire.is_some()
+			|| !v.selected_ids.is_empty()
+			|| !matches!(v.canvas_interaction, crate::viewer::chip_interaction::CanvasInteraction::None)
 	}
 }

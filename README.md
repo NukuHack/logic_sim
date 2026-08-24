@@ -7,6 +7,7 @@ A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.c
 - **Project picker → chip viewer** in a single window: open an existing project or create a new one, then edit its chips.
 - **Built-in components**: NAND gates, clocks, pulses, tri-state buffers, RAM/ROM, bit merge/split converters, 7-segment / RGB / dot / LED displays, buses, buzzers, and keyboard-driven input chips (`KEY`, `MOD KEYS`).
 - **Buses**: placing a `BUS` chip places its linked terminus partner with it; the pair wires together like a wire passing through, other wires can tap off anywhere along a bus, and any number of inputs (and outputs) can be wired into it -- everything merges at the origin.
+- **Selection & movement**: click a component to select it (faint highlight), drag to move it (translucent while carried, snapping like placement), drag on empty canvas for a rubber-band that selects everything even partially inside it, and `Delete` removes the selection.
 - **Buzzer audio**: buzzers drive a 256-slot frequency table through a smoothed square-wave mix played on the real audio device (silently skipped when none is available).
 - **Custom chips**: save any circuit as a chip and nest it inside other circuits, just like the original.
 - **Chip customization** (save popup → *Customize*): name placement (middle/top/hidden), body colour (palette + hex field), corner-drag resizing previewed live with the chip's own edge pins for scale, and embedded display surfaces you place, move, scale and remove right on the chip body — content clips at the chip edge, and any display that doesn't fully fit is flagged in red. Everything round-trips through the original's standard `Displays` save field.
@@ -50,7 +51,7 @@ Or use the all-in-one script:
 | `Esc` | Cancel pending action / close topmost overlay / leave editor |
 | `Delete` | Remove the display being carried in Customize |
 
-Mouse: drag to pan, scroll to zoom, click pins to place wires, right-click for context menus.
+Mouse: middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select/drag it, drag empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress).
 
 ## Where data lives
 

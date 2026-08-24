@@ -4,6 +4,7 @@
 
 use crate::json::ChipCollection;
 use crate::render::editor_ui::{EditorAction, LibrarySelection};
+use crate::viewer::chip_interaction;
 use crate::viewer::customize as customize_flow;
 use crate::viewer::library::{
 	chip_delete_confirm_message, delete_chip_from_library, delete_collection, move_selected_library_row, reset_library_popup_state,
@@ -135,7 +136,10 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			close_all_overlays(v);
 			v.library_selection = LibrarySelection::None;
 			v.pending_wire = None;
-			v.pending_place = Some(name);
+			// Fills the carry (a bus origin brings its linked terminus
+			// partner along) and cancels any selection drag in flight --
+			// see `chip_interaction::start_placing`.
+			chip_interaction::start_placing(v, &name);
 		}
 		EditorAction::ExitLibrary => {
 			let mut desc = v.prefs.clone();

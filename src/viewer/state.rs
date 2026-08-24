@@ -8,6 +8,7 @@ use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::key_mods_bits;
 use crate::sim::Simulator;
+use crate::viewer::chip_interaction;
 use crate::viewer::customize::CustomizeState;
 use crate::viewer::sim_timing::PerfWindow;
 use crate::viewer::wire_draft::PendingWire;
@@ -257,16 +258,31 @@ pub(crate) struct ViewerState {
 	/// whatever now happens to sit at that index in the new chip.
 	pub(crate) pending_wire: Option<PendingWire>,
 
-	/// The name of a chip currently picked up for placement (the
-	/// library's "USE" button, `EditorAction::PlaceChip`), if any --
-	/// drawn as a translucent preview following the cursor
-	/// (`build_pending_place_scene`) and dropped as a real
-	/// `SubChipDescription` on the next canvas click that lands on free
-	/// space (`try_place_pending_chip`). Mutually exclusive with
+	/// The components currently picked up for placement (the library's
+	/// "USE" button, `EditorAction::PlaceChip`), if any -- each entry is
+	/// `(offset from the cursor, what to place)`, drawn as translucent
+	/// previews following the cursor (`build_pending_place_scene`) and
+	/// dropped as real descriptions on the next canvas click that lands on
+	/// free space (`try_place_pending_components`). A pickup normally
+	/// carries one entry; picking up a bus origin additionally carries its
+	/// linked terminus partner as a second one -- see
+	/// `chip_interaction::start_placing`. Mutually exclusive with
 	/// `pending_wire` in practice (starting one clears the other), and
 	/// cleared on the same triggers `pending_wire` is: Escape, a
 	/// right-click, or the root chip changing.
-	pub(crate) pending_place: Option<String>,
+	pub(crate) pending_place: Vec<(Vec2, chip_interaction::PendingComponent)>,
+
+	/// Ids of the currently selected placed components (subchips of the
+	/// current root chip; dev-pins deliberately don't take part -- see
+	/// `chip_interaction::begin_drag_on_component`). Populated by clicking
+	/// a component body or rubber-band box selection, consumed by Delete,
+	/// and cleared by Escape/right-click/root-chip switches.
+	pub(crate) selected_ids: Vec<i32>,
+
+	/// What the current left-press drag over the canvas is doing (carrying
+	/// the selection around, or drawing a rubber band) -- see
+	/// [`chip_interaction::CanvasInteraction`].
+	pub(crate) canvas_interaction: chip_interaction::CanvasInteraction,
 }
 
 impl ViewerState {
@@ -320,7 +336,9 @@ impl ViewerState {
 			bottom_bar_open_collection: None,
 			context_menu: None,
 			pending_wire: None,
-			pending_place: None,
+			pending_place: Vec::new(),
+			selected_ids: Vec::new(),
+			canvas_interaction: Default::default(),
 		};
 		v.sync_sim_clock_pref();
 		v

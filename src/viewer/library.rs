@@ -33,7 +33,7 @@ pub(crate) fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
 /// forever trying to flatten. Gates the "USE"/bottom-bar placement buttons
 /// (`editor_ui::ChipLibraryState::selected_chip_would_cycle`,
 /// `build_starred_bottom_bar`/`build_starred_collection_popup`'s `cycle_blocked`) and is checked
-/// again defensively in `try_place_pending_chip` itself, so a click can never place a cycle even
+/// again defensively in `try_place_pending_components` itself, so a click can never place a cycle even
 /// if the UI's greyed-out state somehow gets out of sync with what's actually open.
 pub(crate) fn would_create_cycle(library: &ChipLibrary, root_chip_name: &str, chip_to_place: &str) -> bool {
 	if chip_to_place.eq_ignore_ascii_case(root_chip_name) {

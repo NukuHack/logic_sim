@@ -53,6 +53,16 @@ pub const PIN_COL: Rgba = [0.0, 0.0, 0.0, 1.0];
 pub const PIN_HIGHLIGHT_COL: Rgba = [1.0, 1.0, 1.0, 1.0];
 pub const PIN_INVALID_COL: Rgba = rgb(0.15, 0.15, 0.15);
 
+/// Translucent quad drawn over every selected component (and filled by the
+/// rubber-band selection rectangle). Mirrors `DrawSettings.SelectionBoxCol`.
+pub const SELECTION_BOX_COL: Rgba = [1.0, 1.0, 1.0, 0.1];
+/// Same quad while its components are being carried by a drag -- slightly
+/// brighter than at rest (`DrawSettings.SelectionBoxMovingCol`).
+pub const SELECTION_BOX_MOVING_COL: Rgba = [1.0, 1.0, 1.0, 0.125];
+/// The moving-selection quad when the carry would land on top of something
+/// it may not overlap (`DrawSettings.SelectionBoxInvalidCol`).
+pub const SELECTION_BOX_INVALID_COL: Rgba = [243.0 / 255.0, 81.0 / 255.0, 75.0 / 255.0, 120.0 / 255.0];
+
 pub const BACKGROUND_COL: Rgba = rgb(66.0 / 255.0, 66.0 / 255.0, 69.0 / 255.0);
 pub const GRID_COL: Rgba = rgb(49.0 / 255.0, 49.0 / 255.0, 51.0 / 255.0);
 

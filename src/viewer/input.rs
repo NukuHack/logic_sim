@@ -7,6 +7,8 @@
 use crate::render::editor_ui::{self, EditorAction, LibrarySelection, PrefValueField};
 use crate::render::ui_stack::LayerId;
 use crate::viewer::actions::{apply_editor_action, open_library_panel};
+use crate::viewer::canvas::delete_component;
+use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::customize as customize_flow;
 use crate::viewer::library::reset_library_popup_state;
 use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell};
@@ -258,12 +260,20 @@ pub(crate) fn handle_viewer_key(
 		Key::Named(NamedKey::Tab) if v.stack.keyboard_target().is_none() => {
 			open_library_panel(v);
 		}
+		// ---- Plain-viewer selection: Delete removes every selected
+		// component (bus partners cascade along per `delete_component`).
+		// Only while no surface owns the keyboard and nothing else is in
+		// flight, so a text field's or a pending action's Delete stays its
+		// own gesture ----
+		Key::Named(NamedKey::Delete) if can_delete_selection(v) => delete_selected(v),
 		// ---- Escape cascade, top-most thing first: popup state > whole
-		// overlay > pending wire/chip > bottom-bar flyout > leave the editor ----
+		// overlay > pending wire/chip/selection-drag > bottom-bar flyout >
+		// leave the editor ----
 		Key::Named(NamedKey::Escape) => {
-			if v.pending_wire.is_some() || v.pending_place.is_some() {
+			if has_cancellable_canvas_state(v) {
 				v.pending_wire = None;
-				v.pending_place = None;
+				v.pending_place.clear();
+				chip_interaction::cancel_all(v);
 			} else if v.bottom_bar_open_collection.is_some() {
 				v.bottom_bar_open_collection = None;
 			} else {
@@ -281,6 +291,31 @@ pub(crate) fn handle_viewer_key(
 fn toggle_grid(v: &mut ViewerState, paths: &SavePaths) {
 	v.toggle_grid_display();
 	persist_prefs_shortcut_change(v, paths);
+}
+
+/// Whether the plain-viewer Delete shortcut may act right now: nothing owns
+/// the keyboard (so a text field's Delete stays a text edit) and no wire
+/// placement or placement carry is in flight (their Escape/Delete semantics
+/// are their own). Split from the key-match arm so the guard is testable --
+/// winit's `KeyEvent` can't be constructed outside winit itself.
+pub(crate) fn can_delete_selection(v: &ViewerState) -> bool {
+	v.stack.keyboard_target().is_none() && v.pending_wire.is_none() && v.pending_place.is_empty() && !v.selected_ids.is_empty()
+}
+
+/// Deletes every selected component; bus partners cascade along inside
+/// [`delete_component`].
+pub(crate) fn delete_selected(v: &mut ViewerState) {
+	for id in std::mem::take(&mut v.selected_ids) {
+		delete_component(v, id);
+	}
+}
+
+/// Whether there is any in-flight canvas state the Escape cascade should
+/// cancel before falling through to "leave the chip editor" -- a pending
+/// wire, a placement carry, a selection drag/rubber band, or a live
+/// selection. Same split-for-testability reasoning as `can_delete_selection`.
+pub(crate) fn has_cancellable_canvas_state(v: &ViewerState) -> bool {
+	v.pending_wire.is_some() || !v.pending_place.is_empty() || !matches!(v.canvas_interaction, CanvasInteraction::None) || !v.selected_ids.is_empty()
 }
 
 /// Saves the current prefs when the preferences panel isn't open; while it
@@ -327,6 +362,8 @@ fn prefs_field_accepts(v: &ViewerState, s: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::structs::Vec2;
+	use crate::viewer::chip_interaction::{self, CanvasInteraction};
 
 	#[test]
 	fn encode_modifiers_maps_each_winit_flag_to_its_sim_bit() {
@@ -341,5 +378,97 @@ mod tests {
 
 		let combo = ModifiersState::SHIFT | ModifiersState::CONTROL;
 		assert_eq!(encode_modifiers(combo), key_mods_bits::SHIFT | key_mods_bits::CONTROL);
+	}
+
+	fn viewer_with_builtins() -> ViewerState {
+		let mut library = crate::ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
+		chip_interaction::start_placing(v, "NAND");
+		crate::viewer::canvas::try_place_pending_components(v, pos, &mut None);
+		v.library.get("ROOT").sub_chips.last().expect("placement succeeded").id
+	}
+
+	#[test]
+	fn delete_selected_only_actives_with_a_free_keyboard_and_no_pending_work() {
+		let mut v = viewer_with_builtins();
+
+		assert!(!can_delete_selection(&v), "nothing selected yet");
+
+		let a = place_nand(&mut v, Vec2::ZERO);
+		v.selected_ids.push(a);
+		assert!(can_delete_selection(&v));
+
+		// A text-field overlay owning the keyboard blocks it...
+		open_search(&mut v);
+		v.stack = crate::viewer::frame::build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::ZERO);
+		assert!(!can_delete_selection(&v), "a focused text field owns Delete");
+		close_top_overlay(&mut v);
+		v.stack = crate::viewer::frame::build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::ZERO);
+		// ...as does any pending wire or placement carry.
+		v.pending_wire = Some(crate::viewer::wire_draft::PendingWire {
+			start: crate::viewer::wire_draft::PendingWireEnd::Pin { owner_id: a, pin_id: 2, is_source: true, position: Vec2::ZERO },
+			bend_points: Vec::new(),
+			bit_count: crate::PinBitCount::Bit1,
+		});
+		assert!(!can_delete_selection(&v));
+		v.pending_wire = None;
+		chip_interaction::start_placing(&mut v, "NAND");
+		assert!(!can_delete_selection(&v));
+	}
+
+	#[test]
+	fn delete_selected_removes_every_selected_component_and_cascades_bus_pairs() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let (origin_id, terminus_id) = place_bus_pair(&mut v, Vec2::new(6.0, 0.0));
+
+		v.selected_ids = vec![a, origin_id];
+		delete_selected(&mut v);
+
+		assert!(v.selected_ids.is_empty());
+		let chip = v.library.get("ROOT");
+		assert!(
+			chip.sub_chips.iter().all(|s| s.id != a && s.id != origin_id && s.id != terminus_id),
+			"the selection goes -- and the unselected bus partner cascades with its origin"
+		);
+	}
+
+	#[test]
+	fn escape_cascade_reports_whether_anything_is_cancellable() {
+		let mut v = viewer_with_builtins();
+
+		assert!(!has_cancellable_canvas_state(&v), "idle viewer falls through to leaving the editor");
+
+		let a = place_nand(&mut v, Vec2::ZERO);
+		assert!(!has_cancellable_canvas_state(&v), "a placed component alone isn't cancellable state");
+
+		chip_interaction::begin_drag_on_component(&mut v, a, Vec2::ZERO);
+		update_drag_for_test(&mut v, Vec2::new(4.0, 0.0));
+		assert!(has_cancellable_canvas_state(&v));
+
+		chip_interaction::cancel_all(&mut v);
+		assert!(!has_cancellable_canvas_state(&v));
+		assert_eq!(position_of(&v, a), Vec2::ZERO, "Escape-equivalent cancel reverts the drag");
+		assert_eq!(v.canvas_interaction, CanvasInteraction::None);
+	}
+
+	fn update_drag_for_test(v: &mut ViewerState, cursor: Vec2) {
+		chip_interaction::update_move_to_cursor(v, cursor);
+	}
+
+	fn place_bus_pair(v: &mut ViewerState, pos: Vec2) -> (i32, i32) {
+		chip_interaction::start_placing(v, "BUS-4");
+		crate::viewer::canvas::try_place_pending_components(v, pos, &mut None);
+		let chip = v.library.get("ROOT").clone();
+		(chip.sub_chips[chip.sub_chips.len() - 2].id, chip.sub_chips[chip.sub_chips.len() - 1].id)
+	}
+
+	fn position_of(v: &ViewerState, id: i32) -> Vec2 {
+		v.library.get("ROOT").sub_chips.iter().find(|s| s.id == id).expect("component exists").position
 	}
 }

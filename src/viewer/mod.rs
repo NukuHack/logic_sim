@@ -8,7 +8,9 @@
 //!
 //! Modules by concern: [`state`] (viewer/project working state + overlay
 //! bookkeeping), [`canvas`] (chip-canvas clicks), [`wire_draft`]
-//! (in-progress wire placement state), [`library`] (chip-library
+//! (in-progress wire placement state), [`chip_interaction`] (component
+//! selection/dragging, multi-component placement carries, box selection),
+//! [`library`] (chip-library
 //! bookkeeping), [`save_flow`] (save/save-as/rename/new-chip), [`popups`]
 //! (generic popup confirm handlers), [`context_menu`] (right-click popups),
 //! [`actions`] (editor action funnel), [`input`] (keyboard routing),
@@ -20,6 +22,7 @@ pub mod actions;
 pub mod app;
 pub mod bus_wiring;
 pub mod canvas;
+pub mod chip_interaction;
 pub mod context_menu;
 pub mod customize;
 pub mod events;
