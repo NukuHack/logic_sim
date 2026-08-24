@@ -27,6 +27,10 @@ pub const CLIP_THRESHOLD: f32 = 0.1;
 /// (`AudioState.waveIterations`).
 const WAVE_ITERATIONS: u32 = 20;
 
+/// Output-stream period in frames (cpal's ALSA backend doubles this for the
+/// ring buffer). 2048 frames @ 48 kHz = ~42.7 ms per wake, ~85 ms of buffer.
+const AUDIO_PERIOD_FRAMES: u32 = 2048;
+
 /// A0 in Hz -- the base of the frequency table
 /// (`SimAudio.CalculateFrequency`).
 const A0_FREQUENCY_HZ: f64 = 27.5;
@@ -208,7 +212,16 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 
 	let sample_rate = config.sample_rate() as f64;
 	let channels = config.channels() as usize;
-	let config: cpal::StreamConfig = config.into();
+	let mut config: cpal::StreamConfig = config.into();
+	// Pin a generous period instead of accepting the device default: cpal's
+	// ALSA backend pairs the default negotiation with only a two-period ring
+	// (here: 512-frame periods => ~21 ms total buffer), which underruns
+	// whenever the output worker stalls past a single ~10 ms period -- routine
+	// under load even when outputting silence (the errors also fire while no
+	// buzzer sounds, since the stream runs from app start either way). Buzzer
+	// audio has no interactive-latency requirement (the mix follows the
+	// simulation), so trading ~43 ms of latency for ~85 ms of buffer is free.
+	config.buffer_size = cpal::BufferSize::Fixed(AUDIO_PERIOD_FRAMES);
 	// Sample count since start -- dividing by the rate reconstructs the
 	// callback's exact time without float drift accumulating per sample.
 	let samples_elapsed = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -237,8 +250,70 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 		.map_err(|e| format!("failed to build audio stream: {e}"))?;
 
 	stream.play().map_err(|e| format!("failed to start audio stream: {e}"))?;
+	promote_worker_to_realtime();
 	Ok(AudioPlayer { _stream: stream })
 }
+
+/// Asks rtkit to promote cpal's ALSA worker thread to SCHED_FIFO.
+///
+/// The worker is plain SCHED_OTHER otherwise, and long system/process stalls
+/// (render-path hitches, CPU saturation) then leave it unable to feed the
+/// device in time -- reported as `BufferUnderrun` errors even in total
+/// silence. Realtime scheduling lets it run the moment a stall lifts; the
+/// enlarged period set by [`AUDIO_PERIOD_FRAMES`] covers the rest. No-op off
+/// Linux (the thread name and /proc scan are ALSA/Linux specifics).
+///
+/// Fire-and-forget on a helper thread (dbus setup must not delay startup),
+/// degrading silently wherever rtkit isn't running or refuses the request:
+/// audio then just behaves as before. Pure-zbus, so no system dbus headers
+/// are needed to build.
+#[cfg(target_os = "linux")]
+fn promote_worker_to_realtime() {
+	std::thread::spawn(|| {
+		const THREAD_NAME: &str = "cpal_alsa_out";
+		// The worker was spawned during build_output_stream/play(), but give
+		// the scheduler a moment rather than failing on a naming race.
+		let tid = (0..10).find_map(|_| {
+			std::thread::sleep(std::time::Duration::from_millis(20));
+			read_thread_ids().into_iter().find(|(_, comm)| comm == THREAD_NAME).map(|(tid, _)| tid)
+		});
+		let Some(tid) = tid else { return };
+
+		let Ok(connection) = pollster::block_on(zbus::connection::Connection::system()) else { return };
+		let service = "org.freedesktop.RealtimeKit1";
+		let path = "/org/freedesktop/RealtimeKit1";
+		let interface = "org.freedesktop.RealtimeKit1";
+		let pid = std::process::id() as u64;
+		// rtkit's allowed ceiling varies by distro config; walk down until one sticks.
+		for priority in [20u32, 15, 10, 5] {
+			let call: Result<(), _> =
+				pollster::block_on(connection.call_method(Some(service), path, Some(interface), "MakeThreadRealtimeWithPID", &(pid, tid, priority)))
+					.map(|_: zbus::Message| ());
+			if call.is_ok() {
+				eprintln!("audio: worker thread promoted to SCHED_FIFO {priority} via rtkit");
+				return;
+			}
+		}
+	});
+}
+
+/// Lists `(tid, comm)` for every thread of this process (`/proc/self/task`).
+#[cfg(target_os = "linux")]
+fn read_thread_ids() -> Vec<(u64, String)> {
+	let Ok(entries) = std::fs::read_dir("/proc/self/task") else { return Vec::new() };
+	entries
+		.filter_map(|entry| {
+			let entry = entry.ok()?;
+			let tid: u64 = entry.file_name().to_str()?.parse().ok()?;
+			let comm = std::fs::read_to_string(entry.path().join("comm")).ok()?;
+			Some((tid, comm.trim().to_string()))
+		})
+		.collect()
+}
+
+/// Non-Linux platforms have nothing to promote (see [`promote_worker_to_realtime`]).
+#[cfg(not(target_os = "linux"))]
+fn promote_worker_to_realtime() {}
 
 /// The gain + clip stage of `AudioUnity.OnAudioFilterRead`: anything past
 /// [`CLIP_THRESHOLD`] is flattened to exactly that magnitude, preserving sign.
