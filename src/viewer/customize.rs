@@ -164,8 +164,10 @@ pub(crate) fn start_scale_display(v: &mut ViewerState, index: usize) {
 	};
 }
 
-/// DISPLAYS-list row press: pick up a fresh display ghost (only while
-/// idle; rows are disabled otherwise anyway).
+/// DISPLAYS-list row press: an unplaced entry picks its display up as a
+/// ghost (only while idle; rows are disabled otherwise anyway); a
+/// *placed* entry's click removes that display again -- the row's second
+/// job, mirrored by its "(placed)" label in the builder.
 pub(crate) fn place_list_entry(v: &mut ViewerState, entry_index: usize) {
 	let Some(customize) = v.customize.as_mut() else { return };
 	if customize.interaction.is_active() {
@@ -174,7 +176,9 @@ pub(crate) fn place_list_entry(v: &mut ViewerState, entry_index: usize) {
 	let library = &v.library;
 	let entries = display_entries(&customize.draft, library);
 	let Some(entry) = entries.get(entry_index) else { return };
+
 	if entry.placed {
+		customize.draft.displays.retain(|d| d.sub_chip_id != entry.sub_chip_id);
 		return;
 	}
 	customize.interaction = CustomizeInteraction::PlacingDisplay { sub_chip_id: entry.sub_chip_id };

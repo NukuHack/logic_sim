@@ -157,8 +157,11 @@ pub enum EditorAction {
 	/// resizing from that corner (`usize` 0..4 = top-left, top-right,
 	/// bottom-left, bottom-right).
 	CustomizeResizeStart(usize),
-	/// Customize workspace: pick up a fresh display from the DISPLAYS list
-	/// row `usize` (only enabled while that subchip isn't already placed).
+	/// Customize workspace: DISPLAYS list row `usize` press -- picks that
+	/// subchip's display up for placement, or, if it's already placed on
+	/// the preview body, removes it again (the row toggles; see
+	/// [`crate::render::customize_ui`]'s row builder and
+	/// `viewer::customize::place_list_entry`).
 	CustomizePlaceEntry(usize),
 }
 

@@ -233,7 +233,7 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 	y += 34.0;
 
 	let hint = match ctx.interaction {
-		CustomizeInteraction::None => ["Drag a corner bracket to resize.", "Pick a display below to place it."],
+		CustomizeInteraction::None => ["Drag a corner bracket to resize.", "Pick a display below -- click a placed one to remove it."],
 		CustomizeInteraction::Resizing { .. } => ["Click again to finish resizing", "(size snaps to the grid)."],
 		CustomizeInteraction::MovingDisplay { .. } => ["Click to drop · Delete removes", "Escape puts it back"],
 		CustomizeInteraction::ScalingDisplay { .. } => ["Move toward/away from the centre", "to scale · click confirms"],
@@ -294,18 +294,22 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 			13.5,
 		);
 	}
-	let placing_this = |id: i32| matches!(ctx.interaction, CustomizeInteraction::PlacingDisplay { sub_chip_id } if sub_chip_id == id);
-
 	for (index, entry) in ctx.entries.iter().enumerate() {
 		let row_y = list_rect.y + index as f32 * (ROW_H + LIST_ROW_GAP) - scroll;
 		if row_y + ROW_H <= list_rect.y || row_y >= list_rect.y + list_rect.h {
 			continue;
 		}
 		let r = UiRect::new(list_rect.x, row_y, list_rect.w, ROW_H);
-		let enabled = !entry.placed && !placing_this(entry.sub_chip_id) && !ctx.interaction.is_active();
+		// Rows toggle: an unplaced entry picks its display up for
+		// placement; an already-placed one removes it again (the original
+		// greyed duplicates out instead -- here the click gives the rows
+		// a second job, so they stay live).
+		let enabled = !ctx.interaction.is_active();
 		let bg = if enabled && r.contains(ui.mouse) { [0.32, 0.32, 0.36, 1.0] } else { [0.22, 0.22, 0.25, 1.0] };
 		ui_kit::fill_rect(frame, ui, r, bg);
-		ui_kit::add_label(frame, ui, r.centre(), r.w - 12.0, &entry.label, theme::text_colour_for_background(bg), 14.0);
+		let label = if entry.placed { format!("{}  (placed)", entry.label) } else { entry.label.clone() };
+		let label_colour = if entry.placed { [0.55, 0.85, 0.6, 1.0] } else { theme::text_colour_for_background(bg) };
+		ui_kit::add_label(frame, ui, r.centre(), r.w - 12.0, &label, label_colour, 14.0);
 		frame.buttons.push(EditorButton { rect: r, action: EditorAction::CustomizePlaceEntry(index), enabled });
 	}
 
@@ -377,7 +381,7 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 	let resolve = |id: i32| ctx.draft.sub_chips.iter().find(|s| s.id == id).and_then(|s| ctx.library.try_get(&s.name));
 	displays::draw_subchip_displays(&mut world, Vec2::ZERO, size, &ctx.draft.displays, resolve, ctx.pin_state, body_colour, true);
 
-	append_world_to_frame(&mut frame.geometry, &world, centre_px, px_per_unit);
+	append_world_to_frame(&mut frame.geometry, &world, centre_px, px_per_unit, ui.vh);
 
 	// Placement ghost, following the cursor at its would-be scale.
 	if let CustomizeInteraction::PlacingDisplay { sub_chip_id } = ctx.interaction {
@@ -395,7 +399,7 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 				false,
 			);
 			apply_alpha(&mut ghost, 0.65);
-			append_world_to_frame(&mut frame.geometry, &ghost, centre_px, px_per_unit);
+			append_world_to_frame(&mut frame.geometry, &ghost, centre_px, px_per_unit, ui.vh);
 		}
 	}
 
@@ -487,10 +491,18 @@ fn rect_from_corners(a: Vec2, b: Vec2) -> UiRect {
 	UiRect::new(a.x.min(b.x), a.y.min(b.y), (a.x - b.x).abs(), (a.y - b.y).abs())
 }
 
-/// Transforms world-unit scene geometry into the frame's screen-pixel
-/// space (labels scale up by the same factor so text keeps its world size).
-fn append_world_to_frame(target: &mut SceneGeometry, world: &SceneGeometry, centre_px: Vec2, px_per_unit: f32) {
-	let map = |p: Vec2| Vec2::new(centre_px.x + p.x * px_per_unit, centre_px.y - p.y * px_per_unit);
+/// Transforms world-unit scene geometry into the frame's pseudo-screen
+/// space. The preview maps world y-up onto screen y-down (`centre_px` is
+/// the on-screen chip centre, so a world point lands at pixel
+/// `centre + (x, -y) * ppu`) -- but overlay layers get one y-compensation
+/// applied later by the render pipeline (`ui_kit::pin_geometry_to_screen`
+/// treats frame coordinates as screen pixels), so the geometry stored
+/// here must be flipped *again* to survive it: net effect, world +y ends
+/// up toward the top of the preview like everywhere else in the editor.
+/// Button rects and cursor maths stay in plain screen pixels and don't
+/// go through this.
+fn append_world_to_frame(target: &mut SceneGeometry, world: &SceneGeometry, centre_px: Vec2, px_per_unit: f32, vh: f32) {
+	let map = |p: Vec2| Vec2::new(centre_px.x + p.x * px_per_unit, vh - centre_px.y + p.y * px_per_unit);
 	for v in &world.triangles {
 		target.triangles.push(crate::render::foundation::SceneVertex { pos: map(v.pos), colour: v.colour });
 	}
@@ -676,6 +688,12 @@ mod tests {
 		}
 
 		assert!(out.frame.buttons.iter().any(|b| matches!(b.action, EditorAction::CustomizeGrabDisplayMove(_))), "placed display offers move");
+
+		// Placed rows toggle: the row for the already-placed subchip stays
+		// clickable (its click removes the display) and says so.
+		let placed_row =
+			out.frame.buttons.iter().find(|b| matches!(b.action, EditorAction::CustomizePlaceEntry(0))).expect("placed entry still listed");
+		assert!(placed_row.enabled, "clicking a placed display's name must stay live so it can remove it");
 	}
 
 	#[test]
