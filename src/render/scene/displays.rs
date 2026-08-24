@@ -174,7 +174,12 @@ pub fn draw_subchip_displays<'a>(
 		clip.add_rect(geo, centre, bounds_size + Vec2::splat(0.03), display_border_col(chip_colour));
 		clip.add_rect(geo, centre, bounds_size, theme::STATE_DISCONNECTED_COL);
 
-		draw_display_node(geo, clip, desc, display.sub_chip_id, centre, display.scale, &resolve, pin_state);
+		// The painters take the display's FINAL world footprint as their
+		// `scale` (the originals hand them `scaleWorld` directly), and
+		// `base` encodes each type's scale-1 content size -- so the two
+		// must agree, or e.g. an LED tiles far past its own backing/hit
+		// rect (its base being well under 1).
+		draw_display_node(geo, clip, desc, display.sub_chip_id, centre, bounds_size.x, &resolve, pin_state);
 
 		if mark_out_of_bounds && !clip.contains_rect(centre, bounds_size) {
 			geo.add_rect(centre, bounds_size, OUT_OF_BOUNDS_COL);
@@ -447,6 +452,34 @@ mod tests {
 		draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(4.0), &displays, resolves_to(&nand, 1), &AllLow, theme::CHIP_BODY_COL, true);
 
 		assert_eq!(rects_drawn(&geo), 0, "neither entry may produce geometry");
+	}
+
+	/// The painted LED content must occupy exactly its layout rect
+	/// (`base * scale` -- the rect the customize preview hit-tests and the
+	/// backing/border quads follow), not the raw `scale` value. A scale of
+	/// 2 paints a 0.375-unit tile; before this was fixed it painted a full
+	/// 1-unit tile that spilled ~5x past its own backing.
+	#[test]
+	fn embedded_led_paints_exactly_its_layout_rect() {
+		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let displays = [DisplayDescription::new(3, Vec2::ZERO, 2.0)];
+
+		let mut geo = SceneGeometry::default();
+		draw_subchip_displays(
+			&mut geo,
+			Vec2::ZERO,
+			Vec2::splat(10.0),
+			&displays,
+			resolves_to(&led, 3),
+			&FixedState { pins: HashMap::new(), internal: None },
+			theme::CHIP_BODY_COL,
+			false,
+		);
+
+		let max_extent = geo.triangles.iter().fold(0.0f32, |m, v| m.max(v.pos.x.abs()).max(v.pos.y.abs()));
+		// Widest quad is the border (content + 0.03 total), centred.
+		let expected_half = display_base_size(ChipType::DisplayLed).unwrap().x * 2.0 / 2.0 + 0.015;
+		assert!((max_extent - expected_half).abs() < 1e-4, "content half-extent must be {expected_half}, got {max_extent}");
 	}
 
 	#[test]
