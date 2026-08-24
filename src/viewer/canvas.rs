@@ -10,7 +10,8 @@ use crate::render::layout;
 use crate::render::scene::{self, SceneGeometry};
 use crate::render::theme;
 use crate::structs::Vec2;
-use crate::viewer::state::{PendingWire, PendingWireEnd, ViewerState};
+use crate::viewer::state::ViewerState;
+use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
 use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireDescription};
 
 /// Finds whichever bit of one of `root_desc`'s own boundary *input*
@@ -159,8 +160,21 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		return;
 	}
 
+	// Same transform the live preview applies (see `frame::build_viewer_stack`):
+	// grid-snap first, then flatten onto the previous point's row/column when
+	// straight wires are forced -- mirroring `WireInstance.SetWirePointWithSnapping`.
+	let snap = v.should_snap_to_grid();
+	let straighten = v.force_straight_wires();
 	let pending = v.pending_wire.as_mut().expect("caller only calls this with a pending wire");
-	pending.bend_points.push(world_pos);
+	let mut turn = world_pos;
+	if snap {
+		turn = crate::render::layout::snap_to_grid_centred(turn);
+	}
+	if straighten {
+		let prev = pending.bend_points.last().copied().unwrap_or_else(|| pending.start.position());
+		turn = crate::render::layout::force_straight_line(prev, turn);
+	}
+	pending.bend_points.push(turn);
 }
 
 /// Next free id for a newly placed subchip or boundary dev-pin on `chip`:
@@ -247,12 +261,16 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 	let chip_type = v.library.try_get(&name).map(|d| d.chip_type);
 	let io_template = chip_type.and_then(builtins::io_pin_template);
 
+	// Snap the drop position when the snapping pref (or held Ctrl) says so --
+	// `ChipInteractionController`'s `ShouldSnapToGrid` branch.
+	let place_pos = if v.should_snap_to_grid() { crate::render::layout::snap_to_grid_centred(world_pos) } else { world_pos };
+
 	let chip = v.library.get_mut(&root_chip_name);
 	let id = next_component_id(chip);
 
 	if let Some((is_input, template)) = io_template {
 		let mut new_pin = PinDescription::new(template.name, id, template.bit_count);
-		new_pin.position = world_pos;
+		new_pin.position = place_pos;
 		if is_input {
 			chip.input_pins.push(new_pin);
 		} else {
@@ -260,7 +278,7 @@ fn try_place_pending_chip(v: &mut ViewerState, world_pos: Vec2, status: &mut Opt
 		}
 	} else {
 		let internal_data = default_internal_data(chip_type);
-		chip.sub_chips.push(SubChipDescription { name, id, internal_data, position: world_pos, label: None, pin_colour_info: Vec::new() });
+		chip.sub_chips.push(SubChipDescription { name, id, internal_data, position: place_pos, label: None, pin_colour_info: Vec::new() });
 	}
 	v.rebuild_sim();
 }

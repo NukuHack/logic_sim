@@ -150,13 +150,33 @@ pub fn add_button<A: Clone>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, label
 	frame.buttons.push(Button { rect, action, enabled });
 }
 
-/// Draws the recurring "dark box + typed text + trailing cursor" text-entry field and records its
-/// hit-box as `frame.text_field`. `placeholder` is shown (with the same trailing `|` cursor) when
-/// `text` is empty -- pass `""` for fields with no placeholder copy.
-pub fn text_field_row<A>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, text: &str, placeholder: &str, font_size: f32, label_inset: f32) {
-	fill_rect(frame, ui, rect, [0.08, 0.08, 0.09, 1.0]);
+/// Draws the recurring "dark box + typed text + trailing cursor"
+/// text-entry field *without* registering it as its frame's text field --
+/// for panels carrying more than one field, which mark whichever one is
+/// focused themselves. Brightens when `focused`. See [`text_field_row`] for
+/// the single-field variant that also registers the hit-box.
+#[allow(clippy::too_many_arguments)] // text_field_row's shape plus one flag; splitting them up would obscure every call site
+pub fn text_field_box<A>(
+	frame: &mut Frame<A>,
+	ui: UiCtx,
+	rect: UiRect,
+	text: &str,
+	placeholder: &str,
+	font_size: f32,
+	label_inset: f32,
+	focused: bool,
+) {
+	let bg = if focused { [0.17, 0.17, 0.2, 1.0] } else { [0.08, 0.08, 0.09, 1.0] };
+	fill_rect(frame, ui, rect, bg);
 	let shown = if text.is_empty() { format!("{placeholder}|") } else { format!("{text}|") };
 	add_label(frame, ui, rect.centre(), rect.w - label_inset, &shown, [1.0, 1.0, 1.0, 1.0], font_size);
+}
+
+/// Draws one text-entry field and records its hit-box as `frame.text_field`.
+/// `placeholder` is shown (with the same trailing `|` cursor) when `text`
+/// is empty -- pass `""` for fields with no placeholder copy.
+pub fn text_field_row<A>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, text: &str, placeholder: &str, font_size: f32, label_inset: f32) {
+	text_field_box(frame, ui, rect, text, placeholder, font_size, label_inset, false);
 	frame.text_field = Some(rect);
 }
 

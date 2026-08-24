@@ -4,14 +4,14 @@
 //! key-select capture), an overlay/panel shortcut, or a plain-viewer
 //! gesture.
 
-use crate::render::editor_ui::{self, EditorAction, LibrarySelection};
+use crate::render::editor_ui::{self, EditorAction, LibrarySelection, PrefValueField};
 use crate::render::ui_stack::LayerId;
 use crate::viewer::actions::{apply_editor_action, open_library_panel};
 use crate::viewer::customize as customize_flow;
 use crate::viewer::library::reset_library_popup_state;
-use crate::viewer::popups::{confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell};
+use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell};
 use crate::viewer::save_flow::{confirm_save_chip_popup, save_chip_mode, start_new_chip};
-use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, open_save_chip, open_search, Overlay, ViewerState};
+use crate::viewer::state::{close_all_overlays, close_top_overlay, open_preferences, open_save_chip, open_search, Overlay, ViewerState};
 use crate::{sim, SavePaths, Saver};
 
 /// Convert winit's modifier state into the `Simulator::key_modifiers`
@@ -147,6 +147,31 @@ pub(crate) fn handle_viewer_key(
 				}
 			}
 		}
+		// ---- Preferences panel's numeric fields: digits only (mirrors
+		// `PreferencesMenu.ValidateIntegerInput`), each edit re-parsed
+		// straight onto the prefs so changes act live ----
+		Key::Named(NamedKey::Backspace) if v.stack.keyboard_target() == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() => {
+			match v.prefs_field_focus {
+				Some(PrefValueField::ClockSpeed) => {
+					v.prefs_clock_text.pop();
+				}
+				Some(PrefValueField::TargetRate) => {
+					v.prefs_rate_text.pop();
+				}
+				None => unreachable!("arm is gated on a focused field"),
+			}
+			apply_prefs_field_text(v);
+		}
+		Key::Character(s)
+			if v.stack.keyboard_target() == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() && prefs_field_accepts(v, s) =>
+		{
+			match v.prefs_field_focus {
+				Some(PrefValueField::ClockSpeed) => v.prefs_clock_text.push_str(s),
+				Some(PrefValueField::TargetRate) => v.prefs_rate_text.push_str(s),
+				None => unreachable!("arm is gated on a focused field"),
+			}
+			apply_prefs_field_text(v);
+		}
 		// ---- Library panel keys (work while it has focus, even under another popup) ----
 		Key::Named(NamedKey::Tab) if v.stack.keyboard_target() == Some(LayerId::Library) => {
 			let mut desc = v.prefs.clone();
@@ -183,8 +208,32 @@ pub(crate) fn handle_viewer_key(
 		// ---- Normal viewer shortcuts (only while nothing owns the keyboard) ----
 		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("r") => v.rebuild_sim(),
 		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
-		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("g") => v.show_grid = !v.show_grid,
-		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("p") => open_overlay(v, Overlay::Preferences),
+		// Toggle grid: the Ctrl+G form mirrors `KeyboardShortcuts.ToggleGridShortcutTriggered`
+		// (works over open panels, like `PreferencesMenu.HandleKeyboardShortcuts`); plain 'g'
+		// keeps working as this port's extra convenience. Both persist immediately when the
+		// preferences panel isn't open, exactly like the original's save-on-toggle.
+		Key::Character(s) if modifiers.control_key() && !typing_into_free_text_field(v) && s.eq_ignore_ascii_case("g") => {
+			toggle_grid(v, paths);
+		}
+		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("g") => toggle_grid(v, paths),
+		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("p") => open_preferences(v),
+		Key::Character(s)
+			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
+				&& modifiers.control_key()
+				&& s.eq_ignore_ascii_case("p") =>
+		{
+			open_preferences(v);
+		}
+		// Ctrl+Space toggles pause (`SimPauseToggleShortcutTriggered`); Space alone, while
+		// paused and nothing owns the keyboard, advances a single step (`SimNextStepShortcutTriggered`,
+		// which the original also only handles over the bare editor).
+		Key::Named(NamedKey::Space) if modifiers.control_key() && !typing_into_free_text_field(v) => {
+			v.toggle_sim_paused();
+			persist_prefs_shortcut_change(v, paths);
+		}
+		Key::Named(NamedKey::Space) if v.stack.keyboard_target().is_none() && !modifiers.control_key() && v.prefs.prefs_sim_paused => {
+			v.request_single_sim_step();
+		}
 		Key::Character(s)
 			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
 				&& modifiers.control_key()
@@ -224,6 +273,55 @@ pub(crate) fn handle_viewer_key(
 		_ => {}
 	}
 	KeyOutcome::Consumed
+}
+
+/// Applies a grid toggle and persists it straight to disk when the
+/// preferences panel isn't open (mirroring `HandleKeyboardShortcuts`:
+/// in-menu edits are saved by the panel's Confirm, others save at once).
+fn toggle_grid(v: &mut ViewerState, paths: &SavePaths) {
+	v.toggle_grid_display();
+	persist_prefs_shortcut_change(v, paths);
+}
+
+/// Saves the current prefs when the preferences panel isn't open; while it
+/// is, the panel shows live state already and its Apply does the saving.
+fn persist_prefs_shortcut_change(v: &mut ViewerState, paths: &SavePaths) {
+	if v.overlays.contains(&Overlay::Preferences) {
+		return;
+	}
+	let mut desc = v.prefs.clone();
+	if Saver::save_project_description(paths, &mut desc).is_ok() {
+		v.prefs = desc;
+	}
+}
+
+/// Whether a *free-text* field currently owns typing (so Ctrl+Space/Ctrl+G
+/// must act as ordinary keystrokes rather than shortcuts). The preferences
+/// panel's numeric fields are deliberately excluded -- they accept digits
+/// only, and `PreferencesMenu.HandleKeyboardShortcuts` ran unconditionally
+/// over every menu, so pause/grid toggling keeps working while one of them
+/// is focused.
+fn typing_into_free_text_field(v: &ViewerState) -> bool {
+	match v.stack.keyboard_target() {
+		Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::Search | LayerId::KeySelect) => true,
+		Some(LayerId::Library) => v.library_creating_collection || v.library_renaming_collection,
+		_ => false,
+	}
+}
+
+/// Whether `s` may be appended to whichever prefs numeric field is focused:
+/// digits only (`ValidateIntegerInput` rejects anything non-integer), capped
+/// at 9 digits so the value always parses cleanly into an `i32`.
+fn prefs_field_accepts(v: &ViewerState, s: &str) -> bool {
+	if !s.chars().all(|c| c.is_ascii_digit()) {
+		return false;
+	}
+	let len = match v.prefs_field_focus {
+		Some(PrefValueField::ClockSpeed) => v.prefs_clock_text.chars().count(),
+		Some(PrefValueField::TargetRate) => v.prefs_rate_text.chars().count(),
+		None => return false,
+	};
+	len < 9
 }
 
 #[cfg(test)]

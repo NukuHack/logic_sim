@@ -9,9 +9,9 @@ use crate::viewer::library::{
 	chip_delete_confirm_message, delete_chip_from_library, delete_collection, move_selected_library_row, reset_library_popup_state,
 	sync_library_collections,
 };
-use crate::viewer::popups::{apply_rom_editor, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell, cycle_pref};
+use crate::viewer::popups::{apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell, cycle_pref};
 use crate::viewer::save_flow::{confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, open_chip_by_name};
-use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, Overlay, ViewerState};
+use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, reset_preferences_draft, Overlay, ViewerState};
 use crate::{SavePaths, Saver};
 
 /// Applies a click on one of the editor overlays.
@@ -19,14 +19,17 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 	match action {
 		EditorAction::ClosePopup => close_top_overlay(v),
 		EditorAction::CyclePref(i) => cycle_pref(&mut v.prefs, i),
+		EditorAction::SelectPrefsField(field) => v.prefs_field_focus = Some(field),
 		EditorAction::ApplyPreferences => {
-			v.show_grid = v.prefs.prefs_grid_display_mode == 1;
+			apply_prefs_field_text(v);
+			v.sync_sim_clock_pref();
 			let mut desc = v.prefs.clone();
 			match Saver::save_project_description(paths, &mut desc) {
 				Ok(()) => v.prefs = desc,
 				Err(e) => *status = Some(format!("Failed to save preferences: {e}")),
 			}
 			v.overlays.retain(|o| *o != Overlay::Preferences);
+			reset_preferences_draft(v);
 		}
 		EditorAction::SelectCollection(i) => {
 			v.library_selection = LibrarySelection::Collection(i);

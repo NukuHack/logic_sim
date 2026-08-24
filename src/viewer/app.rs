@@ -11,7 +11,7 @@ use crate::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use crate::viewer::input::encode_modifiers;
 use crate::viewer::save_flow::unique_new_chip_name;
 use crate::viewer::state::ViewerState;
-use crate::{default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipType, SavePaths, Simulator};
+use crate::{default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipType, SavePaths};
 
 /// The window + wgpu renderer pair both screens draw into.
 pub(crate) struct RenderState {
@@ -101,12 +101,10 @@ impl App {
 				let root_chip_name = unique_new_chip_name(&library);
 				library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
 
-				let root_desc = library.get(&root_chip_name).clone();
-				let mut sim = Simulator::build(&root_desc, &library);
+				let mut v = ViewerState::new(name, library, root_chip_name.clone(), self.viewport);
 				// In case modifier keys are already held down (e.g. Alt from the menu action that
 				// opened this project) by the time the viewer appears, rather than only picking them up on the next change.
-				sim.key_modifiers = encode_modifiers(self.modifiers);
-				let show_grid = project_desc.prefs_grid_display_mode == 1;
+				v.sim.key_modifiers = encode_modifiers(self.modifiers);
 
 				let mut prefs = project_desc;
 				if prefs.chip_collections.is_empty() {
@@ -115,40 +113,10 @@ impl App {
 				if prefs.starred_list.is_empty() {
 					prefs.starred_list = default_starred_list();
 				}
+				v.prefs = prefs;
+				v.sync_sim_clock_pref();
 
-				self.screen = Screen::Viewer(Box::new(ViewerState {
-					project_name: name.to_string(),
-					library,
-					root_chip_name,
-					sim,
-					camera: crate::render::camera::Camera::new(self.viewport),
-					dragging: false,
-					last_cursor: Vec2::ZERO,
-					camera_fitted: false,
-					show_grid,
-					prefs,
-					overlays: Vec::new(),
-					search_query: String::new(),
-					overlay_text_input: String::new(),
-					overlay_key_choice: None,
-					naming_purpose: Default::default(),
-					key_select_purpose: Default::default(),
-					rom_editor: None,
-					customize: None,
-					stack: UiStack::new(),
-					bottom_bar_scroll_x: 0.0,
-					bottom_bar_scroll_max: 0.0,
-					library_selection: crate::render::editor_ui::LibrarySelection::None,
-					library_creating_collection: false,
-					library_renaming_collection: false,
-					library_confirming_chip_delete: false,
-					library_confirming_collection_delete: false,
-					library_delete_message: String::new(),
-					bottom_bar_open_collection: None,
-					context_menu: None,
-					pending_wire: None,
-					pending_place: None,
-				}));
+				self.screen = Screen::Viewer(Box::new(v));
 				self.status = None;
 				self.set_window_title();
 			}

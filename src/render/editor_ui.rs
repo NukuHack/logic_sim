@@ -23,6 +23,10 @@ pub enum EditorAction {
 	/// Preferences: cycle the wheel field at this index (0-based, in the
 	/// order the panel draws them) to its next option.
 	CyclePref(usize),
+	/// Preferences: give one of the numeric input fields keyboard focus
+	/// (clicking its box). Typed digits/backspace then edit that field's
+	/// draft text in the host's own buffers.
+	SelectPrefsField(PrefValueField),
 	ApplyPreferences,
 	/// Chip library (real 3-panel layout, `ChipLibraryMenu`): click a
 	/// collection's header -- selects it and toggles its open/closed
@@ -212,6 +216,34 @@ pub const SNAPPING_OPTIONS: [&str; 3] = ["Hold Ctrl", "If Grid Shown", "Always"]
 pub const STRAIGHT_WIRE_OPTIONS: [&str; 3] = ["Hold Shift", "If Grid Shown", "Always"];
 pub const SIM_STATUS_OPTIONS: [&str; 2] = ["Active", "Paused"];
 
+/// One of the preferences panel's numeric input fields (the C# menu's
+/// integer `InputFieldState`s). Clicking the field focuses it for typing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefValueField {
+	/// "Steps per clock tick" (`Prefs_SimStepsPerClockTick`).
+	ClockSpeed,
+	/// "Steps per second (target)" (`Prefs_SimTargetStepsPerSecond`).
+	TargetRate,
+}
+
+/// Everything [`build_preferences_panel`] needs to draw one frame -- same
+/// plain-data-in shape as [`ChipLibraryState`]. The host owns the draft
+/// text of both numeric fields (edited via
+/// [`EditorAction::SelectPrefsField`] focus + typed digits) and feeds back
+/// its measured simulation speed for the read-only current-speed row,
+/// mirroring `PreferencesMenu`'s input fields and `UpdateSimSpeedString`.
+pub struct PrefsPanelState<'a> {
+	pub desc: &'a ProjectDescription,
+	pub clock_text: &'a str,
+	pub rate_text: &'a str,
+	/// Which numeric field currently owns typed input (highlighted; also
+	/// becomes the frame's text field so the stack routes keystrokes here).
+	pub focused_field: Option<PrefValueField>,
+	/// Formatted average ticks/second ("0" while paused) shown on the
+	/// read-only "Steps per second (current)" row.
+	pub measured_speed_label: String,
+}
+
 /// One row of the preferences panel: a label plus the currently-selected
 /// option out of a fixed set (mirrors one `PreferencesMenu.DrawNextWheel`
 /// call). `CyclePref(index)` where `index` is this row's position in
@@ -226,10 +258,17 @@ struct PrefRow<'a> {
 
 /// Builds the preferences overlay from a project's current prefs fields
 /// (`ProjectDescription.Prefs_*`). Purely a display of the *current*
-/// values plus next/cycle buttons -- the host owns applying a cycled
-/// value back to its own copy of `desc` and re-calling this each frame,
-/// same pattern as `menu_ui`'s settings screen.
-pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+/// values plus next/cycle buttons -- the host applies cycled/typed values
+/// back onto its own copy of the prefs and re-calls this each frame, same
+/// pattern as `menu_ui`'s settings screen.
+///
+/// Row order (and therefore each row's `CyclePref` index): show I/O pin
+/// names, show chip pin names, show grid, snap to grid, straight wires,
+/// sim status. Below those sit the SIMULATION value rows: steps-per-clock
+/// and target-steps-per-second text fields plus the measured-speed
+/// readout, mirroring `PreferencesMenu.DrawMenu`'s lower half.
+pub fn build_preferences_panel(state: &PrefsPanelState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let desc = state.desc;
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = (vw * 0.6).clamp(360.0, 620.0);
@@ -249,23 +288,68 @@ pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mous
 	];
 
 	let field_w = panel_w * 0.4;
+	let field_rect_x = panel_rect.x + panel_w - field_w - 20.0;
 	let mut y = top + 30.0;
 	for (i, row) in rows.iter().enumerate() {
-		let label_x = panel_rect.x + 20.0;
-		let field_rect = UiRect::new(panel_rect.x + panel_w - field_w - 20.0, y, field_w, ROW_H);
-		add_label(
-			&mut frame,
-			ui,
-			Vec2::new(label_x + (panel_w - field_w - 60.0) / 2.0, y + ROW_H / 2.0),
-			panel_w - field_w - 60.0,
-			row.label,
-			[0.9, 0.9, 0.9, 1.0],
-			FONT_SIZE * 0.9,
-		);
+		draw_pref_label(&mut frame, &ui, panel_rect, field_w, y, row.label);
+		let field_rect = UiRect::new(field_rect_x, y, field_w, ROW_H);
 		let option_text = row.options.get(row.current as usize).copied().unwrap_or("?");
 		add_button(&mut frame, ui, field_rect, option_text, EditorAction::CyclePref(i), true);
 		y += ROW_H + ROW_GAP;
 	}
+
+	// ---- Simulation value rows ----
+	y += 8.0;
+
+	draw_pref_label(&mut frame, &ui, panel_rect, field_w, y, "Steps per clock tick");
+	let clock_rect = UiRect::new(field_rect_x, y, field_w, ROW_H);
+	ui_kit::text_field_box(
+		&mut frame,
+		ui,
+		clock_rect,
+		state.clock_text,
+		"",
+		FONT_SIZE * 0.9,
+		12.0,
+		state.focused_field == Some(PrefValueField::ClockSpeed),
+	);
+	frame.buttons.push(EditorButton { rect: clock_rect, action: EditorAction::SelectPrefsField(PrefValueField::ClockSpeed), enabled: true });
+	if state.focused_field == Some(PrefValueField::ClockSpeed) {
+		frame.text_field = Some(clock_rect);
+	}
+	y += ROW_H + ROW_GAP;
+
+	draw_pref_label(&mut frame, &ui, panel_rect, field_w, y, "Steps per second (target)");
+	let rate_rect = UiRect::new(field_rect_x, y, field_w, ROW_H);
+	ui_kit::text_field_box(
+		&mut frame,
+		ui,
+		rate_rect,
+		state.rate_text,
+		"",
+		FONT_SIZE * 0.9,
+		12.0,
+		state.focused_field == Some(PrefValueField::TargetRate),
+	);
+	frame.buttons.push(EditorButton { rect: rate_rect, action: EditorAction::SelectPrefsField(PrefValueField::TargetRate), enabled: true });
+	if state.focused_field == Some(PrefValueField::TargetRate) {
+		frame.text_field = Some(rate_rect);
+	}
+	y += ROW_H + ROW_GAP;
+
+	// Measured speed is read-only: dimmed label + dark non-clickable box.
+	add_label(
+		&mut frame,
+		ui,
+		Vec2::new(panel_rect.x + 20.0 + (panel_w - field_w - 60.0) / 2.0, y + ROW_H / 2.0),
+		panel_w - field_w - 60.0,
+		"Steps per second (current)",
+		[0.65, 0.65, 0.65, 1.0],
+		FONT_SIZE * 0.9,
+	);
+	let measured_rect = UiRect::new(field_rect_x, y, field_w, ROW_H);
+	ui_kit::fill_rect(&mut frame, ui, measured_rect, [0.18, 0.18, 0.18, 1.0]);
+	add_label(&mut frame, ui, measured_rect.centre(), measured_rect.w - 12.0, &state.measured_speed_label, [1.0, 1.0, 1.0, 1.0], FONT_SIZE * 0.9);
 
 	let apply_rect = UiRect::new(cx - 90.0, panel_rect.y + panel_rect.h - 56.0, 180.0, 40.0);
 	add_button(&mut frame, ui, apply_rect, "Apply", EditorAction::ApplyPreferences, true);
@@ -273,6 +357,23 @@ pub fn build_preferences_panel(desc: &ProjectDescription, vw: f32, vh: f32, mous
 	add_button(&mut frame, ui, close_rect, "Close", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)
+}
+
+/// Left-hand label of one preferences row (shared by wheel and value rows).
+fn draw_pref_label(frame: &mut EditorFrame, ui: &UiCtx, panel_rect: UiRect, field_w: f32, y: f32, label: &str) {
+	add_label(
+		frame,
+		*ui,
+		Vec2::new(panel_rect.x + 20.0 + (panel_w_label(panel_rect, field_w)) / 2.0, y + ROW_H / 2.0),
+		panel_w_label(panel_rect, field_w),
+		label,
+		[0.9, 0.9, 0.9, 1.0],
+		FONT_SIZE * 0.9,
+	);
+}
+
+fn panel_w_label(panel_rect: UiRect, field_w: f32) -> f32 {
+	panel_rect.w - field_w - 60.0
 }
 
 // ---------------------------------------------------------------------

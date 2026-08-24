@@ -8,7 +8,7 @@ use logic_sim::render::context_menu::{build_context_menu, ContextMenuAction, Con
 use logic_sim::render::editor_ui::{
 	build_chip_library_panel, build_key_select_popup, build_preferences_panel, build_rom_editor_popup, build_save_chip_popup, build_search_popup,
 	build_simple_naming_popup, build_starred_bottom_bar, build_starred_collection_popup, ChipLibraryState, EditorAction, LibrarySelection,
-	SaveChipMode, BOTTOM_BAR_HEIGHT, KEY_SELECT_ALLOWED_CHARS, ROM_WORD_COUNT,
+	PrefValueField, PrefsPanelState, SaveChipMode, BOTTOM_BAR_HEIGHT, KEY_SELECT_ALLOWED_CHARS, ROM_WORD_COUNT,
 };
 use logic_sim::render::menu_ui::{build, build_popup_frame, build_screen, status_label, UiAction};
 use logic_sim::render::ui_kit::{hovered_button, text_field_row, Button, Frame, FONT_SIZE};
@@ -46,8 +46,14 @@ fn sample_desc() -> ProjectDescription {
 		prefs_snapping: 2,
 		prefs_straight_wires: 0,
 		prefs_sim_paused: true,
+		prefs_sim_target_steps_per_second: 1000,
+		prefs_sim_steps_per_clock_tick: 250,
 		..Default::default()
 	}
+}
+
+fn prefs_panel_state<'a>(desc: &'a ProjectDescription) -> PrefsPanelState<'a> {
+	PrefsPanelState { desc, clock_text: "250", rate_text: "1000", focused_field: None, measured_speed_label: "0".to_string() }
 }
 
 fn sample_library_state<'a>(collections: &'a [ChipCollection], starred: &'a [StarredItem], selection: LibrarySelection) -> ChipLibraryState<'a> {
@@ -334,7 +340,7 @@ fn empty_items_produces_no_panel() {
 
 #[test]
 fn preferences_panel_has_one_cycle_button_per_row_plus_apply_and_close() {
-	let frame = build_preferences_panel(&sample_desc(), 1280.0, 800.0, Vec2::ZERO);
+	let frame = build_preferences_panel(&prefs_panel_state(&sample_desc()), 1280.0, 800.0, Vec2::ZERO);
 	let cycle_count = frame.buttons.iter().filter(|b| matches!(b.action, EditorAction::CyclePref(_))).count();
 	assert_eq!(cycle_count, 6);
 	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::ApplyPreferences));
@@ -343,11 +349,40 @@ fn preferences_panel_has_one_cycle_button_per_row_plus_apply_and_close() {
 
 #[test]
 fn preferences_panel_shows_currently_selected_option_text() {
-	let frame = build_preferences_panel(&sample_desc(), 1280.0, 800.0, Vec2::ZERO);
+	let frame = build_preferences_panel(&prefs_panel_state(&sample_desc()), 1280.0, 800.0, Vec2::ZERO);
 	// Row 0 is "Show I/O pin names" with mode 1 => "On Hover".
 	assert!(frame.geometry.labels.iter().any(|l| l.text == "On Hover"));
 	// Row 5 is "Sim status" with prefs_sim_paused = true => "Paused".
 	assert!(frame.geometry.labels.iter().any(|l| l.text == "Paused"));
+}
+
+#[test]
+fn preferences_panel_offers_both_numeric_fields_and_shows_their_drafts() {
+	let frame = build_preferences_panel(&prefs_panel_state(&sample_desc()), 1280.0, 800.0, Vec2::ZERO);
+	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SelectPrefsField(PrefValueField::ClockSpeed)));
+	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::SelectPrefsField(PrefValueField::TargetRate)));
+
+	// The draft texts (rendered with their trailing caret) and the
+	// measured-speed readout are drawn as-is.
+	assert!(frame.geometry.labels.iter().any(|l| l.text == "250|"));
+	assert!(frame.geometry.labels.iter().any(|l| l.text == "1000|"));
+	assert!(frame.geometry.labels.iter().any(|l| l.text == "Steps per second (current)"));
+	assert!(frame.geometry.labels.iter().any(|l| l.text == "0"));
+	assert!(!frame.geometry.labels.iter().any(|l| l.text == "999"));
+}
+
+#[test]
+fn preferences_panel_registers_the_focused_field_as_its_text_field() {
+	let desc = sample_desc();
+	let mut state = prefs_panel_state(&desc);
+	state.focused_field = Some(PrefValueField::ClockSpeed);
+	let frame = build_preferences_panel(&state, 1280.0, 800.0, Vec2::ZERO);
+	assert!(frame.text_field.is_some(), "a focused field makes the panel the keyboard target");
+
+	let mut unfocused = prefs_panel_state(&desc);
+	unfocused.focused_field = None;
+	let frame = build_preferences_panel(&unfocused, 1280.0, 800.0, Vec2::ZERO);
+	assert!(frame.text_field.is_none(), "no field focused => typing stays with the app");
 }
 
 #[test]

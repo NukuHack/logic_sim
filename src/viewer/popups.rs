@@ -22,6 +22,17 @@ pub(crate) fn cycle_pref(prefs: &mut crate::json::ProjectDescription, row_index:
 	}
 }
 
+/// Re-parses both numeric draft fields onto the live prefs, mirroring
+/// `PreferencesMenu.DrawMenu`'s "assign changes immediately so can see
+/// them take effect in background": `int.TryParse` semantics -- anything
+/// unparseable counts as 0 (the target rate is clamped back up to >= 1
+/// where it's consumed, via `ViewerState::target_ticks_per_second`).
+/// Called after every keystroke into either field and by Apply.
+pub(crate) fn apply_prefs_field_text(v: &mut ViewerState) {
+	v.prefs.prefs_sim_steps_per_clock_tick = v.prefs_clock_text.parse::<i32>().unwrap_or(0);
+	v.prefs.prefs_sim_target_steps_per_second = v.prefs_rate_text.parse::<i32>().unwrap_or(0);
+}
+
 /// Applies whatever's typed into `Overlay::Naming`'s text field, per
 /// `v.naming_purpose` -- shared by the popup's Confirm button
 /// (`EditorAction::ConfirmName`) and pressing Enter directly. Always

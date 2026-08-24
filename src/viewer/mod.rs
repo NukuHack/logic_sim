@@ -7,10 +7,12 @@
 //! now just a thin entry point calling [`run`].
 //!
 //! Modules by concern: [`state`] (viewer/project working state + overlay
-//! bookkeeping), [`canvas`] (chip-canvas clicks), [`library`] (chip-library
+//! bookkeeping), [`canvas`] (chip-canvas clicks), [`wire_draft`]
+//! (in-progress wire placement state), [`library`] (chip-library
 //! bookkeeping), [`save_flow`] (save/save-as/rename/new-chip), [`popups`]
 //! (generic popup confirm handlers), [`context_menu`] (right-click popups),
 //! [`actions`] (editor action funnel), [`input`] (keyboard routing),
+//! [`sim_timing`] (simulation pacing/throughput measurement),
 //! [`frame`] (per-frame UI-stack construction), [`app`] (app shell +
 //! entry point) and [`events`] (window-event handlers).
 
@@ -25,6 +27,8 @@ pub mod input;
 pub mod library;
 pub mod popups;
 pub mod save_flow;
+pub mod sim_timing;
 pub mod state;
+pub mod wire_draft;
 
 pub use app::run;

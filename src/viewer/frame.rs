@@ -2,10 +2,16 @@
 //! state, bottom-to-top -- the menu screen and its popup, or the viewer's
 //! canvas/bottom-bar/flyout/overlay-panel/context-menu layers. Input
 //! dispatch in the event handlers consults exactly what's built here.
+//!
+//! This is also where the simulation is advanced each frame (the
+//! `SimThread` beat of the original, run inline): pacing against the
+//! project's target rate, honouring pause/single-step, and feeding the
+//! measured speed back for the preferences panel.
 
 use crate::render::camera::Camera;
 use crate::render::context_menu;
-use crate::render::editor_ui::{self, LibrarySelection};
+use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
+use crate::render::layout::{force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
 use crate::render::scene::{bounding_box, build_grid, build_scene, AllLow, SceneGeometry, SimulatorPinState};
 use crate::render::theme;
@@ -13,6 +19,7 @@ use crate::render::ui_kit::{pin_geometry_to_screen, Button, UiCtx, UiRect};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
+use crate::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks};
 
 use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview};
 use crate::viewer::library::{is_custom_chip, would_create_cycle};
@@ -37,6 +44,31 @@ fn status_toast_geometry(message: &str, vw: f32, vh: f32, above_y: Option<f32>) 
 		colour: [0.95, 0.78, 0.35, 1.0],
 		font_size: 15.0,
 		width: width - 20.0,
+	});
+	geo
+}
+
+/// The top-of-screen "Simulation Paused" strip (`SimPausedUI`): a
+/// full-width info bar with the message centred and the single-step count
+/// at the right.
+fn paused_banner_geometry(paused_step_counter: u32, vw: f32) -> SceneGeometry {
+	const BANNER_H: f32 = 34.0;
+	let bg = UiRect::new(0.0, 0.0, vw, BANNER_H);
+	let mut geo = SceneGeometry::default();
+	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
+	geo.labels.push(crate::render::foundation::TextLabel {
+		pos: bg.centre(),
+		text: "Simulation Paused (press space to advance one step)".to_string(),
+		colour: [1.0, 0.85, 0.25, 1.0],
+		font_size: 15.0,
+		width: vw - 120.0,
+	});
+	geo.labels.push(crate::render::foundation::TextLabel {
+		pos: Vec2::new(vw - 60.0, BANNER_H / 2.0),
+		text: paused_step_counter.to_string(),
+		colour: [1.0, 1.0, 1.0, 0.8],
+		font_size: 15.0,
+		width: 50.0,
 	});
 	geo
 }
@@ -70,9 +102,81 @@ pub(crate) fn build_menu_stack(
 	menu_stack
 }
 
-/// Advances one simulation step for the open chip (fed by every input
-/// dev-pin's live driven state).
-fn run_viewer_sim_step(v: &mut ViewerState) {
+/// Advances the open chip's simulation by however many ticks are due at
+/// the project's target rate (fed by every input dev-pin's live driven
+/// state) -- the main-thread equivalent of `SimThread.Run`'s paced loop:
+///
+/// - paused (and no single step pending): nothing steps, and timing state
+///   is held so leaving pause can't burst-catch-up;
+/// - otherwise: elapsed wall time converts into tick debt, whole ticks are
+///   stepped, and the count feeds the rolling throughput window behind the
+///   preferences panel's "steps per second (current)" readout;
+/// - a pending single step (`ViewerState::advance_single_step`) runs
+///   exactly one tick regardless of pacing, mirroring
+///   `Project.advanceSingleSimStep`.
+fn update_viewer_sim(v: &mut ViewerState) {
+	let now = std::time::Instant::now();
+	v.sync_sim_clock_pref();
+
+	let paused = v.prefs.prefs_sim_paused;
+	let last = match v.sim_pacing.last_tick {
+		Some(last) => last,
+		None => {
+			// First frame ever: start the clock here (a plain wall-clock
+			// tick would be ~zero anyway), but still honour a pending
+			// single step below so a paused viewer responds immediately.
+			v.sim_pacing.last_tick = Some(now);
+			v.sim_pacing.was_paused = paused;
+			now
+		}
+	};
+	let elapsed = now.duration_since(last);
+	v.sim_pacing.last_tick = Some(now);
+
+	if v.advance_single_step {
+		v.advance_single_step = false;
+		if paused {
+			v.paused_step_counter += 1;
+			run_one_sim_step(v);
+			return;
+		}
+	}
+
+	if paused {
+		// Mirrors `SimThread`'s paused branch: sleep-equivalent, no debt
+		// accrues. `was_paused` is cleared on resume below.
+		v.sim_pacing.debt_ticks = 0.0;
+		v.sim_pacing.was_paused = true;
+		return;
+	}
+
+	if v.sim_pacing.was_paused {
+		// Just unpaused: start measuring fresh so stale pre-pause samples
+		// don't paint a burst onto the readout.
+		v.sim_pacing.window.clear();
+		v.sim_pacing.debt_ticks = 0.0;
+		v.sim_pacing.avg_ticks_per_sec = 0.0;
+		v.sim_pacing.was_paused = false;
+	}
+
+	v.sim_pacing.debt_ticks = accumulate_tick_debt(v.sim_pacing.debt_ticks, elapsed.as_secs_f64(), v.target_ticks_per_second() as f64);
+	let (steps, remaining_debt) = take_due_ticks(v.sim_pacing.debt_ticks);
+	v.sim_pacing.debt_ticks = remaining_debt;
+
+	for _ in 0..steps {
+		run_one_sim_step(v);
+	}
+	if steps > 0 {
+		v.sim_pacing.window.record(now, steps);
+		if let Some(avg) = v.sim_pacing.window.avg_per_sec(now) {
+			v.sim_pacing.avg_ticks_per_sec = avg;
+		}
+	}
+}
+
+/// One simulation step with every input dev-pin's current driven state
+/// (`Simulator.RunSimulationStep(simChip, project.inputPins, ..)`).
+fn run_one_sim_step(v: &mut ViewerState) {
 	let external_inputs: Vec<crate::sim::ExternalInput> = v
 		.library
 		.get(&v.root_chip_name)
@@ -86,10 +190,10 @@ fn run_viewer_sim_step(v: &mut ViewerState) {
 /// Rebuilds the viewer's UI stack from live state, bottom-to-top: canvas
 /// (chip scene + grid + pending wire/placement previews), the starred
 /// bottom bar and any open collection flyout, every open overlay panel
-/// (modal), the right-click context menu above even those, and finally
-/// the non-capturing status toast.
+/// (modal), the right-click context menu above even those, the paused
+/// banner, and finally the non-capturing status toast.
 pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: f32, vh: f32, mouse: Vec2) -> UiStack<ViewerAction> {
-	run_viewer_sim_step(v);
+	update_viewer_sim(v);
 	// The customizer's in-flight resize/move/scale applies against the live
 	// cursor before the frame is built, so this frame already shows its
 	// effect (same immediate-mode beat as the camera pan above).
@@ -111,14 +215,26 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		v.camera_fitted = true;
 	}
 
-	let mut scene_geo = if v.show_grid { build_grid(&v.camera, theme::GRID_COL) } else { SceneGeometry::default() };
+	let mut scene_geo = if v.show_grid() { build_grid(&v.camera, theme::GRID_COL) } else { SceneGeometry::default() };
 	scene_geo.triangles.extend(chip_scene.triangles);
 	scene_geo.labels.extend(chip_scene.labels);
+	// Previews apply exactly the same snap/straighten transform a click
+	// would (see `canvas::handle_canvas_click`), so what follows the cursor
+	// is precisely what landing there would place.
 	if let Some(pending) = &v.pending_wire {
-		draw_pending_wire_preview(&mut scene_geo, pending, hover_world_pos);
+		let prev_point = pending.bend_points.last().copied().unwrap_or_else(|| pending.start.position());
+		let mut end = hover_world_pos;
+		if v.should_snap_to_grid() {
+			end = snap_to_grid_centred(end);
+		}
+		if v.force_straight_wires() {
+			end = force_straight_line(prev_point, end);
+		}
+		draw_pending_wire_preview(&mut scene_geo, pending, end);
 	}
 	if let Some(chip_name) = &v.pending_place {
-		if let Some(ghost) = build_pending_place_scene(&v.library, chip_name, hover_world_pos) {
+		let ghost_pos = if v.should_snap_to_grid() { snap_to_grid_centred(hover_world_pos) } else { hover_world_pos };
+		if let Some(ghost) = build_pending_place_scene(&v.library, chip_name, ghost_pos) {
 			scene_geo.triangles.extend(ghost.triangles);
 			scene_geo.labels.extend(ghost.labels);
 		}
@@ -210,6 +326,14 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		viewer_stack.push(ctx_layer);
 	}
 
+	// "Simulation Paused" banner (`SimPausedUI`): shown whenever the sim is
+	// paused and no modal panel covers the editor (the original draws it
+	// only for `MenuType.None`). Never captures input.
+	if v.prefs.prefs_sim_paused && v.overlays.is_empty() && v.context_menu.is_none() {
+		let geo = pin_geometry_to_screen(paused_banner_geometry(v.paused_step_counter, vw), &v.camera, vh);
+		viewer_stack.push(StackLayer::<ViewerAction>::new(LayerId::StatusToast, Capture::None).with_geometry(geo));
+	}
+
 	// Transient status/error toast floats above everything else; its layer never captures
 	// input, so it never blocks what's underneath.
 	if let Some(msg) = status {
@@ -277,7 +401,16 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			names.sort();
 			editor_ui::build_search_popup(&names, &v.search_query, vw, vh, mouse)
 		}
-		Overlay::Preferences => editor_ui::build_preferences_panel(&v.prefs, vw, vh, mouse),
+		Overlay::Preferences => {
+			let state = PrefsPanelState {
+				desc: &v.prefs,
+				clock_text: &v.prefs_clock_text,
+				rate_text: &v.prefs_rate_text,
+				focused_field: v.prefs_field_focus,
+				measured_speed_label: if v.prefs.prefs_sim_paused { "0".to_string() } else { format!("{:.0}", v.sim_pacing.avg_ticks_per_sec) },
+			};
+			editor_ui::build_preferences_panel(&state, vw, vh, mouse)
+		}
 		Overlay::Naming => {
 			let confirm_enabled = !v.overlay_text_input.trim().is_empty();
 			let title = match v.naming_purpose {

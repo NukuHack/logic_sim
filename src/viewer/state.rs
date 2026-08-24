@@ -4,14 +4,17 @@
 
 use crate::render::camera::Camera;
 use crate::render::context_menu::{ContextMenuAction, ContextMenuState};
-use crate::render::editor_ui::LibrarySelection;
+use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
 use crate::render::ui_stack::{LayerId, UiStack};
+use crate::sim::key_mods_bits;
 use crate::sim::Simulator;
 use crate::viewer::customize::CustomizeState;
-use crate::{ChipLibrary, PinAddress, PinBitCount, ProjectDescription};
+use crate::viewer::sim_timing::PerfWindow;
+use crate::viewer::wire_draft::PendingWire;
+use crate::{ChipLibrary, ProjectDescription};
 
-use crate::render::editor_ui;
 use crate::structs::Vec2;
+use std::time::Instant;
 
 /// One editor panel from `render::editor_ui` that can sit in
 /// [`ViewerState::overlays`]. Overlays are entries of the live UI stack:
@@ -116,61 +119,21 @@ pub(crate) struct RomEditorState {
 	pub(crate) selected: usize,
 }
 
-/// One endpoint of an in-progress wire placement (`ViewerState::pending_wire`),
-/// fixed at the moment the wire is started -- either a real pin (a
-/// subchip's own, or one of the current chip's own boundary dev-pins) or
-/// a tap point along an existing wire's line.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum PendingWireEnd {
-	Pin {
-		owner_id: i32,
-		pin_id: i32,
-		is_source: bool,
-		position: Vec2,
-	},
-	/// Tapping onto a wire always plays the *source* role for the new
-	/// branch wire (see `try_start_pending_wire`'s doc comment) -- the
-	/// tapped wire's own real source pin, needed to build the eventual
-	/// `WireDescription::new_tapped_source`, travels along here rather
-	/// than being re-looked-up at completion time.
-	WireTap {
-		wire_index: usize,
-		segment_index: i32,
-		point: Vec2,
-		source_pin_address: PinAddress,
-	},
-}
-
-impl PendingWireEnd {
-	pub(crate) fn is_source(&self) -> bool {
-		match self {
-			PendingWireEnd::Pin { is_source, .. } => *is_source,
-			PendingWireEnd::WireTap { .. } => true,
-		}
-	}
-
-	pub(crate) fn position(&self) -> Vec2 {
-		match self {
-			PendingWireEnd::Pin { position, .. } => *position,
-			PendingWireEnd::WireTap { point, .. } => *point,
-		}
-	}
-}
-
-/// State for an in-progress wire placement: the endpoint it started
-/// from, plus any bend ("turn") points the player has since clicked on
-/// empty canvas space, in click order -- becomes the finished
-/// `WireDescription::points` once the wire is completed at a second,
-/// opposite-role endpoint (reversed first if that second endpoint turns
-/// out to be the wire's real *source*, since `points` always runs
-/// source-to-target). `None` on [`ViewerState`] whenever no wire is being
-/// placed.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub(crate) struct PendingWire {
-	pub(crate) start: PendingWireEnd,
-	pub(crate) bend_points: Vec<Vec2>,
-	pub(crate) bit_count: PinBitCount,
+/// Bookkeeping for stepping the simulation from the render loop at the
+/// project's target rate (see [`crate::viewer::sim_timing`] for the math):
+/// when the last frame stepped, how many ticks are still "owed", the
+/// rolling throughput window behind the preferences panel's measured-speed
+/// display, and whether the previous frame saw the sim paused (so leaving
+/// pause starts measurement and debt from scratch instead of bursting).
+#[derive(Default)]
+pub(crate) struct SimPacing {
+	pub(crate) last_tick: Option<Instant>,
+	pub(crate) debt_ticks: f64,
+	pub(crate) window: PerfWindow,
+	pub(crate) was_paused: bool,
+	/// Latest measured average ticks/second (`0` while paused or before
+	/// anything has been measured).
+	pub(crate) avg_ticks_per_sec: f64,
 }
 
 /// State specific to viewing/simulating one open project's chip, split out
@@ -184,11 +147,31 @@ pub(crate) struct ViewerState {
 	pub(crate) dragging: bool,
 	pub(crate) last_cursor: Vec2,
 	pub(crate) camera_fitted: bool,
-	pub(crate) show_grid: bool,
 
 	/// The project's saved prefs/collections, edited live by the
 	/// preferences/library overlays and written back to disk on Apply.
 	pub(crate) prefs: ProjectDescription,
+
+	/// Pacing/throughput state for stepping the simulation (see [`SimPacing`]).
+	pub(crate) sim_pacing: SimPacing,
+	/// Set when the player requests one single step while the sim is
+	/// paused (`SimNextStepShortcutTriggered`); consumed by the next
+	/// frame's simulation update.
+	pub(crate) advance_single_step: bool,
+	/// How many single steps have advanced since the sim was paused --
+	/// shown on the paused banner, mirroring
+	/// `Project.simPausedSingleStepCounter`.
+	pub(crate) paused_step_counter: u32,
+
+	/// Which of the preferences panel's numeric fields currently owns
+	/// typed input, if any.
+	pub(crate) prefs_field_focus: Option<PrefValueField>,
+	/// Draft text of the preferences panel's "steps per clock tick" field.
+	pub(crate) prefs_clock_text: String,
+	/// Draft text of the preferences panel's "steps per second (target)"
+	/// field.
+	pub(crate) prefs_rate_text: String,
+
 	/// Editor panels currently open, bottom-to-top in open order -- see
 	/// [`Overlay`]'s docs for the stacking rules. Empty = plain viewer.
 	pub(crate) overlays: Vec<Overlay>,
@@ -281,6 +264,54 @@ pub(crate) struct ViewerState {
 }
 
 impl ViewerState {
+	/// Builds a fresh viewer for `root_chip_name` (which must already be
+	/// present in `library`), with the simulation built and prefs-driven
+	/// simulation settings applied. Callers tweak post-construction bits
+	/// (key modifiers, camera fitting) directly afterwards.
+	pub(crate) fn new(project_name: &str, library: ChipLibrary, root_chip_name: String, viewport: Vec2) -> Self {
+		let root_desc = library.get(&root_chip_name).clone();
+		let sim = Simulator::build(&root_desc, &library);
+		let mut v = Self {
+			project_name: project_name.to_string(),
+			library,
+			sim,
+			root_chip_name,
+			camera: Camera::new(viewport),
+			dragging: false,
+			last_cursor: Vec2::ZERO,
+			camera_fitted: false,
+			prefs: ProjectDescription::default(),
+			sim_pacing: SimPacing::default(),
+			advance_single_step: false,
+			paused_step_counter: 0,
+			prefs_field_focus: None,
+			prefs_clock_text: String::new(),
+			prefs_rate_text: String::new(),
+			overlays: Vec::new(),
+			search_query: String::new(),
+			overlay_text_input: String::new(),
+			overlay_key_choice: None,
+			naming_purpose: Default::default(),
+			key_select_purpose: Default::default(),
+			rom_editor: None,
+			customize: None,
+			stack: UiStack::new(),
+			bottom_bar_scroll_x: 0.0,
+			bottom_bar_scroll_max: 0.0,
+			library_selection: LibrarySelection::None,
+			library_creating_collection: false,
+			library_renaming_collection: false,
+			library_confirming_chip_delete: false,
+			library_confirming_collection_delete: false,
+			library_delete_message: String::new(),
+			bottom_bar_open_collection: None,
+			context_menu: None,
+			pending_wire: None,
+			pending_place: None,
+		};
+		v.sync_sim_clock_pref();
+		v
+	}
 	/// Rebuilds `self.sim` from `self.library`'s current copy of
 	/// `self.root_chip_name` -- called after any edit that changes the
 	/// simulated structure (deleting a component/wire, re-configuring a
@@ -298,6 +329,57 @@ impl ViewerState {
 		self.sim = Simulator::build(&root_desc, &self.library);
 		self.sim.held_keys = held_keys;
 		self.sim.key_modifiers = key_modifiers;
+		self.sync_sim_clock_pref();
+	}
+
+	// ---- Prefs-derived queries (`Project.ShowGrid` / `.ShouldSnapToGrid` /
+	// `.ForceStraightWires` / `.targetTicksPerSecond`) ----
+
+	pub(crate) fn show_grid(&self) -> bool {
+		self.prefs.prefs_grid_display_mode == 1
+	}
+
+	/// Mirrors `Project.targetTicksPerSecond`'s `Max(1, ..)` clamp.
+	pub(crate) fn target_ticks_per_second(&self) -> i32 {
+		self.prefs.prefs_sim_target_steps_per_second.max(1)
+	}
+
+	/// Ctrl-hold forces snapping regardless of prefs; "If Grid Shown"
+	/// snaps only while the grid is displayed; "Always" snaps always.
+	pub(crate) fn should_snap_to_grid(&self) -> bool {
+		self.sim.key_modifiers & key_mods_bits::CONTROL != 0 || (self.prefs.prefs_snapping == 1 && self.show_grid()) || self.prefs.prefs_snapping == 2
+	}
+
+	/// Same three-way structure as [`Self::should_snap_to_grid`], for shift.
+	pub(crate) fn force_straight_wires(&self) -> bool {
+		self.sim.key_modifiers & key_mods_bits::SHIFT != 0
+			|| (self.prefs.prefs_straight_wires == 1 && self.show_grid())
+			|| self.prefs.prefs_straight_wires == 2
+	}
+
+	/// Pushes the clock-speed pref into the live simulator (`SimThread.Run`
+	/// assigning `Simulator.stepsPerClockTransition` every tick).
+	pub(crate) fn sync_sim_clock_pref(&mut self) {
+		self.sim.steps_per_clock_transition = self.prefs.prefs_sim_steps_per_clock_tick.max(0) as u32;
+	}
+
+	// ---- Shortcut-driven pref mutations (`PreferencesMenu.HandleKeyboardShortcuts`) ----
+
+	/// Mirrors `Project.ToggleGridDisplay`.
+	pub(crate) fn toggle_grid_display(&mut self) {
+		self.prefs.prefs_grid_display_mode = 1 - self.prefs.prefs_grid_display_mode;
+	}
+
+	/// Mirrors the sim-pause toggle shortcut's description mutation.
+	pub(crate) fn toggle_sim_paused(&mut self) {
+		self.prefs.prefs_sim_paused = !self.prefs.prefs_sim_paused;
+	}
+
+	/// Mirrors the single-step shortcut: only does anything while paused.
+	pub(crate) fn request_single_sim_step(&mut self) {
+		if self.prefs.prefs_sim_paused {
+			self.advance_single_step = true;
+		}
 	}
 }
 
@@ -341,6 +423,23 @@ pub(crate) fn open_save_chip(v: &mut ViewerState) {
 	v.overlay_text_input = v.root_chip_name.clone();
 }
 
+/// Ctrl+P / 'p': opens (or re-focuses) the preferences panel, seeding its
+/// numeric fields from the live prefs -- mirrors
+/// `PreferencesMenu.OnMenuOpened` -> `UpdateUIFromDescription`.
+pub(crate) fn open_preferences(v: &mut ViewerState) {
+	open_overlay(v, Overlay::Preferences);
+	v.prefs_clock_text = v.prefs.prefs_sim_steps_per_clock_tick.to_string();
+	v.prefs_rate_text = v.prefs.prefs_sim_target_steps_per_second.to_string();
+	v.prefs_field_focus = None;
+}
+
+/// Clears the preferences panel's draft state (field focus + typed text).
+pub(crate) fn reset_preferences_draft(v: &mut ViewerState) {
+	v.prefs_field_focus = None;
+	v.prefs_clock_text.clear();
+	v.prefs_rate_text.clear();
+}
+
 /// Pops the top-most overlay off [`ViewerState::overlays`], releasing whichever purpose/draft state
 /// belonged to it (each overlay owns its own transient state, so closing it half-way through just
 /// resets that one). A no-op when nothing is open.
@@ -361,8 +460,9 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 				v.overlay_text_input = customize.saved_save_text;
 			}
 		}
-		// Preferences carries no transient draft of its own.
-		Overlay::Preferences => {}
+		// The preferences panel keeps its numeric drafts in their own
+		// buffers (not the shared one), so they're dropped here.
+		Overlay::Preferences => reset_preferences_draft(v),
 	}
 	// The shared buffer belongs to whichever text-field overlay owned it
 	// while open -- except CustomizeChip, whose arm above just handed it

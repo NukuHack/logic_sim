@@ -329,6 +329,26 @@ pub fn snap_to_grid(v: Vec2) -> Vec2 {
 	Vec2::new(snap_to_grid_scalar(v.x), snap_to_grid_scalar(v.y))
 }
 
+/// Snaps to grid lines *or* the centre of grid cells (whichever is
+/// closer, per axis) -- mirrors `GridHelper.SnapToGrid(v, true, true)`,
+/// the variant placement/wire editing actually uses.
+pub fn snap_to_grid_centred(v: Vec2) -> Vec2 {
+	Vec2::new(snap_to_grid_scalar(v.x * 2.0) / 2.0, snap_to_grid_scalar(v.y * 2.0) / 2.0)
+}
+
+/// Constrains `curr` to lie horizontally or vertically of `prev` --
+/// whichever axis is already closer -- mirroring
+/// `GridHelper.ForceStraightLine` (the "straight wires" pref / shift-hold).
+pub fn force_straight_line(prev: Vec2, curr: Vec2) -> Vec2 {
+	let mut offset = curr - prev;
+	if offset.x.abs() > offset.y.abs() {
+		offset.y = 0.0;
+	} else {
+		offset.x = 0.0;
+	}
+	prev + offset
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -386,4 +406,20 @@ mod tests {
 			assert_eq!(size, calculate_min_chip_size_for_pins(&[], &[]));
 		}
 	*/
+
+	#[test]
+	fn snap_to_grid_centred_lands_on_lines_or_cell_centres() {
+		// Centres are half-grid increments (0.0625 here): 0.05 rounds up to the
+		// centre at 0.0625, while plain snapping would push it to the line at 0.
+		assert_eq!(snap_to_grid_centred(Vec2::new(0.05, -0.06)), Vec2::new(0.0625, -0.0625));
+		assert_eq!(snap_to_grid(Vec2::new(0.05, 0.07)), Vec2::new(0.0, 0.125));
+	}
+
+	#[test]
+	fn force_straight_line_flattens_the_dominant_axis() {
+		let prev = Vec2::new(1.0, 1.0);
+		assert_eq!(force_straight_line(prev, Vec2::new(3.0, 1.4)), Vec2::new(3.0, 1.0)); // mostly horizontal -> keep x
+		assert_eq!(force_straight_line(prev, Vec2::new(1.3, 4.0)), Vec2::new(1.0, 4.0)); // mostly vertical -> keep y
+		assert_eq!(force_straight_line(prev, prev), prev); // already straight
+	}
 }

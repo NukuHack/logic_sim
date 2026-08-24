@@ -471,46 +471,20 @@ mod tests {
 		});
 		panel.wires.push(crate::WireDescription::new(crate::PinAddress::new(1, 0), crate::PinAddress::new(4, 0)));
 		panel.displays.push(DisplayDescription::new(4, Vec2::new(0.5, 0.25), 1.0));
-		let sim = crate::Simulator::build(&panel, &library);
 		library.add(panel.clone());
 
-		let mut v = ViewerState {
-			project_name: String::new(),
-			library,
-			root_chip_name: "Panel".to_string(),
-			sim,
-			camera: crate::render::camera::Camera::new(Vec2::new(1280.0, 800.0)),
-			dragging: false,
-			last_cursor: Vec2::new(640.0, 400.0),
-			camera_fitted: true,
-			show_grid: false,
-			prefs: crate::ProjectDescription::default(),
-			overlays: Vec::new(),
-			search_query: String::new(),
-			overlay_text_input: String::new(),
-			overlay_key_choice: None,
-			naming_purpose: Default::default(),
-			key_select_purpose: Default::default(),
-			rom_editor: None,
-			customize: None,
-			stack: crate::render::ui_stack::UiStack::new(),
-			bottom_bar_scroll_x: 0.0,
-			bottom_bar_scroll_max: 0.0,
-			library_selection: crate::render::editor_ui::LibrarySelection::None,
-			library_creating_collection: false,
-			library_renaming_collection: false,
-			library_confirming_chip_delete: false,
-			library_confirming_collection_delete: false,
-			library_delete_message: String::new(),
-			bottom_bar_open_collection: None,
-			context_menu: None,
-			pending_wire: None,
-			pending_place: None,
-		};
+		let mut v = ViewerState::new("", library, "Panel".to_string(), Vec2::new(1280.0, 800.0));
+		v.last_cursor = Vec2::new(640.0, 400.0);
+		v.camera_fitted = true;
 
 		// Drive the input high (what toggling a switch does), then open the
-		// customizer and build one frame of the real UI stack.
+		// customizer and build one frame of the real UI stack. Pausing and
+		// requesting a single step makes that frame advance the simulation
+		// by exactly one deterministic tick (wall-clock pacing would make
+		// "one frame" an arbitrary number of ticks).
 		v.library.get_mut("Panel").input_pins[0].driven_state = 1;
+		v.prefs.prefs_sim_paused = true;
+		v.advance_single_step = true;
 		open_customize(&mut v);
 		assert!(v.overlays.contains(&Overlay::CustomizeChip));
 

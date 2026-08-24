@@ -368,46 +368,10 @@ mod tests {
 	/// Minimal stand-in `ViewerState` for the pure-message helpers:
 	/// everything except the fields they read stays default.
 	fn viewer_state_for_tests(library: ChipLibrary) -> ViewerState {
-		use crate::sim::Simulator;
-
 		let root_chip_name = "New Chip".to_string();
 		let mut library = library;
 		library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
-		let root_desc = library.get(&root_chip_name).clone();
-		let sim = Simulator::build(&root_desc, &library);
-		ViewerState {
-			project_name: String::new(),
-			library,
-			root_chip_name,
-			sim,
-			camera: crate::render::camera::Camera::new(Vec2::new(1280.0, 800.0)),
-			dragging: false,
-			last_cursor: Vec2::ZERO,
-			camera_fitted: false,
-			show_grid: false,
-			prefs: ProjectDescription::default(),
-			overlays: Vec::new(),
-			search_query: String::new(),
-			overlay_text_input: String::new(),
-			overlay_key_choice: None,
-			naming_purpose: Default::default(),
-			key_select_purpose: Default::default(),
-			rom_editor: None,
-			customize: None,
-			stack: crate::render::ui_stack::UiStack::new(),
-			bottom_bar_scroll_x: 0.0,
-			bottom_bar_scroll_max: 0.0,
-			library_selection: LibrarySelection::None,
-			library_creating_collection: false,
-			library_renaming_collection: false,
-			library_confirming_chip_delete: false,
-			library_confirming_collection_delete: false,
-			library_delete_message: String::new(),
-			bottom_bar_open_collection: None,
-			context_menu: None,
-			pending_wire: None,
-			pending_place: None,
-		}
+		ViewerState::new("", library, root_chip_name, Vec2::new(1280.0, 800.0))
 	}
 
 	#[test]
