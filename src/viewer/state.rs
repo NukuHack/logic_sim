@@ -34,6 +34,8 @@ pub(crate) enum Overlay {
 	RomEditor,
 	SaveChip,
 	CustomizeChip,
+	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`).
+	UnsavedChanges,
 }
 
 impl Overlay {
@@ -47,6 +49,7 @@ impl Overlay {
 			Overlay::RomEditor => LayerId::RomEditor,
 			Overlay::SaveChip => LayerId::SaveChip,
 			Overlay::CustomizeChip => LayerId::CustomizePanel,
+			Overlay::UnsavedChanges => LayerId::UnsavedChanges,
 		}
 	}
 }
@@ -118,6 +121,26 @@ pub(crate) struct RomEditorState {
 	pub(crate) component_id: i32,
 	pub(crate) data: Vec<u32>,
 	pub(crate) selected: usize,
+}
+
+/// What [`Overlay::UnsavedChanges`]'s Continue button should do once the
+/// player confirms walking away from the current chip's unsaved edits --
+/// this port's stand-in for `UnsavedChangesPopup`'s stored
+/// `Action<bool> onClosedCallback` (Cancel simply drops it). Set by the
+/// `viewer::save_flow` request/gate helpers right before they open the
+/// popup; consumed by `confirm_unsaved_changes_popup`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum PendingUnsavedAction {
+	/// Switch to editing this chip's definition. `close_overlays` mirrors
+	/// the extra leave-the-library cleanup the library-panel/search open
+	/// paths do on an ordinary switch.
+	OpenChip { name: String, close_overlays: bool },
+	/// Ctrl+N: start a fresh blank chip (`start_new_chip`).
+	StartNewChip,
+	/// Escape: leave the editor for the startup menu. The viewer can't
+	/// swap screens itself, so this arm only sets
+	/// [`ViewerState::exit_requested`] for the app shell to act on.
+	ReturnToMenu,
 }
 
 /// Bookkeeping for stepping the simulation from the render loop at the
@@ -209,6 +232,17 @@ pub(crate) struct ViewerState {
 	pub(crate) key_select_purpose: KeySelectPurpose,
 	/// Draft state for `Overlay::RomEditor`, when open.
 	pub(crate) rom_editor: Option<RomEditorState>,
+	/// What `Overlay::UnsavedChanges`' Continue should resume -- see
+	/// [`PendingUnsavedAction`]'s docs. `Some` exactly while the popup is
+	/// open.
+	pub(crate) pending_unsaved_action: Option<PendingUnsavedAction>,
+	/// Set by the unsaved-changes flow's confirmed `ReturnToMenu` arm:
+	/// leaving the editor lives at the app-shell level (`App::return_to_menu`),
+	/// which the viewer's action funnel can't reach, so this asks
+	/// `viewer::events` to run that transition after the current
+	/// click/key finishes dispatching. Consumed (with the whole viewer)
+	/// by that transition.
+	pub(crate) exit_requested: bool,
 	/// Draft state for `Overlay::CustomizeChip`, when open -- the cloned
 	/// chip description being customized (name location / colour / size /
 	/// embedded displays) plus whatever grab/resize interaction is in
@@ -333,6 +367,8 @@ impl ViewerState {
 			naming_purpose: Default::default(),
 			key_select_purpose: Default::default(),
 			rom_editor: None,
+			pending_unsaved_action: None,
+			exit_requested: false,
 			customize: None,
 			stack: UiStack::new(),
 			bottom_bar_scroll_x: 0.0,
@@ -505,6 +541,12 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 		Overlay::KeySelect => v.key_select_purpose = KeySelectPurpose::default(),
 		Overlay::RomEditor => v.rom_editor = None,
 		Overlay::Search => v.search_query.clear(),
+		Overlay::UnsavedChanges => {
+			// Cancel: the pending action is dropped with the prompt --
+			// mirroring `UnsavedChangesPopup` never firing its callback
+			// with anything on a cancel.
+			v.pending_unsaved_action = None;
+		}
 		// The shared buffer belongs to whichever text-field overlay owned it while open.
 		Overlay::SaveChip => v.overlay_text_input.clear(),
 		// The customizer borrowed the shared buffer for its hex colour

@@ -167,6 +167,12 @@ pub enum EditorAction {
 	/// [`crate::render::customize_ui`]'s row builder and
 	/// `viewer::customize::place_list_entry`).
 	CustomizePlaceEntry(usize),
+	/// Unsaved-changes popup (`UnsavedChangesPopup`): the player chose to
+	/// walk away from the current chip's unsaved edits -- run whichever
+	/// action originally opened the popup (see
+	/// `ViewerState::pending_unsaved_action`, this port's stand-in for the
+	/// original's stored `onClosedCallback`).
+	UnsavedChangesConfirm,
 }
 
 /// Hit-box of one clickable region of an [`EditorFrame`] -- see [`ui_kit::Button`].
@@ -1153,6 +1159,50 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		[0.6, 0.6, 0.65, 1.0],
 		12.5,
 	);
+
+	finish(frame, ui)
+}
+
+// ---------------------------------------------------------------------
+// Unsaved-changes popup (`UnsavedChangesPopup`)
+// ---------------------------------------------------------------------
+
+/// Builds the "this chip has unsaved changes" confirmation popup
+/// (mirrors `UnsavedChangesPopup.DrawMenu`): warning text over a panel,
+/// Continue/Cancel beneath it. *Which* action Continue resumes isn't this
+/// builder's business -- the host remembers that separately (see
+/// `ViewerState::pending_unsaved_action`), exactly like the original
+/// stashes its `onClosedCallback`.
+pub fn build_unsaved_changes_popup(vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
+	let mut frame = EditorFrame::default();
+	let panel_w = 480.0;
+	let panel_h = 170.0;
+	let cx = vw / 2.0;
+	let cy = vh / 2.0;
+
+	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+
+	add_label(
+		&mut frame,
+		ui,
+		Vec2::new(cx, panel_rect.y + 40.0),
+		panel_w - 50.0,
+		"The current chip has unsaved changes.\nAre you sure you want to continue?",
+		[1.0, 0.4, 0.45, 1.0],
+		FONT_SIZE,
+	);
+
+	add_button(
+		&mut frame,
+		ui,
+		UiRect::new(cx - 186.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0),
+		"Continue",
+		EditorAction::UnsavedChangesConfirm,
+		true,
+	);
+	add_button(&mut frame, ui, UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0), "Cancel", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)
 }

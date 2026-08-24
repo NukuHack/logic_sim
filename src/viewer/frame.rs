@@ -460,6 +460,7 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			let mode = save_chip_mode(v, &v.overlay_text_input);
 			editor_ui::build_save_chip_popup(&v.root_chip_name, &v.overlay_text_input, mode, vw, vh, mouse)
 		}
+		Overlay::UnsavedChanges => editor_ui::build_unsaved_changes_popup(vw, vh, mouse),
 		// Handled separately by `build_viewer_stack` (its frame carries the
 		// preview layout back onto `ViewerState::customize`), so reaching
 		// this arm at all would double-build it.

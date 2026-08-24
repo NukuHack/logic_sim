@@ -11,7 +11,9 @@ use crate::viewer::library::{
 	sync_library_collections,
 };
 use crate::viewer::popups::{apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell, cycle_pref};
-use crate::viewer::save_flow::{confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, open_chip_by_name};
+use crate::viewer::save_flow::{
+	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
+};
 use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, reset_preferences_draft, Overlay, ViewerState};
 use crate::{SavePaths, Saver};
 
@@ -51,10 +53,10 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		EditorAction::MoveSelectedStep(down) => move_selected_library_row(v, down, false),
 		EditorAction::MoveSelectedJump(down) => move_selected_library_row(v, down, true),
 		EditorAction::OpenSelectedChip(name) => {
-			open_chip_by_name(v, paths, status, &name);
-			close_all_overlays(v);
-			v.library_selection = LibrarySelection::None;
-			v.bottom_bar_open_collection = None;
+			// Gated behind the unsaved-changes prompt while the current
+			// chip has in-memory-only edits; the `true` mirrors this
+			// site's leave-the-library cleanup on an ordinary open.
+			request_open_chip(v, paths, status, &name, true);
 		}
 		EditorAction::RequestDeleteChip(name) => {
 			v.library_delete_message = chip_delete_confirm_message(v, &name);
@@ -156,8 +158,10 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		}
 		EditorAction::CloseStarredCollectionPopup => v.bottom_bar_open_collection = None,
 		EditorAction::UseChip(name) => {
-			open_chip_by_name(v, paths, status, &name);
-			close_all_overlays(v);
+			// Same unsaved-changes gate as every other "open this chip"
+			// path; `true` = the search popup's open also leaves whatever
+			// overlays it was stacked above.
+			request_open_chip(v, paths, status, &name, true);
 		}
 		EditorAction::ConfirmName => confirm_naming_popup(v, status),
 		EditorAction::ChooseKey(c) => v.overlay_key_choice = Some(c),
@@ -182,6 +186,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		EditorAction::CustomizeGrabDisplayScale(i) => customize_flow::start_scale_display(v, i),
 		EditorAction::CustomizeResizeStart(corner) => customize_flow::start_resize(v, corner),
 		EditorAction::CustomizePlaceEntry(entry) => customize_flow::place_list_entry(v, entry),
+		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
 	}
 }
 

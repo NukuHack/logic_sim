@@ -54,6 +54,10 @@ pub enum LayerId {
 	/// customized plus its own option column, stacked on top of the save
 	/// popup so confirming drops the player back there.
 	CustomizePanel,
+	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`):
+	/// gates leaving the current chip behind while it has in-memory-only
+	/// edits.
+	UnsavedChanges,
 	/// Transient status/error message. Never captures anything.
 	StatusToast,
 	ContextMenu,
@@ -73,6 +77,7 @@ impl LayerId {
 				| LayerId::KeySelect
 				| LayerId::RomEditor
 				| LayerId::SaveChip
+				| LayerId::UnsavedChanges
 				| LayerId::CustomizePanel
 		)
 	}

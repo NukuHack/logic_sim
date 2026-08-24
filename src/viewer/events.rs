@@ -22,7 +22,7 @@ use crate::viewer::canvas::{handle_canvas_click, wire_click_tolerance};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::context_menu::{apply_context_menu_action, context_menu_items_for_component};
 use crate::viewer::frame::{build_menu_stack, build_viewer_stack};
-use crate::viewer::input::{encode_modifiers, handle_viewer_key, KeyOutcome};
+use crate::viewer::input::{encode_modifiers, handle_viewer_key};
 use crate::viewer::library::is_custom_chip;
 
 impl ApplicationHandler for App {
@@ -199,6 +199,7 @@ impl App {
 				}
 			},
 		}
+		self.check_viewer_exit_request();
 	}
 
 	/// Right-click handling:
@@ -450,10 +451,20 @@ impl App {
 			}
 			Screen::Viewer(v) => {
 				sync_stack_with_state(v);
-				if let KeyOutcome::ReturnToMenu = handle_viewer_key(v, &self.paths, &mut self.status, &event, self.modifiers) {
-					self.return_to_menu();
-				}
+				handle_viewer_key(v, &self.paths, &mut self.status, &event, self.modifiers);
 			}
+		}
+		self.check_viewer_exit_request();
+	}
+
+	/// Runs the deferred leave-the-editor transition the viewer asked for
+	/// via [`ViewerState::exit_requested`] (the unsaved-changes popup's
+	/// confirmed "leave" action; the viewer can't swap screens itself).
+	/// Called after every viewer input-dispatch site so both a clicked
+	/// Continue button and a pressed Enter funnel through the same check.
+	fn check_viewer_exit_request(&mut self) {
+		if matches!(self.screen, Screen::Viewer(ref v) if v.exit_requested) {
+			self.return_to_menu();
 		}
 	}
 

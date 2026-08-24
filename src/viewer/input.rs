@@ -12,7 +12,9 @@ use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::customize as customize_flow;
 use crate::viewer::library::reset_library_popup_state;
 use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, confirm_naming_popup, confirm_rom_cell};
-use crate::viewer::save_flow::{confirm_save_chip_popup, save_chip_mode, start_new_chip};
+use crate::viewer::save_flow::{
+	confirm_save_chip_popup, confirm_unsaved_changes_popup, request_exit_to_menu, request_start_new_chip, save_chip_mode,
+};
 use crate::viewer::state::{close_all_overlays, close_top_overlay, open_preferences, open_save_chip, open_search, Overlay, ViewerState};
 use crate::{sim, SavePaths, Saver};
 
@@ -37,27 +39,21 @@ pub(crate) fn encode_modifiers(mods: winit::keyboard::ModifiersState) -> u32 {
 	bits
 }
 
-/// What [`handle_viewer_key`] did with a key press routed to the viewer.
-pub(crate) enum KeyOutcome {
-	/// The press belonged to some overlay/panel/popup and was consumed.
-	Consumed,
-	/// Nothing wanted it anywhere in the stack -- plain-viewer gesture
-	/// space fell through to Escape's "leave the chip editor" cascade.
-	ReturnToMenu,
-}
-
 /// Routes a key *press* to whichever surface currently owns the keyboard,
 /// per `ViewerState::stack.keyboard_target()` -- mirroring, guard-for-guard, the old
 /// single match over `v.overlay` states this replaces. Typed characters are only UI data when a
 /// text-field overlay owns focus; the app's key handler separately gates feeding them to Key chips on
-/// `UiStack::keyboard_stop()`.
+/// `UiStack::keyboard_stop()`. Leaving the editor (Escape with nothing
+/// left to cancel) goes through the unsaved-changes gate: either it opens
+/// [`Overlay::UnsavedChanges`] or it sets
+/// [`ViewerState::exit_requested`] for the app shell to act on.
 pub(crate) fn handle_viewer_key(
 	v: &mut ViewerState,
 	paths: &SavePaths,
 	status: &mut Option<String>,
 	event: &winit::event::KeyEvent,
 	modifiers: winit::keyboard::ModifiersState,
-) -> KeyOutcome {
+) {
 	use winit::keyboard::{Key, NamedKey};
 	match &event.logical_key {
 		// ---- Text entry for whichever text-field overlay owns focus ----
@@ -77,6 +73,9 @@ pub(crate) fn handle_viewer_key(
 		}
 		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::Naming) => {
 			confirm_naming_popup(v, status);
+		}
+		Key::Named(NamedKey::Enter) if v.stack.keyboard_target() == Some(LayerId::UnsavedChanges) => {
+			confirm_unsaved_changes_popup(v, paths, status);
 		}
 		Key::Named(NamedKey::Enter)
 			if v.stack.keyboard_target() == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) =>
@@ -255,7 +254,7 @@ pub(crate) fn handle_viewer_key(
 				&& modifiers.control_key()
 				&& s.eq_ignore_ascii_case("n") =>
 		{
-			start_new_chip(v, paths, status);
+			request_start_new_chip(v, paths, status);
 		}
 		Key::Named(NamedKey::Tab) if v.stack.keyboard_target().is_none() => {
 			open_library_panel(v);
@@ -268,7 +267,8 @@ pub(crate) fn handle_viewer_key(
 		Key::Named(NamedKey::Delete) if can_delete_selection(v) => delete_selected(v),
 		// ---- Escape cascade, top-most thing first: popup state > whole
 		// overlay > pending wire/chip/selection-drag > bottom-bar flyout >
-		// leave the editor ----
+		// leave the editor (gated by the unsaved-changes prompt while the
+		// open chip has in-memory-only edits) ----
 		Key::Named(NamedKey::Escape) => {
 			if has_cancellable_canvas_state(v) {
 				v.pending_wire = None;
@@ -277,12 +277,11 @@ pub(crate) fn handle_viewer_key(
 			} else if v.bottom_bar_open_collection.is_some() {
 				v.bottom_bar_open_collection = None;
 			} else {
-				return KeyOutcome::ReturnToMenu;
+				request_exit_to_menu(v, paths);
 			}
 		}
 		_ => {}
 	}
-	KeyOutcome::Consumed
 }
 
 /// Applies a grid toggle and persists it straight to disk when the

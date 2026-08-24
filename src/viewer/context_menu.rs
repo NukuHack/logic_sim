@@ -6,8 +6,8 @@ use crate::render::context_menu::{ContextMenuAction, ContextMenuItem};
 use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::canvas::delete_component;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
-use crate::viewer::save_flow::open_chip_by_name;
-use crate::viewer::state::{close_all_overlays, open_overlay, KeySelectPurpose, NamingPurpose, Overlay, RomEditorState, ViewerState};
+use crate::viewer::save_flow::request_open_chip;
+use crate::viewer::state::{open_overlay, KeySelectPurpose, NamingPurpose, Overlay, RomEditorState, ViewerState};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 
 /// One right-clickable "thing" a context menu can be attached to, parsed
@@ -117,15 +117,14 @@ pub(crate) fn apply_context_menu_action(
 		(ContextMenuAction::Open, ContextTarget::Component(id)) => {
 			let name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
 			if let Some(name) = name {
-				open_chip_by_name(v, paths, status, &name);
+				request_open_chip(v, paths, status, &name, false);
 			}
 		}
 		(ContextMenuAction::Open, ContextTarget::LibChip(name)) => {
-			open_chip_by_name(v, paths, status, &name);
-			close_all_overlays(v);
+			request_open_chip(v, paths, status, &name, true);
 		}
 		(ContextMenuAction::Open, ContextTarget::BarChip(name)) | (ContextMenuAction::Open, ContextTarget::FlyoutChip(name)) => {
-			open_chip_by_name(v, paths, status, &name);
+			request_open_chip(v, paths, status, &name, false);
 		}
 		(ContextMenuAction::Unstar, ContextTarget::BarChip(name)) => unstar_bottom_bar_chip(v, paths, status, &name),
 		(ContextMenuAction::Delete, ContextTarget::LibChip(name)) => {

@@ -1,10 +1,13 @@
 //! Chip save/open flows: the Ctrl+S save popup's modes (save / save-as /
 //! rename / replace), new-chip creation, and switching the viewer to a
 //! different chip -- everything that moves whole `ChipDescription`s
-/// between the in-memory library and the project's on-disk chip files.
-use crate::render::editor_ui::SaveChipMode;
+//! between the in-memory library and the project's on-disk chip files.
+//! Also the unsaved-changes gate (`UnsavedChangesPopup`): detecting that
+//! the open chip has in-memory-only edits and prompting before any flow
+//! would walk away from them.
+use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
 use crate::viewer::library::{is_custom_chip, reset_all_driven_inputs, DEFAULT_LIBRARY_COLLECTION_NAME};
-use crate::viewer::state::{close_top_overlay, ViewerState};
+use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, Overlay, PendingUnsavedAction, ViewerState};
 use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver};
 
 /// Determines which buttons `Overlay::SaveChip` should show for the
@@ -238,6 +241,115 @@ fn discard_unsaved_changes(v: &mut ViewerState, paths: &SavePaths) {
 	}
 }
 
+// ---- Unsaved-changes gate (`ActiveChipHasUnsavedChanges` + `UnsavedChangesPopup`) ----
+
+/// Whether the currently-open chip has edits that exist only in memory --
+/// port of `Project.ActiveProject.ActiveChipHasUnsavedChanges`. A
+/// never-saved draft (no file on disk yet) is dirty as soon as anything
+/// has been placed in it, mirroring the original's
+/// `LastSavedDescription == null -> Elements.Count > 0`; a saved chip is
+/// dirty once its in-memory description no longer serializes equivalent
+/// to its own on-disk file. The comparison goes through
+/// `json::is_equivalent_json` (structural, float-tolerant) rather than
+/// raw string inequality, mirroring `Saver.HasUnsavedChanges`'s
+/// token-level comparison -- so e.g. dragging a component back to where
+/// it started isn't an edit.
+///
+/// Builtins are never dirty: they have no file and can't be edited.
+pub(crate) fn active_chip_has_unsaved_changes(v: &ViewerState, paths: &SavePaths) -> bool {
+	let name = v.root_chip_name.clone();
+	if !is_custom_chip(&v.library, &name) {
+		return false;
+	}
+	let saved_json =
+		load_single_chip_from_disk(paths, &v.project_name, &name).ok().and_then(|pristine| crate::json::serialize_chip_description(&pristine).ok());
+	let Some(saved_json) = saved_json else {
+		return !v.library.get(&name).sub_chips.is_empty();
+	};
+	let Ok(current_json) = crate::json::serialize_chip_description(v.library.get(&name)) else {
+		return true;
+	};
+	!crate::json::is_equivalent_json(&saved_json, &current_json)
+}
+
+/// Opens the confirmation popup remembering `pending` as the action to
+/// resume on Continue (`UnsavedChangesPopup.OpenPopup(callback)`).
+fn open_unsaved_changes_prompt(v: &mut ViewerState, pending: PendingUnsavedAction) {
+	v.pending_unsaved_action = Some(pending);
+	open_overlay(v, Overlay::UnsavedChanges);
+}
+
+/// The shared post-open cleanup of the library-panel/search "open this
+/// chip" call sites (`ExitLibrary`-style): leave every overlay and drop
+/// the selection/open flyout so nothing stale points at the panel that's
+/// now behind us.
+fn finish_open_from_library(v: &mut ViewerState) {
+	close_all_overlays(v);
+	v.library_selection = LibrarySelection::None;
+	v.bottom_bar_open_collection = None;
+}
+
+/// Gates "switch the viewer to editing `name`" behind the unsaved-changes
+/// prompt -- the shape every OPEN call site of the original shares
+/// (`if ActiveChipHasUnsavedChanges() OpenPopup(OpenChipIfConfirmed) else
+/// OpenChipIfConfirmed(true)`): with nothing to confirm (or re-opening
+/// the chip already on screen) it acts straight away; otherwise the popup
+/// opens and [`PendingUnsavedAction::OpenChip`] remembers what to resume.
+/// `close_overlays` selects the library-panel/search variant of the open,
+/// which also leaves the library panel and resets the selection/flyout.
+pub(crate) fn request_open_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str, close_overlays: bool) {
+	if name != v.root_chip_name && active_chip_has_unsaved_changes(v, paths) {
+		open_unsaved_changes_prompt(v, PendingUnsavedAction::OpenChip { name: name.to_string(), close_overlays });
+		return;
+	}
+	open_chip_by_name(v, paths, status, name);
+	if close_overlays {
+		finish_open_from_library(v);
+	}
+}
+
+/// Ctrl+N's gated twin (see `request_open_chip`): prompts before throwing
+/// away the current chip's unsaved edits, else creates straight away.
+pub(crate) fn request_start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+	if active_chip_has_unsaved_changes(v, paths) {
+		open_unsaved_changes_prompt(v, PendingUnsavedAction::StartNewChip);
+		return;
+	}
+	start_new_chip(v, paths, status);
+}
+
+/// Escape-to-menu's gated twin (see `request_open_chip`): prompts before
+/// abandoning the chip; when clean, asks the app shell to leave via
+/// [`ViewerState::exit_requested`] (the viewer can't swap screens
+/// itself).
+pub(crate) fn request_exit_to_menu(v: &mut ViewerState, paths: &SavePaths) {
+	if active_chip_has_unsaved_changes(v, paths) {
+		open_unsaved_changes_prompt(v, PendingUnsavedAction::ReturnToMenu);
+		return;
+	}
+	v.exit_requested = true;
+}
+
+/// Runs whatever originally opened the unsaved-changes prompt -- the
+/// confirmed half of the original's stored callback (`callback(true)`),
+/// shared by the popup's Continue button and pressing Enter. Cancel
+/// instead just closes the popup (dropping the pending action with it --
+/// see `state::close_top_overlay`). Either way the popup itself closes.
+pub(crate) fn confirm_unsaved_changes_popup(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
+	match v.pending_unsaved_action.take() {
+		Some(PendingUnsavedAction::OpenChip { name, close_overlays }) => {
+			open_chip_by_name(v, paths, status, &name);
+			if close_overlays {
+				finish_open_from_library(v);
+			}
+		}
+		Some(PendingUnsavedAction::StartNewChip) => start_new_chip(v, paths, status),
+		Some(PendingUnsavedAction::ReturnToMenu) => v.exit_requested = true,
+		None => {}
+	}
+	close_top_overlay(v);
+}
+
 /// Picks a fresh, not-yet-used (case-insensitively) name for a
 /// brand-new chip, starting from "New Chip" and falling back to
 /// "New Chip 2", "New Chip 3", ... the first suffix that isn't already
@@ -436,5 +548,105 @@ mod tests {
 		assert!(other.chips.iter().any(|n| n.eq_ignore_ascii_case(&name)), "saved chip joins the library");
 
 		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	fn viewer_on_saved_project(paths: &SavePaths, root: &str, other: &str) -> ViewerState {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new(root, ChipType::Custom));
+		library.add(ChipDescription::new(other, ChipType::Custom));
+		let v = ViewerState::new("P", library, root.to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		for name in [root, other] {
+			Saver::save_chip(paths, "P", &v.library.get(name).clone()).expect("chip written");
+		}
+		v
+	}
+
+	fn place_a_nand(v: &mut ViewerState) {
+		crate::viewer::chip_interaction::start_placing(v, "NAND");
+		crate::viewer::canvas::try_place_pending_components(v, crate::structs::Vec2::ZERO, &mut None);
+	}
+
+	/// The dirty-detection contract: a saved-but-unedited chip is clean,
+	/// any in-memory edit dirties it, saving cleans it again -- and a
+	/// never-saved draft is dirty exactly once something is placed in it
+	/// (`LastSavedDescription == null -> Elements.Count > 0`).
+	#[test]
+	fn active_chip_has_unsaved_changes_tracks_disk_truth() {
+		let root = crate::save_system::test_util::temp_dir("unsaved_detect");
+		let paths = SavePaths::new(&root);
+
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+		assert!(!active_chip_has_unsaved_changes(&v, &paths), "unedited saved chip is clean");
+
+		place_a_nand(&mut v);
+		assert!(active_chip_has_unsaved_changes(&v, &paths), "an in-memory-only placement is an unsaved change");
+
+		open_save_chip(&mut v);
+		confirm_save_chip_popup(&mut v, &paths, &mut None);
+		assert!(!active_chip_has_unsaved_changes(&v, &paths), "saving cleans it");
+
+		// A never-saved draft: blank = clean, anything placed = dirty.
+		start_new_chip(&mut v, &paths, &mut None);
+		assert!(!active_chip_has_unsaved_changes(&v, &paths), "a blank never-saved chip isn't dirty");
+		place_a_nand(&mut v);
+		assert!(active_chip_has_unsaved_changes(&v, &paths), "a placed component makes the draft dirty");
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Switching away while dirty must prompt first and only switch on
+	/// Continue; Cancel keeps you on the chip with nothing lost.
+	#[test]
+	fn request_open_chip_prompts_while_dirty_and_confirms_through() {
+		let root = crate::save_system::test_util::temp_dir("unsaved_gate_open");
+		let paths = SavePaths::new(&root);
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+		place_a_nand(&mut v);
+
+		request_open_chip(&mut v, &paths, &mut None, "OTHER", true);
+		assert_eq!(v.root_chip_name, "ROOT", "the switch waits behind the prompt");
+		assert_eq!(v.overlays.last(), Some(&Overlay::UnsavedChanges));
+		assert_eq!(v.pending_unsaved_action, Some(PendingUnsavedAction::OpenChip { name: "OTHER".to_string(), close_overlays: true }));
+
+		close_top_overlay(&mut v); // Cancel
+		assert_eq!(v.root_chip_name, "ROOT", "cancel leaves everything as it was");
+		assert!(v.pending_unsaved_action.is_none());
+
+		request_open_chip(&mut v, &paths, &mut None, "OTHER", true);
+		confirm_unsaved_changes_popup(&mut v, &paths, &mut None); // Continue
+		assert_eq!(v.root_chip_name, "OTHER", "continue performs the deferred open");
+		assert!(v.overlays.is_empty() && v.pending_unsaved_action.is_none());
+		assert!(!v.exit_requested);
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// A clean chip never prompts: Escape-to-menu requests the exit
+	/// straight away, Ctrl+N switches immediately, and a *dirty* chip
+	/// routes both through the popup whose Continue finishes them.
+	#[test]
+	fn escape_and_new_chip_gates() {
+		let root = crate::save_system::test_util::temp_dir("unsaved_gate_exit");
+		let paths = SavePaths::new(&root);
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+
+		request_exit_to_menu(&mut v, &paths);
+		assert!(v.exit_requested, "clean chip: leave without asking");
+
+		// Reset the (never-consumed here) request, then make the chip dirty.
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+		place_a_nand(&mut v);
+		request_exit_to_menu(&mut v, &paths);
+		assert!(!v.exit_requested, "dirty chip: prompt instead of leaving");
+		confirm_unsaved_changes_popup(&mut v, &paths, &mut None);
+		assert!(v.exit_requested, "continue resumes the exit");
+
+		let mut v = viewer_on_saved_project(&paths, "ROOT", "OTHER");
+		place_a_nand(&mut v);
+		request_start_new_chip(&mut v, &paths, &mut None);
+		assert_eq!(v.root_chip_name, "ROOT", "dirty chip: new-chip waits behind the prompt");
+		confirm_unsaved_changes_popup(&mut v, &paths, &mut None);
+		assert_eq!(v.root_chip_name, "New Chip", "continue starts the fresh chip");
 	}
 }

@@ -11,7 +11,8 @@
 //! (in-progress wire placement state), [`chip_interaction`] (component
 //! selection/dragging, multi-component placement carries, box selection),
 //! [`library`] (chip-library
-//! bookkeeping), [`save_flow`] (save/save-as/rename/new-chip), [`popups`]
+//! bookkeeping), [`save_flow`] (save/save-as/rename/new-chip plus the
+//! unsaved-changes gate over leaving a chip), [`popups`]
 //! (generic popup confirm handlers), [`context_menu`] (right-click popups),
 //! [`actions`] (editor action funnel), [`input`] (keyboard routing),
 //! [`sim_timing`] (simulation pacing/throughput measurement),
