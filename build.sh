@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Unified check/build script for logic_sim.
-# Usage: ./build.sh [-y | -n | -q]
+# Usage: ./build.sh [-y | -n | -q | -r]
 #   -y  Run all checks and tests, then build
 #   -n  Skip everything except build
 #   -q  Quick: only unit tests (cargo test --lib), then build
+#   -r  Same as -y, then run the built app (cargo run --release)
 set -euo pipefail
 
 MAX_LINE_WIDTH=150
@@ -12,6 +13,7 @@ MAX_FILE_LINES=500
 RUN_ALL=false
 SKIP_ALL=false
 QUICK=false
+RUN_AFTER_BUILD=false
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
@@ -19,15 +21,17 @@ while [[ $# -gt 0 ]]; do
     -y) RUN_ALL=true; shift ;;
     -n) SKIP_ALL=true; shift ;;
     -q) QUICK=true; shift ;;
-    *) echo "Usage: $0 [-y | -n | -q]"; echo "  -y  Run all checks and tests, then build"; echo "  -n  Skip everything except build"; echo "  -q  Quick: only unit tests, then build"; exit 1 ;;
+    -r) RUN_ALL=true; RUN_AFTER_BUILD=true; shift ;;
+    *) echo "Usage: $0 [-y | -n | -q | -r]"; echo "  -y  Run all checks and tests, then build"; echo "  -n  Skip everything except build"; echo "  -q  Quick: only unit tests, then build"; echo "  -r  Same as -y, then run the app (cargo run --release)"; exit 1 ;;
   esac
 done
 
 if ! $RUN_ALL && ! $SKIP_ALL && ! $QUICK; then
-  echo "Usage: $0 [-y | -n | -q]"
+  echo "Usage: $0 [-y | -n | -q | -r]"
   echo "  -y  Run all checks and tests, then build"
   echo "  -n  Skip everything except build"
   echo "  -q  Quick: only unit tests, then build"
+  echo "  -r  Same as -y, then run the app (cargo run --release)"
   exit 1
 fi
 
@@ -107,4 +111,9 @@ fi
 echo "==> Building release..."
 cargo build --release
 
-echo "==> Build complete. Binary available at target/release/app."
+if $RUN_AFTER_BUILD; then
+  echo "==> Running app (cargo run --release)..."
+  cargo run --release
+else
+  echo "==> Build complete. Binary available at target/release/app."
+fi
