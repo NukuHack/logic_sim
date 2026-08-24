@@ -266,6 +266,15 @@ impl<A> UiStack<A> {
 		self.layers.iter().rev().find_map(|l| l.buttons.iter().find(|b| b.enabled && b.rect.contains(pos)).map(|b| (l.id, b)))
 	}
 
+	/// Same as [`topmost_button`](Self::topmost_button), but disabled
+	/// buttons count too -- for right-click lookups over surfaces whose
+	/// buttons are greyed out for *placement* only: a cycle-blocked
+	/// starred chip can't be picked up, but its popup's Open/Un-star rows
+	/// are still meaningful.
+	pub fn topmost_button_or_disabled(&self, pos: Vec2) -> Option<(LayerId, &Button<A>)> {
+		self.layers.iter().rev().find_map(|l| l.buttons.iter().find(|b| b.rect.contains(pos)).map(|b| (l.id, b)))
+	}
+
 	/// Offers a left-click at `pos` to the stack, top layer first. A layer takes the click when
 	/// an enabled button of its own contains `pos`, or when its capture region does; otherwise it
 	/// propagates down. Falling off the bottom returns [`InputResult::Propagate`] -- the click
@@ -296,5 +305,35 @@ impl<A> UiStack<A> {
 			}
 		}
 		Dispatch::propagated()
+	}
+}
+
+#[cfg(test)]
+mod topmost_button_tests {
+	//! White-box: the strict/lenient right-click lookups live on the
+	//! generic stack, so their enabled-button contract is pinned here.
+
+	use super::*;
+
+	#[test]
+	fn lenient_lookup_finds_disabled_buttons_the_strict_one_skips() {
+		let mut stack: UiStack<&'static str> = UiStack::new();
+		let mut layer = StackLayer::new(LayerId::BottomBar, Capture::None);
+		layer.buttons = vec![
+			Button { rect: UiRect::new(0.0, 0.0, 10.0, 10.0), action: "enabled", enabled: true },
+			Button { rect: UiRect::new(20.0, 0.0, 10.0, 10.0), action: "greyed", enabled: false },
+		];
+		stack.push(layer);
+
+		assert!(stack.topmost_button(Vec2::new(25.0, 5.0)).is_none(), "left-click lookup ignores disabled buttons");
+		let (id, button) = stack.topmost_button_or_disabled(Vec2::new(25.0, 5.0)).expect("right-click lookup counts them");
+		assert_eq!(id, LayerId::BottomBar);
+		assert_eq!(button.action, "greyed");
+		assert!(!button.enabled, "the caller sees the disabled state and can decide what its popup offers");
+
+		// Enabled buttons resolve identically through both paths.
+		let (_, via_strict) = stack.topmost_button(Vec2::new(5.0, 5.0)).unwrap();
+		let (_, via_lenient) = stack.topmost_button_or_disabled(Vec2::new(5.0, 5.0)).unwrap();
+		assert_eq!(via_strict.action, via_lenient.action);
 	}
 }

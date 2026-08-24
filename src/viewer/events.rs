@@ -266,8 +266,11 @@ impl App {
 		// 1) A visible UI row under the cursor: a chip row in the library
 		// panel, or a chip button in the bottom bar / its open flyout.
 		// All screen-space, so they're looked up through the stack rather
-		// than hit-tested in world space like everything below.
-		if let Some((layer, action)) = v.stack.topmost_button(self.mouse_pos).map(|(l, b)| (l, b.action.clone())) {
+		// than hit-tested in world space like everything below. The
+		// lookup counts disabled buttons too: a greyed-out starred chip
+		// (cycle-blocked for *placement*) still offers its Open/Un-star
+		// popup -- the grey only guards left-click placement.
+		if let Some((layer, action)) = v.stack.topmost_button_or_disabled(self.mouse_pos).map(|(l, b)| (l, b.action.clone())) {
 			match (&layer, &action) {
 				(LayerId::Library, ViewerAction::Editor(EditorAction::SelectChipRow { collection, chip })) => {
 					if let Some(name) = v.prefs.chip_collections.get(*collection).and_then(|c| c.chips.get(*chip)).cloned() {

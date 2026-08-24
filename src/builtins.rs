@@ -227,14 +227,14 @@ pub fn io_pin_template(chip_type: ChipType) -> Option<(bool, PinDescription)> {
 }
 
 fn is_input_or_output_pin(chip_type: ChipType) -> (bool, bool, PinBitCount) {
-	use ChipType::*;
+	use ChipType as E;
 	match chip_type {
-		In1Bit => (true, false, PinBitCount::Bit1),
-		Out1Bit => (false, true, PinBitCount::Bit1),
-		In4Bit => (true, false, PinBitCount::Bit4),
-		Out4Bit => (false, true, PinBitCount::Bit4),
-		In8Bit => (true, false, PinBitCount::Bit8),
-		Out8Bit => (false, true, PinBitCount::Bit8),
+		E::In1Bit => (true, false, PinBitCount::Bit1),
+		E::Out1Bit => (false, true, PinBitCount::Bit1),
+		E::In4Bit => (true, false, PinBitCount::Bit4),
+		E::Out4Bit => (false, true, PinBitCount::Bit4),
+		E::In8Bit => (true, false, PinBitCount::Bit8),
+		E::Out8Bit => (false, true, PinBitCount::Bit8),
 		_ => (false, false, PinBitCount::Bit1),
 	}
 }

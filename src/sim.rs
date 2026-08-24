@@ -428,7 +428,7 @@ impl Simulator {
 	}
 
 	fn process_builtin_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
-		use ChipType::*;
+		use ChipType as E;
 		let chip_type = self.chips[chip_idx.0].chip_type;
 
 		macro_rules! in_state {
@@ -444,16 +444,16 @@ impl Simulator {
 		}
 
 		match chip_type {
-			Nand => {
+			E::Nand => {
 				let nand_op = 1 ^ (in_state!(0) & in_state!(1));
 				set_out!(0, nand_op & 1);
 			}
-			Clock => {
+			E::Clock => {
 				let spct = self.steps_per_clock_transition;
 				let high = spct != 0 && ((self.simulation_frame / spct as u64) & 1) == 0;
 				set_out!(0, if high { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
 			}
-			Pulse => {
+			E::Pulse => {
 				const DURATION: usize = 0;
 				const TICKS_REMAINING: usize = 1;
 				const INPUT_OLD: usize = 2;
@@ -481,21 +481,21 @@ impl Simulator {
 				set_out!(0, output_state);
 				self.chips[chip_idx.0].internal_state[INPUT_OLD] = pulse_input_high as u32;
 			}
-			Split4To1Bit => {
+			E::Split4To1Bit => {
 				let in4 = in_state!(0);
 				set_out!(0, (in4 >> 3) & pin_state::SINGLE_BIT_MASK);
 				set_out!(1, (in4 >> 2) & pin_state::SINGLE_BIT_MASK);
 				set_out!(2, (in4 >> 1) & pin_state::SINGLE_BIT_MASK);
 				set_out!(3, (in4) & pin_state::SINGLE_BIT_MASK);
 			}
-			Merge1To4Bit => {
+			E::Merge1To4Bit => {
 				let a = in_state!(3) & pin_state::SINGLE_BIT_MASK; // lsb
 				let b = in_state!(2) & pin_state::SINGLE_BIT_MASK;
 				let c = in_state!(1) & pin_state::SINGLE_BIT_MASK;
 				let d = in_state!(0) & pin_state::SINGLE_BIT_MASK;
 				set_out!(0, a | (b << 1) | (c << 2) | (d << 3));
 			}
-			Merge1To8Bit => {
+			E::Merge1To8Bit => {
 				let a = in_state!(7) & pin_state::SINGLE_BIT_MASK;
 				let b = in_state!(6) & pin_state::SINGLE_BIT_MASK;
 				let c = in_state!(5) & pin_state::SINGLE_BIT_MASK;
@@ -506,14 +506,14 @@ impl Simulator {
 				let h = in_state!(0) & pin_state::SINGLE_BIT_MASK;
 				set_out!(0, a | (b << 1) | (c << 2) | (d << 3) | (e << 4) | (f << 5) | (g << 6) | (h << 7));
 			}
-			Merge4To8Bit => {
+			E::Merge4To8Bit => {
 				let a4 = in_state!(0);
 				let b4 = in_state!(1);
 				let mut out8 = 0u32;
 				pin_state::set_8bit_from_4bit_sources(&mut out8, b4, a4);
 				set_out!(0, out8);
 			}
-			Split8To4Bit => {
+			E::Split8To4Bit => {
 				let in8 = in_state!(0);
 				let mut a4 = 0u32;
 				let mut b4 = 0u32;
@@ -522,13 +522,13 @@ impl Simulator {
 				set_out!(0, a4);
 				set_out!(1, b4);
 			}
-			Split8To1Bit => {
+			E::Split8To1Bit => {
 				let in8 = in_state!(0);
 				for bit in 0..8 {
 					set_out!(bit, (in8 >> (7 - bit)) & pin_state::SINGLE_BIT_MASK);
 				}
 			}
-			TriStateBuffer => {
+			E::TriStateBuffer => {
 				let data = in_state!(0);
 				let enable = in_state!(1);
 				if pin_state::first_bit_high(enable) {
@@ -539,25 +539,25 @@ impl Simulator {
 					set_out!(0, disconnected);
 				}
 			}
-			Key => {
+			E::Key => {
 				let key_char = self.chips[chip_idx.0].internal_state.first().copied().unwrap_or(0) as u8 as char;
 				let is_held = self.held_keys.contains(&key_char);
 				set_out!(0, if is_held { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
 			}
-			KeyMods => {
+			E::KeyMods => {
 				set_out!(0, self.key_modifiers & 0xFF);
 			}
-			DisplayRgb => self.process_display_rgb(chip_idx),
-			DisplayDot => self.process_display_dot(chip_idx),
-			DevRam8Bit => self.process_ram_8bit(chip_idx),
-			Rom256x16 => {
+			E::DisplayRgb => self.process_display_rgb(chip_idx),
+			E::DisplayDot => self.process_display_dot(chip_idx),
+			E::DevRam8Bit => self.process_ram_8bit(chip_idx),
+			E::Rom256x16 => {
 				const BYTE_MASK: u32 = 0b1111_1111;
 				let address = pin_state::bit_states(in_state!(0)) as usize;
 				let data = self.chips[chip_idx.0].internal_state[address];
 				set_out!(0, (data >> 8) & BYTE_MASK);
 				set_out!(1, data & BYTE_MASK);
 			}
-			Buzzer => {
+			E::Buzzer => {
 				let freq_index = pin_state::bit_states(in_state!(0)) as i32;
 				let volume_index = pin_state::bit_states(in_state!(1)) as u32;
 				audio.register_note(freq_index, volume_index);

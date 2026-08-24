@@ -757,7 +757,14 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		library.add(led.clone());
 		let mut host = ChipDescription::new("HOST", ChipType::Custom);
-		host.sub_chips.push(SubChipDescription { name: "LED".into(), id: 3, internal_data: None, position: Vec2::ZERO, label: None, pin_colour_info: vec![] });
+		host.sub_chips.push(SubChipDescription {
+			name: "LED".into(),
+			id: 3,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
 		let displays = [DisplayDescription::new(3, Vec2::ZERO, 4.0)];
 
 		struct Level(LogicState);
@@ -784,7 +791,17 @@ mod tests {
 		];
 		for (level, present, absent) in cases {
 			let mut geo = SceneGeometry::default();
-			draw_subchip_displays(&mut geo, Vec2::ZERO, Vec2::splat(8.0), &host.sub_chips, &displays, &library, &Level(level), theme::CHIP_BODY_COL, false);
+			draw_subchip_displays(
+				&mut geo,
+				Vec2::ZERO,
+				Vec2::splat(8.0),
+				&host.sub_chips,
+				&displays,
+				&library,
+				&Level(level),
+				theme::CHIP_BODY_COL,
+				false,
+			);
 			let colours = colours_present(&geo);
 			for expected in present {
 				assert!(colours.contains(&expected), "{level:?}: expected {expected:?} among {}", colours.len());

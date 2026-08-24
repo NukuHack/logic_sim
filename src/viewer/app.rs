@@ -217,13 +217,13 @@ impl App {
 				self.menu.set_edited_settings(s);
 			}
 			UiAction::CycleFullscreenMode => {
-				use crate::FullScreenMode::*;
+				use crate::FullScreenMode as E;
 				let mut s = self.menu.edited_settings();
 				s.fullscreen_mode = match s.fullscreen_mode {
-					Windowed => FullScreenWindow,
-					FullScreenWindow => MaximizedWindow,
-					MaximizedWindow => ExclusiveFullScreen,
-					ExclusiveFullScreen => Windowed,
+					E::Windowed => E::FullScreenWindow,
+					E::FullScreenWindow => E::MaximizedWindow,
+					E::MaximizedWindow => E::ExclusiveFullScreen,
+					E::ExclusiveFullScreen => E::Windowed,
 				};
 				self.menu.set_edited_settings(s);
 			}

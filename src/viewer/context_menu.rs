@@ -286,4 +286,66 @@ mod tests {
 
 		let _ = std::fs::remove_dir_all(&root);
 	}
+
+	/// The bar-chip popup's rows must work even for a *greyed-out*
+	/// button: the grey only blocks left-click placement, while Open
+	/// switches to the chip and Un-star removes and persists it.
+	#[test]
+	fn barchip_popup_rows_act_on_cycle_blocked_chips() {
+		use crate::viewer::chip_interaction;
+
+		let root = std::env::temp_dir().join(format!("barchip_greyed_{}", std::process::id()));
+		let paths = SavePaths::new(&root);
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(crate::ChipDescription::new("ROOT", ChipType::Custom));
+		// SELFIE contains an instance of ROOT -> placing it into ROOT
+		// would recurse, which is what greys its bar button out.
+		let mut selfie = crate::ChipDescription::new("SELFIE", ChipType::Custom);
+		selfie_subchip_root(&mut selfie);
+		library.add(selfie);
+		let mut v =
+			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		v.prefs.starred_list.push(crate::StarredItem::new("SELFIE", false));
+		Saver::save_chip(&paths, "P", &v.library.get("SELFIE")).expect("chip saved");
+		register_name_in_project_for_test(&mut v, &paths, "SELFIE");
+
+		// Placing SELFIE into ROOT would recurse -- that's why it's grey.
+		assert!(crate::viewer::library::would_create_cycle(&v.library, "ROOT", "SELFIE"));
+
+		// Un-star via the popup: gone from the starred list and persisted.
+		apply_context_menu_action(&mut v, &paths, &mut None, "barchip:SELFIE", ContextMenuAction::Unstar);
+		assert!(!v.prefs.is_starred("SELFIE", false), "un-starring works on a greyed chip");
+
+		// Re-star, then Open via the popup: the viewer switches despite
+		// the cycle block (navigating away is always legal).
+		v.prefs.set_starred("SELFIE", true, false);
+		apply_context_menu_action(&mut v, &paths, &mut None, "barchip:SELFIE", ContextMenuAction::Open);
+		assert_eq!(v.root_chip_name, "SELFIE", "open works on a greyed chip");
+		assert!(chip_interaction::CanvasInteraction::None == v.canvas_interaction);
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Persists `name` into the project's collections so the un-star save
+	/// round-trips like a real session's description.
+	fn register_name_in_project_for_test(v: &mut ViewerState, paths: &SavePaths, name: &str) {
+		v.prefs.all_custom_chip_names.push(name.to_string());
+		let mut desc = v.prefs.clone();
+		Saver::save_project_description(paths, &mut desc).expect("description saved");
+		v.prefs = desc;
+	}
+
+	/// Gives `selfie` a subchip instance of ROOT (making it
+	/// cycle-blocked when ROOT is the open chip).
+	fn selfie_subchip_root(selfie: &mut crate::ChipDescription) {
+		selfie.sub_chips.push(crate::SubChipDescription {
+			name: "ROOT".into(),
+			id: 1,
+			internal_data: None,
+			position: crate::Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+	}
 }
