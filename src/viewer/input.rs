@@ -39,6 +39,17 @@ pub(crate) fn encode_modifiers(mods: winit::keyboard::ModifiersState) -> u32 {
 	bits
 }
 
+/// Whether a key press is "aimed at" an open right-click popup and so
+/// should leave it alone: only Escape (its own dismiss gesture) and the
+/// bare modifier keys (holding shift/ctrl isn't an input worth closing
+/// for) keep it. Everything else -- Tab, Ctrl+F, typed characters --
+/// dismisses the popup first and then processes normally, mirroring the
+/// original's close-on-any-input stance while keeping shortcuts live.
+pub(crate) fn key_press_aimed_at_context_menu(logical_key: &winit::keyboard::Key) -> bool {
+	use winit::keyboard::{Key, NamedKey};
+	matches!(logical_key, Key::Named(NamedKey::Escape | NamedKey::Alt | NamedKey::Control | NamedKey::Shift | NamedKey::Super))
+}
+
 /// Routes a key *press* to whichever surface currently owns the keyboard,
 /// per `ViewerState::stack.keyboard_target()` -- mirroring, guard-for-guard, the old
 /// single match over `v.overlay` states this replaces. Typed characters are only UI data when a
@@ -55,6 +66,12 @@ pub(crate) fn handle_viewer_key(
 	modifiers: winit::keyboard::ModifiersState,
 ) {
 	use winit::keyboard::{Key, NamedKey};
+	// ---- Right-click popup: anything not aimed at it dismisses it
+	// first, so the same key press then acts on whatever else it targets
+	// (Tab closes the popup AND opens the library) ----
+	if v.context_menu.is_some() && !key_press_aimed_at_context_menu(&event.logical_key) {
+		v.context_menu = None;
+	}
 	match &event.logical_key {
 		// ---- Text entry for whichever text-field overlay owns focus ----
 		// The search popup deliberately types into its own `search_query`
@@ -366,6 +383,21 @@ mod tests {
 	use super::*;
 	use crate::structs::Vec2;
 	use crate::viewer::chip_interaction::{self, CanvasInteraction};
+
+	#[test]
+	fn only_escape_and_modifiers_are_aimed_at_the_context_menu() {
+		let aimed = |key: winit::keyboard::Key| key_press_aimed_at_context_menu(&key);
+		use winit::keyboard::{Key, NamedKey};
+
+		assert!(aimed(Key::Named(NamedKey::Escape)), "Escape stays the popup's own dismiss gesture");
+		for modifier in [NamedKey::Shift, NamedKey::Control, NamedKey::Alt, NamedKey::Super] {
+			assert!(aimed(Key::Named(modifier)), "bare {modifier:?} isn't an input worth closing for");
+		}
+
+		assert!(!aimed(Key::Named(NamedKey::Tab)), "Tab must close the popup and open the library");
+		assert!(!aimed(Key::Named(NamedKey::Space)));
+		assert!(!aimed(Key::Character("f".into())));
+	}
 
 	#[test]
 	fn encode_modifiers_maps_each_winit_flag_to_its_sim_bit() {

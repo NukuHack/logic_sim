@@ -147,6 +147,13 @@ impl App {
 					sync_stack_with_state(v);
 					let world_pos = v.camera.screen_to_world(self.mouse_pos);
 					let dispatch = v.stack.dispatch_click(self.mouse_pos);
+					// A left press not aimed at an open right-click popup
+					// dismisses it first -- the same click then acts on
+					// whatever else it landed on, mirroring the original's
+					// close-on-any-left-down (`ContextMenu.Update`).
+					if v.context_menu.is_some() && !Self::left_press_keeps_context_menu(dispatch.layer) {
+						v.context_menu = None;
+					}
 					match dispatch.result {
 						// Nobody wanted it: it falls through the whole stack to the canvas.
 						InputResult::Propagate => {
@@ -348,12 +355,24 @@ impl App {
 		if let Screen::Viewer(v) = &mut self.screen {
 			if btn_state == ElementState::Pressed {
 				sync_stack_with_state(v);
+				// Panning is never aimed at the popup.
+				if v.context_menu.is_some() {
+					v.context_menu = None;
+				}
 				if v.stack.dispatch_click(self.mouse_pos).result != InputResult::Propagate {
 					return;
 				}
 			}
 			v.dragging = btn_state == ElementState::Pressed;
 		}
+	}
+
+	/// Whether a left press / wheel event resolved to the open right-click
+	/// popup itself (and so should keep it open); anything else --
+	/// including bare-canvas clicks -- dismisses it. Split out for the
+	/// truth-table test below.
+	fn left_press_keeps_context_menu(layer: Option<LayerId>) -> bool {
+		layer == Some(LayerId::ContextMenu)
 	}
 
 	fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
@@ -364,6 +383,10 @@ impl App {
 		if let Screen::Viewer(v) = &mut self.screen {
 			sync_stack_with_state(v);
 			let dispatch = v.stack.dispatch_wheel(self.mouse_pos);
+			// Wheeling anywhere but over the popup itself dismisses it.
+			if v.context_menu.is_some() && !Self::left_press_keeps_context_menu(dispatch.layer) {
+				v.context_menu = None;
+			}
 			match dispatch.result {
 				// Over the bottom bar's scrollable strip: scroll the bar horizontally
 				// instead of zooming the canvas underneath it.
@@ -509,6 +532,20 @@ impl App {
 				Err(e) => eprintln!("render error: {e:?}"),
 			}
 			state.window.request_redraw();
+		}
+	}
+}
+
+#[cfg(test)]
+mod context_menu_dismiss_tests {
+	use super::*;
+
+	#[test]
+	fn only_the_popup_layer_keeps_the_context_menu_open() {
+		assert!(App::left_press_keeps_context_menu(Some(LayerId::ContextMenu)), "a press the popup consumed keeps it");
+		assert!(!App::left_press_keeps_context_menu(None), "bare-canvas clicks dismiss it");
+		for layer in [LayerId::BottomBar, LayerId::Library, LayerId::Search, LayerId::Naming] {
+			assert!(!App::left_press_keeps_context_menu(Some(layer)), "clicking {layer:?} must dismiss the popup before acting");
 		}
 	}
 }
