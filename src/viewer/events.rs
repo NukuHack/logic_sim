@@ -302,11 +302,20 @@ impl App {
 
 		let root_chip_name = v.root_chip_name.clone();
 		let world_pos = v.camera.screen_to_world(self.mouse_pos);
+		let can_edit = v.can_edit_viewed_chip();
+		// The canvas shows whichever chip tops the view stack (the edited
+		// root when none is open), so a component popup attaches to that
+		// one -- "View" stays available even in view-only mode, everything
+		// else below is edited-chip business.
+		let displayed_chip_name = match v.resolve_scene_target() {
+			crate::viewer::state::SceneTarget::EditRoot => root_chip_name,
+			crate::viewer::state::SceneTarget::Viewed { name, .. } => name,
+		};
 
 		// 2) One of the current root chip's own boundary dev-pins. "Edit"
 		// opens the pin-edit popup (`PinEditMenu`: rename +, for multi-bit
 		// pins, the Decimal Display wheel).
-		{
+		if can_edit {
 			let root_desc = v.library.get(&root_chip_name);
 			if let Some((is_input, pin_id)) = hit_test_dev_pin(root_desc, world_pos) {
 				let target = format!("devpin:{}:{}", if is_input { "in" } else { "out" }, pin_id);
@@ -317,22 +326,27 @@ impl App {
 			}
 		}
 
-		// 3) A placed component on the canvas.
+		// 3) A placed component on whatever chip is currently displayed.
 		{
-			let root_desc = v.library.get(&root_chip_name);
-			let placed = place_sub_chips(root_desc, &v.library);
+			let displayed_desc = v.library.get(&displayed_chip_name);
+			let placed = place_sub_chips(displayed_desc, &v.library);
 			if let Some(sub) = hit_test_sub_chip(&placed, world_pos) {
 				let id = sub.id;
 				let chip_name = sub.desc.name.clone();
-				let items = context_menu_items_for_component(&v.library, &chip_name);
+				let mut items = context_menu_items_for_component(&v.library, &chip_name);
+				if !can_edit {
+					// View-only mode: watching deeper is allowed, editing/
+					// configuring/deleting is not (`CanEditViewedChip`).
+					items.retain(|item| matches!(item.id, ContextMenuAction::View));
+				}
 				v.context_menu = Some(ContextMenuState::new(format!("component:{id}"), self.mouse_pos, items));
 				return;
 			}
 		}
 
 		// 4) A wire -- deleted immediately, no popup (see this method's
-		// doc comment).
-		{
+		// doc comment). Edited-chip territory only.
+		if can_edit {
 			let root_desc = v.library.get(&root_chip_name);
 			// Fixed screen-pixel tolerance converted to world units, so the click target stays the
 			// same apparent size regardless of current zoom.

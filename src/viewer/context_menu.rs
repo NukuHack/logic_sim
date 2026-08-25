@@ -68,6 +68,11 @@ impl ContextTarget {
 /// instance of it, so there's nothing to "open" beyond switching to it).
 pub(crate) fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> Vec<ContextMenuItem> {
 	let mut items = vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(library, chip_name))];
+	// Every placed component can be *viewed* live, builtin or not
+	// (`Project.EnterViewMode`) -- watching a RAM's contents or a clock's
+	// pulse is the whole point; only editing is restricted to custom
+	// definitions.
+	items.push(ContextMenuItem::new_enabled("View", ContextMenuAction::View, library.try_get(chip_name).is_some()));
 	items.push(ContextMenuItem::new("Label", ContextMenuAction::Label));
 	let chip_type = library.try_get(chip_name).map(|d| d.chip_type);
 	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16)) {
@@ -120,6 +125,7 @@ pub(crate) fn apply_context_menu_action(
 				request_open_chip(v, paths, status, &name, false);
 			}
 		}
+		(ContextMenuAction::View, ContextTarget::Component(id)) => v.enter_view_mode(id),
 		(ContextMenuAction::Open, ContextTarget::LibChip(name)) => {
 			request_open_chip(v, paths, status, &name, true);
 		}

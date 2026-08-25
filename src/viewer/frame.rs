@@ -26,7 +26,7 @@ use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, PENDING_PLACEMENT_ALPHA};
 use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};
 use crate::viewer::save_flow::save_chip_mode;
-use crate::viewer::state::{editor_action, NamingPurpose, Overlay, ViewerAction, ViewerState};
+use crate::viewer::state::{editor_action, NamingPurpose, Overlay, SceneTarget, ViewerAction, ViewerState};
 
 /// Builds the transient status/error toast (`LayerId::StatusToast`): a small dark strip with the
 /// message centred in it, floating just above the bottom bar in the viewer (`above_y`) or near
@@ -73,6 +73,38 @@ fn paused_banner_geometry(paused_step_counter: u32, vw: f32) -> SceneGeometry {
 		width: 50.0,
 	});
 	geo
+}
+
+/// The viewed-chips bar (`ViewedChipsBar.DrawViewedChipsBanner`): a
+/// full-width info strip showing the "Viewing: a > b" chain, with a Back
+/// button at its right edge for popping back to the parent chip. Returns
+/// the bar's geometry plus the Back button's hit rect (both plain
+/// screen-pixel space, like every other UI surface pre-pinning).
+fn viewed_chips_bar_geometry(label: String, vw: f32, top_y: f32) -> (SceneGeometry, UiRect) {
+	const BAR_H: f32 = 34.0;
+	const PAD: f32 = 12.0;
+	const BACK_W: f32 = 70.0;
+
+	let bg = UiRect::new(0.0, top_y, vw, BAR_H);
+	let back = UiRect::new(vw - PAD - BACK_W, top_y + (BAR_H - 26.0) / 2.0, BACK_W, 26.0);
+	let mut geo = SceneGeometry::default();
+	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
+	geo.add_rect(back.centre(), Vec2::new(back.w, back.h), [0.28, 0.28, 0.34, 1.0]);
+	geo.labels.push(crate::render::foundation::TextLabel {
+		pos: Vec2::new(PAD, top_y + BAR_H / 2.0),
+		text: label,
+		colour: [0.95, 0.95, 0.95, 1.0],
+		font_size: 15.0,
+		width: vw - BACK_W - PAD * 3.0,
+	});
+	geo.labels.push(crate::render::foundation::TextLabel {
+		pos: back.centre(),
+		text: "Back".to_string(),
+		colour: [1.0, 1.0, 1.0, 1.0],
+		font_size: 14.0,
+		width: BACK_W - 8.0,
+	});
+	(geo, back)
 }
 
 /// Rebuilds the menu screen's UI stack: the screen itself at the bottom,
@@ -146,15 +178,28 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// effect (same immediate-mode beat as the camera pan above).
 	crate::viewer::customize::update_live_interaction(v);
 
-	let root_desc = v.library.get(&v.root_chip_name).clone();
 	let hover_world_pos = v.camera.screen_to_world(mouse);
+	// The scene shows the top of the view stack when one is open (a chip
+	// being watched in view-only mode), else the edited root -- with pin
+	// states resolved against that chip's own live sim scope, which is
+	// exactly how a viewed subchip's subtree stays "live".
+	let scene_chip_name = match &v.resolve_scene_target() {
+		SceneTarget::EditRoot => v.root_chip_name.clone(),
+		SceneTarget::Viewed { name, .. } => name.clone(),
+	};
+	let root_desc = v.library.get(&scene_chip_name).clone();
 	// The scene reads pin states straight out of the shared arena under a
 	// short-lived lock -- the read half of the original's per-frame
 	// `ViewedChip.UpdateStateFromSim` sync.
 	let (mut chip_scene, component_spans) = {
+		let scene_target = v.resolve_scene_target();
 		let sim_guard = v.sim.lock();
-		let root_ref = v.library.get(&v.root_chip_name);
-		let lookup = SimulatorPinState { sim: &sim_guard, scope: sim_guard.root() };
+		let scope = match scene_target {
+			SceneTarget::EditRoot => sim_guard.root(),
+			SceneTarget::Viewed { scope, .. } => scope,
+		};
+		let root_ref = v.library.get(&scene_chip_name);
+		let lookup = SimulatorPinState { sim: &sim_guard, scope };
 		build_scene_with_spans(root_ref, &v.library, &lookup, Some(hover_world_pos))
 	};
 
@@ -254,6 +299,22 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 
 	if bar_enabled {
 		push_bottom_bar_flyout(v, &mut viewer_stack, vw, vh, mouse);
+	}
+
+	// Viewed-chips bar (`ViewedChipsBar`): shown while a chip is being
+	// viewed in view-only mode and no modal panel covers the editor,
+	// stacking just below the paused banner when both apply (the
+	// original's `topLeft += Vector2.down * InfoBarHeight`). Only its
+	// strip captures input, and only the Back button on it acts.
+	if !v.view_stack.is_empty() && v.overlays.is_empty() {
+		let paused_banner_active = v.prefs.prefs_sim_paused && v.context_menu.is_none();
+		let top_y = if paused_banner_active { 34.0 } else { 0.0 };
+		let (geo, back_rect) = viewed_chips_bar_geometry(v.viewed_chips_string(), vw, top_y);
+		let mut bar_layer =
+			StackLayer::<ViewerAction>::new(LayerId::ViewedChipsBar, Capture::Rect(UiRect::new(0.0, top_y, vw, 34.0)));
+		bar_layer.geometry = pin_geometry_to_screen(geo, &v.camera, vh);
+		bar_layer.buttons.push(Button { rect: back_rect, action: ViewerAction::Editor(editor_ui::EditorAction::ExitViewedChip), enabled: true });
+		viewer_stack.push(bar_layer);
 	}
 
 	// Overlay panels, bottom-to-top in open order -- several can be stacked at once

@@ -42,6 +42,10 @@ pub enum LayerId {
 	Canvas,
 	BottomBar,
 	BottomBarFlyout,
+	/// The viewed-chips bar (`ViewedChipsBar`): the "Viewing: a > b"
+	/// info strip with its Back button, shown while a chip is being
+	/// viewed in view-only mode. Captures its own strip only.
+	ViewedChipsBar,
 	Library,
 	Search,
 	Preferences,

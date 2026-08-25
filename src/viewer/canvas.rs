@@ -531,6 +531,12 @@ pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
 /// (`UiStack::dispatch_click` returned [`crate::render::ui_stack::InputResult::Propagate`] --
 /// every visible UI layer was either missed or transparent at that point).
 pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
+	// A view-only chip is on screen (`Project.CanEditViewedChip`): the
+	// canvas shows its live simulation but takes no editing input.
+	if !v.can_edit_viewed_chip() {
+		return;
+	}
+
 	// A chip picked up for placement claims every click ahead of anything else below,
 	// same "claims the click" priority a wire in progress gets just below -- see
 	// `try_place_pending_components`'s doc comment for what actually happens with the click.

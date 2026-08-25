@@ -18,6 +18,10 @@ pub enum ContextMenuAction {
 	Flip,
 	Open,
 	Unstar,
+	/// Enter the target placed component's own definition in view-only
+	/// mode (`ViewedChipsBar`/`Project.EnterViewMode`): watch its live
+	/// simulation without being able to edit it.
+	View,
 	Other,
 }
 

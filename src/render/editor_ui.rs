@@ -181,6 +181,11 @@ pub enum EditorAction {
 	/// `ViewerState::pending_unsaved_action`, this port's stand-in for the
 	/// original's stored `onClosedCallback`).
 	UnsavedChangesConfirm,
+	/// Viewed-chips bar: leave the chip currently being viewed and pop
+	/// back to its parent (`ViewedChipsBar`'s Back button /
+	/// `Project.ReturnToPreviousViewedChip`). Only offered while a
+	/// view-only chip is on screen.
+	ExitViewedChip,
 }
 
 /// Hit-box of one clickable region of an [`EditorFrame`] -- see [`ui_kit::Button`].

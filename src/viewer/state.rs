@@ -7,7 +7,7 @@ use crate::render::context_menu::{ContextMenuAction, ContextMenuState};
 use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::key_mods_bits;
-use crate::sim::Simulator;
+use crate::sim::{ChipIdx, Simulator};
 use crate::viewer::chip_interaction;
 use crate::viewer::customize::CustomizeState;
 use crate::viewer::sim_thread::SimHandle;
@@ -107,6 +107,19 @@ pub(crate) enum KeySelectPurpose {
 	/// `SubChipDescription::internal_data[0]`, the ASCII code this `Key`
 	/// instance listens for -- `i32` is that subchip's id.
 	ConfigureKeyChar(i32),
+}
+
+/// One chip entered in view-only mode ("View" row of a placed component's
+/// right-click menu, mirroring `Project.EnterViewMode`): its definition's
+/// name, plus the chain of subchip ids leading to *its live instance*
+/// from the edited root chip (so the view keeps resolving across sim
+/// rebuilds -- ids are stable, arena indices are not). The stack sits
+/// above the edited chip: the bottom of the stack is what Ctrl+S saves
+/// and what edits land in; every entry above it is watch-only.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ViewedChip {
+	pub(crate) name: String,
+	pub(crate) path: Vec<i32>,
 }
 
 /// Working state for the ROM contents grid editor (`Overlay::RomEditor` /
@@ -339,6 +352,11 @@ pub(crate) struct ViewerState {
 	/// the selection around, or drawing a rubber band) -- see
 	/// [`chip_interaction::CanvasInteraction`].
 	pub(crate) canvas_interaction: chip_interaction::CanvasInteraction,
+
+	/// Chips being viewed in view-only mode, stacked above the edited
+	/// chip (`Project.chipViewStack`; empty = editing normally). See
+	/// [`ViewedChip`] and [`ViewerState::can_edit_viewed_chip`].
+	pub(crate) view_stack: Vec<ViewedChip>,
 }
 
 impl ViewerState {
@@ -398,6 +416,7 @@ impl ViewerState {
 			pending_place: Vec::new(),
 			selected_ids: Vec::new(),
 			canvas_interaction: Default::default(),
+			view_stack: Vec::new(),
 		};
 		v.sync_sim_clock_pref();
 		v
@@ -487,6 +506,106 @@ impl ViewerState {
 			self.sim.request_single_step();
 		}
 	}
+
+	// ---- Viewed-chip stack (`Project.chipViewStack` / EnterViewMode) ----
+
+	/// Whether the chip currently on screen may be edited: only the bottom
+	/// of the view stack can (`Project.CanEditViewedChip`). While any
+	/// view-only chip sits on top, canvas interaction is read-only.
+	pub(crate) fn can_edit_viewed_chip(&self) -> bool {
+		self.view_stack.is_empty()
+	}
+
+	/// Enters `subchip_id`'s own definition in view-only mode, if that
+	/// component exists on the *currently displayed* chip (the edited root,
+	/// or the chip being viewed when stacking deeper -- mirroring
+	/// `EnterViewMode` looking the instance up on `ViewedChip`) and its
+	/// chip resolves in the library (builtins are viewable too -- e.g.
+	/// watching a RAM's live contents). Cancels whatever canvas state was
+	/// in flight (`controller.CancelEverything`) and re-fits the camera.
+	pub(crate) fn enter_view_mode(&mut self, subchip_id: i32) {
+		let displayed_name = match self.resolve_scene_target() {
+			SceneTarget::EditRoot => self.root_chip_name.clone(),
+			SceneTarget::Viewed { name, .. } => name,
+		};
+		let name =
+			self.library.get(&displayed_name).sub_chips.iter().find(|s| s.id == subchip_id).map(|s| s.name.clone());
+		let Some(name) = name.filter(|name| self.library.try_get(name).is_some()) else { return };
+
+		let mut path = self.view_stack.last().map(|top| top.path.clone()).unwrap_or_default();
+		path.push(subchip_id);
+
+		self.pending_wire = None;
+		self.pending_place.clear();
+		chip_interaction::cancel_all(self);
+		self.view_stack.push(ViewedChip { name, path });
+		self.camera_fitted = false;
+	}
+
+	/// Pops back to the parent of the chip being viewed
+	/// (`Project.ReturnToPreviousViewedChip`): a no-op when already at the
+	/// edited root.
+	pub(crate) fn return_to_previous_viewed_chip(&mut self) {
+		if self.view_stack.pop().is_some() {
+			chip_interaction::cancel_all(self);
+			self.camera_fitted = false;
+		}
+	}
+
+	/// Drops the whole view stack at once -- used wherever the *edited*
+	/// root changes (open/new/save-as/rename), since every entry's id path
+	/// hangs off the old root.
+	pub(crate) fn exit_view_mode(&mut self) {
+		if !self.view_stack.is_empty() {
+			self.view_stack.clear();
+			chip_interaction::cancel_all(self);
+			self.camera_fitted = false;
+		}
+	}
+
+	/// What should be drawn this frame: the edited root, or the top of the
+	/// view stack together with its live instance's arena scope. The scope
+	/// is resolved fresh every call by walking the stored id path through
+	/// the sim, so views survive rebuilds; a path that no longer resolves
+	/// (it can't be edited while viewed, so this is purely defensive)
+	/// falls back to the root rather than drawing something stale.
+	pub(crate) fn resolve_scene_target(&self) -> SceneTarget {
+		let Some(top) = self.view_stack.last() else { return SceneTarget::EditRoot };
+		let sim = self.sim.lock();
+		let mut scope = sim.root();
+		for id in &top.path {
+			let Some(next) = sim.find_sub_chip(scope, *id) else { return SceneTarget::EditRoot };
+			scope = next;
+		}
+		SceneTarget::Viewed { name: top.name.clone(), scope }
+	}
+
+	/// String form of the viewed-chips stack for the banner
+	/// (`Project.UpdateViewedChipsString`): the ancestors of the chip on
+	/// screen, nearest first, joined with " > ". Empty while nothing is
+	/// being viewed, which keeps the banner hidden.
+	pub(crate) fn viewed_chips_string(&self) -> String {
+		if self.view_stack.is_empty() {
+			return String::new();
+		}
+		let mut names: Vec<&str> = Vec::with_capacity(self.view_stack.len() + 1);
+		names.push(self.root_chip_name.as_str());
+		for viewed in &self.view_stack[..self.view_stack.len() - 1] {
+			names.push(viewed.name.as_str());
+		}
+		names.reverse();
+		format!("Viewing: {}", names.join(" > "))
+	}
+}
+
+/// What the frame builder should draw this frame -- see
+/// [`ViewerState::resolve_scene_target`].
+pub(crate) enum SceneTarget {
+	/// The chip being edited (the bottom of the view stack).
+	EditRoot,
+	/// A view-only chip: its definition's name plus its live instance's
+	/// arena scope for pin-state lookups.
+	Viewed { name: String, scope: ChipIdx },
 }
 
 /// Drops UI-stack layers whose backing live state has closed since the stack was last rebuilt --
@@ -592,5 +711,125 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 pub(crate) fn close_all_overlays(v: &mut ViewerState) {
 	while !v.overlays.is_empty() {
 		close_top_overlay(v);
+	}
+}
+
+#[cfg(test)]
+mod view_stack_tests {
+	//! White-box: the viewed-chip stack only exists to steer the live
+	//! frame builder, so driving it against a real `ViewerState` (with the
+	//! same placement helpers every other viewer test uses) is what pins
+	//! its enter/pop/fallback and banner-string contracts.
+
+	use super::*;
+	use crate::description::{ChipDescription, SubChipDescription};
+	use crate::ChipType;
+
+	fn viewer_with_viewable_component() -> (ViewerState, i32) {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		chip_interaction::start_placing(&mut v, "NAND");
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
+		let id = v.library.get("ROOT").sub_chips[0].id;
+		(v, id)
+	}
+
+	#[test]
+	fn enter_and_pop_round_trip_through_edit_mode() {
+		let (mut v, id) = viewer_with_viewable_component();
+
+		assert!(v.can_edit_viewed_chip());
+		assert_eq!(v.viewed_chips_string(), "", "nothing viewed: banner hidden");
+		assert!(matches!(v.resolve_scene_target(), SceneTarget::EditRoot));
+
+		v.enter_view_mode(id);
+		assert!(!v.can_edit_viewed_chip(), "a viewed chip is read-only");
+		assert_eq!(v.viewed_chips_string(), "Viewing: ROOT");
+		match v.resolve_scene_target() {
+			SceneTarget::Viewed { name, .. } => assert_eq!(name, "NAND"),
+			SceneTarget::EditRoot => panic!("viewing must resolve to the NAND scope"),
+		}
+
+		v.return_to_previous_viewed_chip();
+		assert!(v.can_edit_viewed_chip());
+		assert_eq!(v.viewed_chips_string(), "");
+	}
+
+	#[test]
+	fn nested_views_stack_and_the_banner_lists_ancestors_nearest_first() {
+		let (mut v, _nand_id) = viewer_with_viewable_component();
+
+		// Real two-level nesting: MID (placed in ROOT) contains an
+		// instance of LEAF in its own definition, so entering MID and then
+		// its LEAF builds a two-hop id path.
+		let leaf = ChipDescription::new("LEAF", ChipType::Custom);
+		v.library.add(leaf);
+		let mut mid = ChipDescription::new("MID", ChipType::Custom);
+		mid.sub_chips.push(SubChipDescription {
+			name: "LEAF".into(),
+			id: 88,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		v.library.add(mid);
+		v.library.get_mut("ROOT").sub_chips.push(SubChipDescription {
+			name: "MID".into(),
+			id: 77,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		v.rebuild_sim();
+
+		v.enter_view_mode(77);
+		assert_eq!(v.viewed_chips_string(), "Viewing: ROOT");
+		match v.resolve_scene_target() {
+			SceneTarget::Viewed { name, .. } => assert_eq!(name, "MID"),
+			SceneTarget::EditRoot => panic!("viewing must resolve to the MID scope"),
+		}
+
+		// Entering again resolves against the chip currently on screen,
+		// not the edited root (`EnterViewMode` reads `ViewedChip`).
+		v.enter_view_mode(88);
+		assert_eq!(v.viewed_chips_string(), "Viewing: LEAF > ROOT", "ancestors nearest first, like UpdateViewedChipsString");
+		match v.resolve_scene_target() {
+			SceneTarget::Viewed { name, .. } => assert_eq!(name, "LEAF"),
+			SceneTarget::EditRoot => panic!("nested view lost"),
+		}
+
+		v.return_to_previous_viewed_chip();
+		assert_eq!(v.viewed_chips_string(), "Viewing: ROOT");
+		v.return_to_previous_viewed_chip();
+		assert!(v.can_edit_viewed_chip());
+	}
+
+	#[test]
+	fn entering_a_view_cancels_canvas_state_and_unknown_ids_are_ignored() {
+		let (mut v, id) = viewer_with_viewable_component();
+		chip_interaction::start_placing(&mut v, "NAND");
+		assert!(!v.pending_place.is_empty(), "precondition: a carry is in flight");
+
+		v.enter_view_mode(id);
+		assert!(v.pending_place.is_empty() && v.selected_ids.is_empty(), "entering a view cancels in-flight state");
+
+		v.exit_view_mode();
+		v.enter_view_mode(9999);
+		assert!(v.can_edit_viewed_chip(), "an id that resolves to nothing never opens a view");
+	}
+
+	/// A stale id path (only possible if the viewed subtree was somehow
+	/// deleted out from under the view) falls back to drawing the edited
+	/// root instead of something wrong.
+	#[test]
+	fn unresolvable_paths_fall_back_to_the_edited_root() {
+		let (mut v, _id) = viewer_with_viewable_component();
+		v.view_stack.push(ViewedChip { name: "GHOST".into(), path: vec![4242] });
+
+		assert!(matches!(v.resolve_scene_target(), SceneTarget::EditRoot));
 	}
 }

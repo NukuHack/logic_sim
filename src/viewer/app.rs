@@ -95,7 +95,15 @@ impl App {
 	pub(crate) fn window_title(&self) -> String {
 		match &self.screen {
 			Screen::Menu => "Digital Logic Sim".to_string(),
-			Screen::Viewer(v) => format!("Digital Logic Sim -- {} / {}", v.project_name, v.root_chip_name),
+			Screen::Viewer(v) => {
+				// A view-only chip on screen extends the chip chain
+				// ("project / root > viewed"), like the banner shows.
+				let chip = match v.view_stack.last() {
+					Some(top) => format!("{} > {}", v.root_chip_name, top.name),
+					None => v.root_chip_name.clone(),
+				};
+				format!("Digital Logic Sim -- {} / {}", v.project_name, chip)
+			}
 		}
 	}
 

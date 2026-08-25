@@ -131,6 +131,16 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			reset_library_popup_state(v);
 		}
 		EditorAction::PlaceChip(name) => {
+			// Placement writes into the *edited* chip; while a view-only
+			// chip is on screen that would be invisible to the player
+			// (mirrors the original restricting editing to
+			// `CanEditViewedChip`).
+			if !v.can_edit_viewed_chip() {
+				close_all_overlays(v);
+				v.library_selection = LibrarySelection::None;
+				*status = Some("Return to the edited chip before placing components".to_string());
+				return;
+			}
 			let mut desc = v.prefs.clone();
 			if let Err(e) = Saver::save_project_description(paths, &mut desc) {
 				*status = Some(format!("Failed to save chip library: {e}"));
@@ -195,6 +205,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			}
 		}
 		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
+		EditorAction::ExitViewedChip => v.return_to_previous_viewed_chip(),
 	}
 }
 

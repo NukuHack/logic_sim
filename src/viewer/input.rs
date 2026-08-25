@@ -226,6 +226,10 @@ pub(crate) fn handle_viewer_key(
 		}
 		// ---- Right-click popup: Escape dismisses it ----
 		Key::Named(NamedKey::Escape) if v.context_menu.is_some() => v.context_menu = None,
+		// ---- Viewed-chip stack: Escape pops back to the parent chip
+		// (the banner's Back gesture; `CancelShortcutTriggered` inside
+		// `ViewedChipsBar`) ----
+		Key::Named(NamedKey::Escape) if !v.view_stack.is_empty() => v.return_to_previous_viewed_chip(),
 		// ---- Normal viewer shortcuts (only while nothing owns the keyboard) ----
 		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("r") => v.rebuild_sim(),
 		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
