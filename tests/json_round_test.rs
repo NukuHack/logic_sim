@@ -475,7 +475,9 @@ fn serializes_basic_chip_description() {
 	assert_eq!(parsed["Colour"]["g"].as_f64().unwrap(), 0.3);
 	assert_eq!(parsed["Colour"]["b"].as_f64().unwrap(), 0.4);
 	assert_eq!(parsed["Colour"]["a"].as_f64().unwrap(), 0.5);
-	assert_eq!(parsed["DLSVersion"].as_str().unwrap(), "0.0.0");
+	// Every save is stamped with the running build's version (see
+	// `serialize_chip_description`), never the in-memory value.
+	assert_eq!(parsed["DLSVersion"].as_str().unwrap(), logic_sim::save_system::DLS_VERSION.to_string());
 }
 
 #[test]

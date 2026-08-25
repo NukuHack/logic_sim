@@ -10,6 +10,9 @@ A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.c
 - **Selection & movement**: click a component to select it (faint highlight), drag to move it (translucent while carried, snapping like placement), drag on empty canvas for a rubber-band that selects everything even partially inside it, and `Delete` removes the selection.
 - **Buzzer audio**: buzzers drive a 256-slot frequency table through a smoothed square-wave mix played on the real audio device (silently skipped when none is available).
 - **Custom chips**: save any circuit as a chip and nest it inside other circuits, just like the original.
+- **View-only chip watching** ("View" on any placed component's right-click menu): enter a chip's definition to watch its live simulation — builtins included — with a `Viewing: a > b` bar up top and Back/Esc to pop out; editing stays bound to the chip you opened.
+- **Undo/redo**: placements, deletions (bus pairs included), wiring, and committed moves replay via `Ctrl+Z` / `Ctrl+Shift+Z`.
+- **Background simulation**: the circuit runs on its own thread at the project's target ticks/second, so heavy circuits no longer hitch the editor.
 - **Chip customization** (save popup → *Customize*): name placement (middle/top/hidden), body colour (palette + hex field), corner-drag resizing previewed live with the chip's own edge pins for scale, and embedded display surfaces you place, move, scale and remove right on the chip body — content clips at the chip edge, and any display that doesn't fully fit is flagged in red. Everything round-trips through the original's standard `Displays` save field.
 - **Compatible saves**: reads and writes the *same* `Projects/` folder layout as the original Unity build (see below), so projects made in either program work in both. Sample projects (GOL, Snake, ZHT90, ...) load out of the box.
 - **Editor UI stack**: library panel (`Tab`), search overlay, preferences, ROM editor, key binding, right-click context menus, wire/chip deletion, camera fit-to-view, grid toggle.
@@ -48,8 +51,9 @@ Or use the all-in-one script:
 | `G` / `Ctrl+G` | Toggle grid |
 | `Ctrl+Space` | Pause/resume the simulation |
 | `Space` (while paused) | Advance the simulation one step |
-| `Esc` | Cancel pending action / close topmost overlay / leave editor |
+| `Esc` | Cancel pending action / close topmost overlay / leave viewed chip / leave editor |
 | `Delete` | Remove the display being carried in Customize |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo the current chip's edit history |
 
 Mouse: middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select/drag it, drag empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress).
 
@@ -71,7 +75,7 @@ Projects/<name>/Chips/*.json              # saved custom chip descriptions
 AppSettings.json                          # window/editor preferences
 ```
 
-Saved projects stamped `DLSVersion >= 2.0.0` can be opened; new saves are written as `2.1.6`.
+Saved projects stamped `DLSVersion >= 2.0.0` can be opened; chips last saved by versions at or before 2.1.4 are migrated automatically on load (the pre-2.1.5 ORANGE palette-index shift and default LED colour data), and every save is re-stamped with the current version, `2.1.6`.
 
 ## Project structure
 

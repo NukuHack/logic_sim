@@ -14,7 +14,7 @@
 //!  - display LEDs gained a colour option backed by `InternalData`, so an
 //!    LED subchip saved without any now gets the default instance data.
 
-use crate::description::{ChipDescription, ChipType, Color};
+use crate::description::{ChipDescription, Color};
 use crate::save_system::version::Version;
 
 /// Version assumed for chips whose save file carries no parseable
@@ -76,7 +76,7 @@ mod tests {
 	//! JSON round trip) is the only way to pin their exact semantics.
 
 	use super::*;
-	use crate::description::{PinBitCount, PinDescription, SubChipDescription};
+	use crate::description::{ChipType, PinBitCount, PinDescription, SubChipDescription};
 	use crate::structs::Vec2;
 
 	fn chip_with_input_colour(index: i32) -> ChipDescription {
@@ -106,8 +106,22 @@ mod tests {
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
-		chip.sub_chips.push(SubChipDescription { name: "LED".into(), id: 2, internal_data: Some(Vec::new()), position: Vec2::ZERO, label: None, pin_colour_info: Vec::new() });
-		chip.sub_chips.push(SubChipDescription { name: "NAND".into(), id: 3, internal_data: None, position: Vec2::ZERO, label: None, pin_colour_info: Vec::new() });
+		chip.sub_chips.push(SubChipDescription {
+			name: "LED".into(),
+			id: 2,
+			internal_data: Some(Vec::new()),
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		chip.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id: 3,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
 
 		update_chip_pre_2_1_5(&mut chip);
 

@@ -65,10 +65,6 @@ impl SimControls {
 	}
 }
 
-fn f64_bits_to_atomic(value: f64) -> AtomicU64 {
-	AtomicU64::new(value.to_bits())
-}
-
 /// Main-thread handle over the simulated world: owns the shared
 /// `Simulator`, the worker thread, and the control plane. Dropping it
 /// stops the worker and joins it.
@@ -142,11 +138,10 @@ impl SimHandle {
 
 	pub(crate) fn set_paused(&self, paused: bool) {
 		self.controls.paused.store(paused, Ordering::Relaxed);
-		if paused {
-			// A fresh pause starts the single-step count over, matching the
-			// original (the counter only ever accumulates while paused).
-			self.controls.step_counter.store(0, Ordering::Relaxed);
-		}
+		// No counter reset here: this is called every frame with the current
+		// pref value, and the worker itself zeroes the single-step counter
+		// on its first non-single-stepping pass -- which is also what makes
+		// a re-pause start back at zero.
 	}
 
 	pub(crate) fn set_target_ticks_per_second(&self, ticks: u32) {
@@ -189,7 +184,10 @@ fn spawn_worker(
 	inputs: Arc<Mutex<Vec<ExternalInput>>>,
 	audio: crate::audio::SharedAudioState,
 ) -> std::thread::JoinHandle<()> {
-	std::thread::Builder::new().name("DLS_SimThread".to_string()).spawn(move || worker_loop(sim, controls, inputs, audio)).expect("failed to spawn sim thread")
+	std::thread::Builder::new()
+		.name("DLS_SimThread".to_string())
+		.spawn(move || worker_loop(sim, controls, inputs, audio))
+		.expect("failed to spawn sim thread")
 }
 
 /// One simulation step with the latest published external inputs --
@@ -210,16 +208,12 @@ fn worker_loop(
 	inputs: Arc<Mutex<Vec<ExternalInput>>>,
 	audio: crate::audio::SharedAudioState,
 ) {
+	#[derive(Default)]
 	struct WorkerPacing {
 		last_tick: Option<Instant>,
 		debt_ticks: f64,
 		window: PerfWindow,
 		was_paused: bool,
-	}
-	impl Default for WorkerPacing {
-		fn default() -> Self {
-			Self { last_tick: None, debt_ticks: 0.0, window: PerfWindow::default(), was_paused: false }
-		}
 	}
 
 	let mut pacing = WorkerPacing::default();
@@ -274,7 +268,8 @@ fn worker_loop(
 
 		let elapsed = now.duration_since(pacing.last_tick.unwrap_or(now));
 		pacing.last_tick = Some(now);
-		pacing.debt_ticks = accumulate_tick_debt(pacing.debt_ticks, elapsed.as_secs_f64(), f64::from(controls.target_ticks_per_second.load(Ordering::Relaxed)));
+		let target_ticks_per_second = f64::from(controls.target_ticks_per_second.load(Ordering::Relaxed));
+		pacing.debt_ticks = accumulate_tick_debt(pacing.debt_ticks, elapsed.as_secs_f64(), target_ticks_per_second);
 		let (steps, remaining_debt) = take_due_ticks(pacing.debt_ticks);
 		pacing.debt_ticks = remaining_debt;
 

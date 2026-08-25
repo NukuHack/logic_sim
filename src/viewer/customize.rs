@@ -489,6 +489,11 @@ mod tests {
 		open_customize(&mut v);
 		assert!(v.overlays.contains(&Overlay::CustomizeChip));
 
+		// A warm-up frame publishes the input pins' driven states to the
+		// sim thread -- what the running app's earlier frames have always
+		// done by the time the player pauses and single-steps.
+		let _ = build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::new(900.0, 400.0));
+
 		v.sim.request_single_step();
 		let stepped = {
 			let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

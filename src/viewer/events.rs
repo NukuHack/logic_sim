@@ -308,7 +308,7 @@ impl App {
 		// one -- "View" stays available even in view-only mode, everything
 		// else below is edited-chip business.
 		let displayed_chip_name = match v.resolve_scene_target() {
-			crate::viewer::state::SceneTarget::EditRoot => root_chip_name,
+			crate::viewer::state::SceneTarget::EditRoot => root_chip_name.clone(),
 			crate::viewer::state::SceneTarget::Viewed { name, .. } => name,
 		};
 
