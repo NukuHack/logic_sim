@@ -17,7 +17,7 @@ use crate::render::layout::{force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
 use crate::render::scene::{bounding_box, build_grid, build_scene, build_scene_with_spans, fade_component, AllLow, SceneGeometry, SimulatorPinState};
 use crate::render::theme;
-use crate::render::ui_kit::{pin_geometry_to_screen, Button, UiCtx, UiRect};
+use crate::render::ui_kit::{pin_geometry_to_screen, to_world, Button, UiCtx, UiRect};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
@@ -30,18 +30,19 @@ use crate::viewer::state::{editor_action, NamingPurpose, Overlay, SceneTarget, V
 
 /// Builds the transient status/error toast (`LayerId::StatusToast`): a small dark strip with the
 /// message centred in it, floating just above the bottom bar in the viewer (`above_y`) or near
-/// the very bottom on the menu screen. Returned in raw screen-pixel space -- the caller pins it
-/// through the active camera with `pin_geometry_to_screen`. Its layer never captures input, so it
-/// can sit at the very top of the stack without getting in anyone's way.
+/// the very bottom on the menu screen. Rects are in top-down screen pixels, converted into the
+/// flipped "ui-world" space (`ui_kit::to_world`) that `pin_geometry_to_screen` un-flips -- its
+/// layer never captures input, so it can sit at the very top of the stack without getting in
+/// anyone's way.
 fn status_toast_geometry(message: &str, vw: f32, vh: f32, above_y: Option<f32>) -> SceneGeometry {
 	let width = (vw - 80.0).min(700.0);
 	let centre_y = above_y.unwrap_or(vh - 26.0);
 	let bg = UiRect::new((vw - width) / 2.0, centre_y - 14.0, width, 28.0);
 
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.08, 0.08, 0.1, 0.92]);
+	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.08, 0.08, 0.1, 0.92]);
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: bg.centre(),
+		pos: to_world(bg.centre(), vw, vh),
 		text: message.to_string(),
 		colour: [0.95, 0.78, 0.35, 1.0],
 		font_size: 15.0,
@@ -52,21 +53,21 @@ fn status_toast_geometry(message: &str, vw: f32, vh: f32, above_y: Option<f32>) 
 
 /// The top-of-screen "Simulation Paused" strip (`SimPausedUI`): a
 /// full-width info bar with the message centred and the single-step count
-/// at the right.
-fn paused_banner_geometry(paused_step_counter: u32, vw: f32) -> SceneGeometry {
+/// at the right. Same flipped-space convention as [`status_toast_geometry`].
+fn paused_banner_geometry(paused_step_counter: u32, vw: f32, vh: f32) -> SceneGeometry {
 	const BANNER_H: f32 = 34.0;
 	let bg = UiRect::new(0.0, 0.0, vw, BANNER_H);
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
+	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: bg.centre(),
+		pos: to_world(bg.centre(), vw, vh),
 		text: "Simulation Paused (press space to advance one step)".to_string(),
 		colour: [1.0, 0.85, 0.25, 1.0],
 		font_size: 15.0,
 		width: vw - 120.0,
 	});
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: Vec2::new(vw - 60.0, BANNER_H / 2.0),
+		pos: to_world(Vec2::new(vw - 60.0, BANNER_H / 2.0), vw, vh),
 		text: paused_step_counter.to_string(),
 		colour: [1.0, 1.0, 1.0, 0.8],
 		font_size: 15.0,
@@ -78,10 +79,12 @@ fn paused_banner_geometry(paused_step_counter: u32, vw: f32) -> SceneGeometry {
 /// The viewed-chips bar (`ViewedChipsBar.DrawViewedChipsBanner`): a
 /// full-width info strip pinned to the very top of the screen, showing the
 /// "Viewing: a > b" chain, with a Back button at its right edge for
-/// popping back to the parent chip. Returns the bar's geometry plus the
-/// Back button's hit rect (both plain screen-pixel space, like every
-/// other UI surface pre-pinning).
-fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, top_y: f32) -> (SceneGeometry, UiRect) {
+/// popping back to the parent chip. Geometry rects are in top-down screen
+/// pixels and are converted into the flipped "ui-world" space
+/// (`ui_kit::to_world`) that `pin_geometry_to_screen` un-flips; the
+/// returned Back hit-rect stays in raw pixels, matching how every other
+/// layer's buttons are hit-tested.
+fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, vh: f32, top_y: f32) -> (SceneGeometry, UiRect) {
 	const BAR_H: f32 = 34.0;
 	const PAD: f32 = 12.0;
 	const BACK_W: f32 = 70.0;
@@ -97,17 +100,17 @@ fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, top_y: f32) -> (SceneGeom
 	let text_right = vw - BACK_W - PAD * 2.0;
 	let max_text_width = (text_right - text_left).max(40.0);
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
-	geo.add_rect(back.centre(), Vec2::new(back.w, back.h), [0.28, 0.28, 0.34, 1.0]);
+	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
+	geo.add_rect(to_world(back.centre(), vw, vh), Vec2::new(back.w, back.h), [0.28, 0.28, 0.34, 1.0]);
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: Vec2::new((text_left + text_right) / 2.0, top_y + BAR_H / 2.0),
+		pos: to_world(Vec2::new((text_left + text_right) / 2.0, top_y + BAR_H / 2.0), vw, vh),
 		text: fit_banner_label(&v.viewed_chips_string(), max_text_width),
 		colour: [0.95, 0.95, 0.95, 1.0],
 		font_size: FONT_SIZE,
 		width: max_text_width,
 	});
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: back.centre(),
+		pos: to_world(back.centre(), vw, vh),
 		text: "Back".to_string(),
 		colour: [1.0, 1.0, 1.0, 1.0],
 		font_size: 14.0,
@@ -339,7 +342,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	if !v.view_stack.is_empty() && v.overlays.is_empty() {
 		let paused_banner_active = v.prefs.prefs_sim_paused && v.context_menu.is_none();
 		let top_y = if paused_banner_active { 34.0 } else { 0.0 };
-		let (geo, back_rect) = viewed_chips_bar_geometry(v, vw, top_y);
+		let (geo, back_rect) = viewed_chips_bar_geometry(v, vw, vh, top_y);
 		let mut bar_layer = StackLayer::<ViewerAction>::new(LayerId::ViewedChipsBar, Capture::Rect(UiRect::new(0.0, top_y, vw, 34.0)));
 		bar_layer.geometry = pin_geometry_to_screen(geo, &v.camera, vh);
 		bar_layer.buttons.push(Button { rect: back_rect, action: ViewerAction::Editor(editor_ui::EditorAction::ExitViewedChip), enabled: true });
@@ -386,7 +389,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// paused and no modal panel covers the editor (the original draws it
 	// only for `MenuType.None`). Never captures input.
 	if v.prefs.prefs_sim_paused && v.overlays.is_empty() && v.context_menu.is_none() {
-		let geo = pin_geometry_to_screen(paused_banner_geometry(v.paused_step_counter, vw), &v.camera, vh);
+		let geo = pin_geometry_to_screen(paused_banner_geometry(v.paused_step_counter, vw, vh), &v.camera, vh);
 		viewer_stack.push(StackLayer::<ViewerAction>::new(LayerId::StatusToast, Capture::None).with_geometry(geo));
 	}
 
@@ -531,11 +534,17 @@ mod viewed_chips_bar_tests {
 		let mut library = crate::ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
+		// The chain names must resolve for full stack builds; id paths are
+		// irrelevant to everything asserted here.
+		for name in names {
+			library.add(crate::ChipDescription::new(name.to_string(), crate::ChipType::Custom));
+		}
 		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
-		// Id paths are irrelevant to the bar's geometry; fabricate the stack.
 		v.view_stack = names.iter().map(|name| ViewedChip { name: name.to_string(), path: vec![] }).collect();
 		v
 	}
+
+	const VH: f32 = 800.0;
 
 	fn label_bounds(geo: &SceneGeometry) -> (f32, f32) {
 		let label = geo.labels.first().expect("the chain label exists");
@@ -546,12 +555,16 @@ mod viewed_chips_bar_tests {
 	fn bar_spans_the_top_strip_with_the_text_left_of_back() {
 		let v = viewer_with_chain(&["INNER"]);
 		let vw = 800.0;
-		let (geo, back) = viewed_chips_bar_geometry(&v, vw, 0.0);
+		let (geo, back) = viewed_chips_bar_geometry(&v, vw, VH, 0.0);
+		let to_px = |p: Vec2| Vec2::new(p.x, VH - p.y); // undo the builders' flip: these are real screen pixels
 
 		for v in &geo.triangles {
-			assert!((0.0..=34.0).contains(&v.pos.y), "every vertex sits in the top strip, got {}", v.pos.y);
-			assert!((0.0..=vw).contains(&v.pos.x));
+			let px = to_px(v.pos);
+			assert!((0.0..=34.0).contains(&px.y), "every vertex lands in the top strip on screen, got {}", px.y);
+			assert!((0.0..=vw).contains(&px.x));
 		}
+		// The Back hit-rect is the same thing the player clicks.
+		assert!((0.0..=34.0).contains(&(back.y + back.h)));
 		let (left, right) = label_bounds(&geo);
 		assert!(left >= 12.0 - f32::EPSILON, "text box starts at/after the left pad");
 		assert!(right <= back.x + f32::EPSILON, "text box ends before the Back button");
@@ -574,8 +587,41 @@ mod viewed_chips_bar_tests {
 	#[test]
 	fn even_a_narrow_window_keeps_the_label_on_screen() {
 		let v = viewer_with_chain(&["A", "B", "C"]);
-		let (geo, _) = viewed_chips_bar_geometry(&v, 320.0, 34.0);
+		let (geo, _) = viewed_chips_bar_geometry(&v, 320.0, VH, 34.0);
 		let (left, right) = label_bounds(&geo);
 		assert!(left >= 0.0 && right <= 320.0, "label box stays inside a narrow viewport");
+	}
+
+	/// The full click contract: pressing the *drawn* Back button resolves
+	/// to its action on the banner layer -- and clicks elsewhere on the
+	/// canvas still fall through past the bar.
+	#[test]
+	fn back_button_dispatches_exit_viewed_chip_where_it_is_drawn() {
+		use crate::render::editor_ui::EditorAction;
+		use crate::render::ui_stack::InputResult;
+
+		let vw = 1280.0;
+		let mut v = viewer_with_chain(&["INNER"]);
+		v.camera_fitted = true;
+		v.camera.position = Vec2::new(vw / 2.0, VH / 2.0);
+		v.camera.zoom = 1.0;
+
+		// Where the Back button is drawn (top-down pixels).
+		let (_, back) = viewed_chips_bar_geometry(&v, vw, VH, 0.0);
+		let back_centre_px = back.centre();
+
+		let stack = build_viewer_stack(&mut v, None, vw, VH, back_centre_px);
+		let dispatch = stack.dispatch_click(back_centre_px);
+		assert_eq!(dispatch.result, InputResult::Handled, "the visible Back button takes the click");
+		assert_eq!(dispatch.layer, Some(LayerId::ViewedChipsBar));
+		assert_eq!(
+			dispatch.button.map(|b| b.action.clone()),
+			Some(ViewerAction::Editor(EditorAction::ExitViewedChip)),
+			"and the action is the exit-view one"
+		);
+
+		// A click over plain canvas propagates past the bar entirely.
+		let stack = build_viewer_stack(&mut v, None, vw, VH, Vec2::new(400.0, 400.0));
+		assert_eq!(stack.dispatch_click(Vec2::new(400.0, 400.0)).result, InputResult::Propagate);
 	}
 }
