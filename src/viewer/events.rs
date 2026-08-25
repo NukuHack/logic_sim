@@ -45,6 +45,11 @@ impl ApplicationHandler for App {
 			return;
 		}
 
+		// Snapshot the toast text so anything this event set/cleared can
+		// restart its auto-dismiss clock afterwards (see
+		// [`App::note_status_maybe_changed`]).
+		let status_before = self.status.clone();
+
 		match event {
 			WindowEvent::CloseRequested => event_loop.exit(),
 
@@ -116,6 +121,8 @@ impl ApplicationHandler for App {
 
 			_ => {}
 		}
+
+		self.note_status_maybe_changed(&status_before);
 	}
 }
 
@@ -515,6 +522,11 @@ impl App {
 	}
 
 	fn redraw(&mut self, event_loop: &ActiveEventLoop) {
+		// The toast dismisses itself after its linger window -- the render
+		// loop keeps ticking even with no input, so no interaction is
+		// ever needed for this.
+		self.expire_status_toast();
+
 		let (vw, vh) = self.viewport.to_tuple();
 
 		// Rebuild this screen's whole UI stack from live state -- layers bottom-to-top, each drawn

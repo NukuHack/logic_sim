@@ -13,6 +13,10 @@ use crate::viewer::save_flow::unique_new_chip_name;
 use crate::viewer::state::ViewerState;
 use crate::{default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipType, SavePaths};
 
+/// How long the transient status/error toast stays on screen before
+/// dismissing itself -- no interaction required.
+pub(crate) const STATUS_TOAST_LINGER: std::time::Duration = std::time::Duration::from_secs(7);
+
 /// The window + wgpu renderer pair both screens draw into.
 pub(crate) struct RenderState {
 	pub(crate) window: std::sync::Arc<winit::window::Window>,
@@ -32,7 +36,13 @@ pub(crate) struct App {
 	pub(crate) menu: MainMenu,
 	pub(crate) screen: Screen,
 	pub(crate) text_input: String,
+	/// The transient status/error toast's text (`None` = nothing shown).
 	pub(crate) status: Option<String>,
+	/// When the current `status` text first appeared -- what lets the
+	/// toast auto-dismiss after [`STATUS_TOAST_LINGER`] seconds without
+	/// any interaction. Restamped only when the text *changes* during an
+	/// event (see [`App::note_status_maybe_changed`]).
+	pub(crate) status_since: Option<std::time::Instant>,
 
 	// Rendering / windowing (shared by both screens -- the menu and the
 	// viewer are drawn into the same window/surface, just with different
@@ -82,6 +92,7 @@ impl App {
 			screen: Screen::Menu,
 			text_input: String::new(),
 			status: None,
+			status_since: None,
 			state: None,
 			viewport: Vec2::new(1280.0, 800.0),
 			mouse_pos: Vec2::ZERO,
@@ -269,6 +280,37 @@ impl App {
 	pub(crate) fn is_text_popup_open(&self) -> bool {
 		matches!(self.menu.popup(), PopupKind::NewProject | PopupKind::RenameProject | PopupKind::DuplicateProject)
 	}
+
+	// ---- Status toast lifetime ----
+
+	/// Stamps the toast's appearance clock when an event changed its text
+	/// (or dropped it). Called once per event with the pre-event text, so
+	/// the dozens of `*status = Some(...)` sites scattered across the
+	/// viewer stay untouched while the timer still always restarts on a
+	/// genuinely new message.
+	pub(crate) fn note_status_maybe_changed(&mut self, before: &Option<String>) {
+		match &self.status {
+			// A changed message restarts the window unconditionally -- the
+			// previous entry's clock may be nearly expired already.
+			Some(now) if Some(now) != before.as_ref() => {
+				self.status_since = Some(std::time::Instant::now());
+			}
+			None => self.status_since = None,
+			_ => {}
+		}
+	}
+
+	/// Auto-dismisses the toast once [`STATUS_TOAST_LINGER`] has passed
+	/// since it appeared. Runs every redraw -- the render loop ticks even
+	/// when nothing else happens, so the expiry needs no interaction.
+	pub(crate) fn expire_status_toast(&mut self) {
+		if let Some(since) = self.status_since {
+			if since.elapsed() >= STATUS_TOAST_LINGER {
+				self.status = None;
+				self.status_since = None;
+			}
+		}
+	}
 }
 
 /// Creates the wgpu renderer for the app's single window. Split from
@@ -293,4 +335,79 @@ pub fn run() -> Result<(), winit::error::EventLoopError> {
 
 	let event_loop = winit::event_loop::EventLoop::new()?;
 	event_loop.run_app(&mut app)
+}
+
+#[cfg(test)]
+mod status_toast_tests {
+	//! White-box: the toast's clock lives on `App` (the viewer's shared
+	//! `&mut Option<String>` sites can't carry it), so its stamp/expire
+	//! contract is driven directly against a real `App` here -- no GPU or
+	//! event loop needed.
+
+	use super::*;
+	use crate::save_system::test_util::temp_dir;
+
+	fn app() -> App {
+		App::new(SavePaths::new(temp_dir("status_toast")))
+	}
+
+	/// Back-dates the appearance clock, simulating an old toast.
+	fn age_toast(app: &mut App, seconds: u64) {
+		app.status_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(seconds));
+	}
+
+	#[test]
+	fn new_message_stamps_the_clock_and_old_message_expires() {
+		let mut app = app();
+
+		assert!(app.status_since.is_none());
+		app.note_status_maybe_changed(&None);
+		assert_eq!(app.status, None);
+		assert!(app.status_since.is_none(), "nothing to time while no toast is up");
+
+		// A message appears: the clock starts.
+		app.status = Some("Saved 'X'".to_string());
+		app.note_status_maybe_changed(&None);
+		let stamped = app.status_since.expect("a fresh message starts the linger window");
+		assert!(stamped.elapsed() < STATUS_TOAST_LINGER);
+
+		// Once the window has passed, the very next redraw clears it.
+		age_toast(&mut app, 8);
+		app.expire_status_toast();
+		assert_eq!(app.status, None, "the toast dismisses itself without any interaction");
+		assert!(app.status_since.is_none());
+
+		// ...and expiry before the window does nothing.
+		app.status = Some("Failed: boom".to_string());
+		app.note_status_maybe_changed(&None);
+		app.expire_status_toast();
+		assert_eq!(app.status.as_deref(), Some("Failed: boom"), "a fresh toast outlives the redraw that showed it");
+	}
+
+	#[test]
+	fn clearing_and_replacing_behave_like_their_words() {
+		let mut app = app();
+
+		// Clearing the toast clears the clock.
+		app.status = Some("hi".to_string());
+		app.note_status_maybe_changed(&None);
+		app.status = None;
+		app.note_status_maybe_changed(&Some("hi".to_string()));
+		assert!(app.status_since.is_none(), "no lingering timer after the text goes away");
+
+		// Replacing one message with another restarts the window...
+		app.status = Some("first".to_string());
+		app.note_status_maybe_changed(&None);
+		age_toast(&mut app, 9);
+		app.status = Some("second".to_string());
+		app.note_status_maybe_changed(&Some("first".to_string()));
+		app.expire_status_toast();
+		assert_eq!(app.status.as_deref(), Some("second"), "the new message's own 7s window applies, not the old one's");
+		assert!(app.status_since.expect("restamped").elapsed() < STATUS_TOAST_LINGER);
+	}
+
+	#[test]
+	fn the_linger_window_is_about_seven_seconds() {
+		assert_eq!(STATUS_TOAST_LINGER.as_secs(), 7);
+	}
 }
