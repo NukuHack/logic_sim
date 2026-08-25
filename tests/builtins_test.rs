@@ -102,3 +102,60 @@ fn non_display_builtins_keep_default_zero_size() {
 	let nand = chips.iter().find(|c| c.name == "NAND").unwrap();
 	assert_eq!(nand.size, logic_sim::Vec2::default());
 }
+
+/// The 3-state buffer passes its input through while enabled, and its
+/// output must go genuinely *disconnected* (tristate flag set, not a
+/// connected LOW) when disabled -- that floating wire is the whole point
+/// of the component.
+#[test]
+fn tri_state_buffer_output_floats_when_disabled() {
+	use logic_sim::pin_state::LogicState;
+
+	let mut wrapper = logic_sim::ChipDescription::new("TSB HOST", logic_sim::ChipType::Custom);
+	const DATA: i32 = 10;
+	const ENABLE: i32 = 11;
+	const OUT: i32 = 12;
+	wrapper.input_pins = vec![
+		logic_sim::PinDescription::new("DATA", DATA, logic_sim::PinBitCount::Bit1),
+		logic_sim::PinDescription::new("ENABLE", ENABLE, logic_sim::PinBitCount::Bit1),
+	];
+	wrapper.output_pins = vec![logic_sim::PinDescription::new("OUT", OUT, logic_sim::PinBitCount::Bit1)];
+	wrapper.sub_chips = vec![logic_sim::SubChipDescription {
+		name: "3-STATE BUFFER".to_string(),
+		id: 1,
+		internal_data: None,
+		position: logic_sim::Vec2::ZERO,
+		label: None,
+		pin_colour_info: Vec::new(),
+	}];
+	wrapper.wires = vec![
+		logic_sim::WireDescription::new(logic_sim::PinAddress::new(DATA, DATA), logic_sim::PinAddress::new(1, 0)),
+		logic_sim::WireDescription::new(logic_sim::PinAddress::new(ENABLE, ENABLE), logic_sim::PinAddress::new(1, 1)),
+		logic_sim::WireDescription::new(logic_sim::PinAddress::new(1, 2), logic_sim::PinAddress::new(OUT, OUT)),
+	];
+
+	let mut library = logic_sim::ChipLibrary::new();
+	register_all_builtins(&mut library);
+	library.add(wrapper.clone());
+	let mut sim = Simulator::build(&wrapper, &library);
+
+	let out_pin = sim.find_pin(sim.root(), logic_sim::PinAddress::new(OUT, OUT)).expect("wrapper output pin should resolve");
+	let step_with = |sim: &mut Simulator, data: u32, enable: u32| {
+		let inputs = vec![
+			ExternalInput { address: logic_sim::PinAddress::new(DATA, DATA), state: PinState::from_raw(data) },
+			ExternalInput { address: logic_sim::PinAddress::new(ENABLE, ENABLE), state: PinState::from_raw(enable) },
+		];
+		for _ in 0..3 {
+			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
+		}
+	};
+
+	step_with(&mut sim, 1, 1);
+	assert_eq!(sim.pin(out_pin).state.bit(0), LogicState::High, "enabled buffer passes a HIGH through");
+
+	step_with(&mut sim, 0, 1);
+	assert_eq!(sim.pin(out_pin).state.bit(0), LogicState::Low, "enabled buffer passes a LOW through");
+
+	step_with(&mut sim, 1, 0);
+	assert_eq!(sim.pin(out_pin).state.bit(0), LogicState::Disconnected, "disabled buffer's output floats instead of sitting LOW");
+}
