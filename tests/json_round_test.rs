@@ -1,7 +1,7 @@
 use logic_sim::{
-	is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description, serialize_chip_description, ChipCollection,
-	ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount, PinDescription,
-	ProjectDescription, Simulator, StarredItem, SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
+	is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description, pin_state::PinState, serialize_chip_description,
+	ChipCollection, ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount,
+	PinDescription, ProjectDescription, Simulator, StarredItem, SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
 };
 use std::path::Path;
 
@@ -53,13 +53,13 @@ fn simulates_the_loaded_not_chip_correctly() {
 	let mut sim = Simulator::build(&not_desc, &library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
 
 		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
-		let out_state = sim.pin(out_pin).state & 1;
+		let out_state = (sim.pin(out_pin).state.bit_states() & 1) as u32;
 
 		assert_eq!(out_state, 1 - input_val, "NOT({input_val}) should invert");
 	}
@@ -489,7 +489,7 @@ fn serializes_chip_with_pins() {
 		bit_count: PinBitCount::Bit1,
 		colour: Color::Red,
 		value_display_mode: ValueDisplayMode::Decimal,
-		driven_state: 0,
+		driven_state: logic_sim::pin_state::PinState::LOW,
 	});
 
 	desc.input_pins.push(PinDescription {
@@ -499,7 +499,7 @@ fn serializes_chip_with_pins() {
 		bit_count: PinBitCount::Bit4,
 		colour: Color::Yellow,
 		value_display_mode: ValueDisplayMode::Hex,
-		driven_state: 0,
+		driven_state: logic_sim::pin_state::PinState::LOW,
 	});
 
 	desc.output_pins.push(PinDescription {
@@ -509,7 +509,7 @@ fn serializes_chip_with_pins() {
 		bit_count: PinBitCount::Bit8,
 		colour: Color::Green,
 		value_display_mode: ValueDisplayMode::SignedDecimal,
-		driven_state: 0,
+		driven_state: logic_sim::pin_state::PinState::LOW,
 	});
 
 	let json = serialize_chip_description(&desc).unwrap();
@@ -697,7 +697,7 @@ fn roundtrip_chip_with_all_features() {
 		bit_count: PinBitCount::Bit1,
 		colour: Color::Red,
 		value_display_mode: ValueDisplayMode::Decimal,
-		driven_state: 0,
+		driven_state: logic_sim::pin_state::PinState::LOW,
 	});
 	original.input_pins.push(PinDescription {
 		name: "IN4".to_string(),
@@ -706,7 +706,7 @@ fn roundtrip_chip_with_all_features() {
 		bit_count: PinBitCount::Bit4,
 		colour: Color::Orange,
 		value_display_mode: ValueDisplayMode::Hex,
-		driven_state: 0,
+		driven_state: logic_sim::pin_state::PinState::LOW,
 	});
 
 	// Output pins
@@ -717,7 +717,7 @@ fn roundtrip_chip_with_all_features() {
 		bit_count: PinBitCount::Bit8,
 		colour: Color::Green,
 		value_display_mode: ValueDisplayMode::SignedDecimal,
-		driven_state: 0,
+		driven_state: logic_sim::pin_state::PinState::LOW,
 	});
 
 	// Subchips
@@ -864,7 +864,7 @@ fn roundtrip_chip_with_all_enum_variants() {
 			bit_count: PinBitCount::Bit1,
 			colour: color,
 			value_display_mode: ValueDisplayMode::None,
-			driven_state: 0,
+			driven_state: logic_sim::pin_state::PinState::LOW,
 		});
 	}
 
@@ -877,7 +877,7 @@ fn roundtrip_chip_with_all_enum_variants() {
 			bit_count: PinBitCount::Bit1,
 			colour: Color::Red,
 			value_display_mode: mode,
-			driven_state: 0,
+			driven_state: logic_sim::pin_state::PinState::LOW,
 		});
 	}
 
@@ -937,13 +937,13 @@ fn simulates_the_loaded_not_chip_correctly2() {
 	let mut sim = Simulator::build(&not_desc, &library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
 
 		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
-		let out_state = sim.pin(out_pin).state & 1;
+		let out_state = (sim.pin(out_pin).state.bit_states() & 1) as u32;
 
 		assert_eq!(out_state, 1 - input_val, "NOT({input_val}) should invert");
 	}
@@ -979,13 +979,13 @@ fn simulates_loaded_not_chip_with_serialization_roundtrip() {
 	let mut sim = Simulator::build(&roundtrip_not, &new_library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: input_val }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
 
 		let out_pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("output pin should resolve");
-		let out_state = sim.pin(out_pin).state & 1;
+		let out_state = (sim.pin(out_pin).state.bit_states() & 1) as u32;
 
 		assert_eq!(out_state, 1 - input_val, "Roundtripped NOT({input_val}) should invert");
 	}

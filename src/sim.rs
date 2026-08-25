@@ -5,7 +5,7 @@
 //! and all chips in one `Vec<SimChip>`, indexed rather than referenced, keeping the hot loop allocation-free.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
-use crate::pin_state;
+use crate::pin_state::{LogicState, PinState};
 use rand::Rng;
 use std::time::Instant;
 
@@ -20,7 +20,7 @@ pub struct SimPin {
 	pub id: i32,
 	pub parent_chip: ChipIdx,
 	pub is_input: bool,
-	pub state: u32,
+	pub state: PinState,
 
 	pub connected_target_pins: Vec<PinIdx>,
 
@@ -37,13 +37,11 @@ pub struct SimPin {
 
 impl SimPin {
 	fn new(id: i32, is_input: bool, parent_chip: ChipIdx) -> Self {
-		let mut state = 0u32;
-		pin_state::set_all_disconnected(&mut state);
 		Self {
 			id,
 			parent_chip,
 			is_input,
-			state,
+			state: PinState::disconnected(),
 			connected_target_pins: Vec::new(),
 			last_updated_frame_index: 0,
 			latest_source_id: -1,
@@ -81,7 +79,7 @@ impl SimChip {
 /// input dev-pins on the root chip, addressed by (owner id, pin id).
 pub struct ExternalInput {
 	pub address: PinAddress,
-	pub state: u32,
+	pub state: PinState,
 }
 
 /// Owns the whole simulation graph (all pins/chips across every level of
@@ -363,15 +361,14 @@ impl Simulator {
 			// Already received input this frame: choose randomly whether to
 			// accept the conflicting input (same choice for all bits).
 			let cur_state = self.pins[target.0].state;
-			let or = source_state | cur_state;
-			let and = source_state & cur_state;
-			let bits_new: u16 = if self.random_bool() { or as u16 } else { and as u16 };
+			let or = source_state.or(cur_state);
+			let and = source_state.and(cur_state);
+			let bits_new = if self.random_bool() { or.bit_states() } else { and.bit_states() };
 
-			let mask = (or >> 16) as u16; // tristate flags
-			let bits_new = (bits_new & !mask) | ((or as u16) & mask);
+			let mask = or.tristate_flags(); // any wire disconnected on either side
+			let bits_new = (bits_new & !mask) | (or.bit_states() & mask);
 
-			let tristate_new = (and >> 16) as u16;
-			let state_new = (bits_new as u32) | ((tristate_new as u32) << 16);
+			let state_new = PinState::from_parts(bits_new, and.tristate_flags());
 
 			set = state_new != cur_state;
 			self.pins[target.0].state = state_new;
@@ -445,13 +442,14 @@ impl Simulator {
 
 		match chip_type {
 			E::Nand => {
-				let nand_op = 1 ^ (in_state!(0) & in_state!(1));
-				set_out!(0, nand_op & 1);
+				let a = in_state!(0).first_bit_high();
+				let b = in_state!(1).first_bit_high();
+				set_out!(0, PinState::single(LogicState::from_bool(!(a && b))));
 			}
 			E::Clock => {
 				let spct = self.steps_per_clock_transition;
 				let high = spct != 0 && ((self.simulation_frame / spct as u64) & 1) == 0;
-				set_out!(0, if high { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
+				set_out!(0, PinState::single(LogicState::from_bool(high)));
 			}
 			E::Pulse => {
 				const DURATION: usize = 0;
@@ -459,7 +457,7 @@ impl Simulator {
 				const INPUT_OLD: usize = 2;
 
 				let input_state = in_state!(0);
-				let pulse_input_high = pin_state::first_bit_high(input_state);
+				let pulse_input_high = input_state.first_bit_high();
 				let mut ticks_remaining = self.chips[chip_idx.0].internal_state[TICKS_REMAINING];
 
 				if ticks_remaining == 0 {
@@ -470,12 +468,12 @@ impl Simulator {
 					}
 				}
 
-				let mut output_state = pin_state::LOGIC_LOW as u32;
+				let mut output_state = PinState::single(LogicState::Low);
 				if ticks_remaining > 0 {
 					self.chips[chip_idx.0].internal_state[TICKS_REMAINING] -= 1;
-					output_state = pin_state::LOGIC_HIGH as u32;
-				} else if pin_state::tristate_flags(input_state) != 0 {
-					pin_state::set_all_disconnected(&mut output_state);
+					output_state = PinState::single(LogicState::High);
+				} else if input_state.tristate_flags() != 0 {
+					output_state = PinState::disconnected();
 				}
 
 				set_out!(0, output_state);
@@ -483,83 +481,71 @@ impl Simulator {
 			}
 			E::Split4To1Bit => {
 				let in4 = in_state!(0);
-				set_out!(0, (in4 >> 3) & pin_state::SINGLE_BIT_MASK);
-				set_out!(1, (in4 >> 2) & pin_state::SINGLE_BIT_MASK);
-				set_out!(2, (in4 >> 1) & pin_state::SINGLE_BIT_MASK);
-				set_out!(3, (in4) & pin_state::SINGLE_BIT_MASK);
+				set_out!(0, in4.extract(3, 1));
+				set_out!(1, in4.extract(2, 1));
+				set_out!(2, in4.extract(1, 1));
+				set_out!(3, in4.extract(0, 1));
 			}
 			E::Merge1To4Bit => {
-				let a = in_state!(3) & pin_state::SINGLE_BIT_MASK; // lsb
-				let b = in_state!(2) & pin_state::SINGLE_BIT_MASK;
-				let c = in_state!(1) & pin_state::SINGLE_BIT_MASK;
-				let d = in_state!(0) & pin_state::SINGLE_BIT_MASK;
-				set_out!(0, a | (b << 1) | (c << 2) | (d << 3));
+				set_out!(0, PinState::combine(&[(in_state!(3), 0, 1), (in_state!(2), 1, 1), (in_state!(1), 2, 1), (in_state!(0), 3, 1)]));
 			}
 			E::Merge1To8Bit => {
-				let a = in_state!(7) & pin_state::SINGLE_BIT_MASK;
-				let b = in_state!(6) & pin_state::SINGLE_BIT_MASK;
-				let c = in_state!(5) & pin_state::SINGLE_BIT_MASK;
-				let d = in_state!(4) & pin_state::SINGLE_BIT_MASK;
-				let e = in_state!(3) & pin_state::SINGLE_BIT_MASK;
-				let f = in_state!(2) & pin_state::SINGLE_BIT_MASK;
-				let g = in_state!(1) & pin_state::SINGLE_BIT_MASK;
-				let h = in_state!(0) & pin_state::SINGLE_BIT_MASK;
-				set_out!(0, a | (b << 1) | (c << 2) | (d << 3) | (e << 4) | (f << 5) | (g << 6) | (h << 7));
+				set_out!(
+					0,
+					PinState::combine(&[
+						(in_state!(7), 0, 1),
+						(in_state!(6), 1, 1),
+						(in_state!(5), 2, 1),
+						(in_state!(4), 3, 1),
+						(in_state!(3), 4, 1),
+						(in_state!(2), 5, 1),
+						(in_state!(1), 6, 1),
+						(in_state!(0), 7, 1),
+					])
+				);
 			}
 			E::Merge4To8Bit => {
 				let a4 = in_state!(0);
 				let b4 = in_state!(1);
-				let mut out8 = 0u32;
-				pin_state::set_8bit_from_4bit_sources(&mut out8, b4, a4);
-				set_out!(0, out8);
+				set_out!(0, PinState::combine(&[(b4, 0, 4), (a4, 4, 4)]));
 			}
 			E::Split8To4Bit => {
 				let in8 = in_state!(0);
-				let mut a4 = 0u32;
-				let mut b4 = 0u32;
-				pin_state::set_4bit_from_8bit_source(&mut a4, in8, false);
-				pin_state::set_4bit_from_8bit_source(&mut b4, in8, true);
-				set_out!(0, a4);
-				set_out!(1, b4);
+				set_out!(0, in8.extract(4, 4)); // upper nibble
+				set_out!(1, in8.extract(0, 4)); // lower nibble
 			}
 			E::Split8To1Bit => {
 				let in8 = in_state!(0);
 				for bit in 0..8 {
-					set_out!(bit, (in8 >> (7 - bit)) & pin_state::SINGLE_BIT_MASK);
+					set_out!(bit, in8.extract(7 - bit as u32, 1));
 				}
 			}
 			E::TriStateBuffer => {
 				let data = in_state!(0);
 				let enable = in_state!(1);
-				if pin_state::first_bit_high(enable) {
-					set_out!(0, data);
-				} else {
-					let mut disconnected = 0u32;
-					pin_state::set_all_disconnected(&mut disconnected);
-					set_out!(0, disconnected);
-				}
+				set_out!(0, if enable.first_bit_high() { data } else { PinState::disconnected() });
 			}
 			E::Key => {
 				let key_char = self.chips[chip_idx.0].internal_state.first().copied().unwrap_or(0) as u8 as char;
 				let is_held = self.held_keys.contains(&key_char);
-				set_out!(0, if is_held { pin_state::LOGIC_HIGH as u32 } else { pin_state::LOGIC_LOW as u32 });
+				set_out!(0, PinState::single(LogicState::from_bool(is_held)));
 			}
 			E::KeyMods => {
-				set_out!(0, self.key_modifiers & 0xFF);
+				set_out!(0, PinState::from_raw(self.key_modifiers & 0xFF));
 			}
 			E::DisplayRgb => self.process_display_rgb(chip_idx),
 			E::DisplayDot => self.process_display_dot(chip_idx),
 			E::DevRam8Bit => self.process_ram_8bit(chip_idx),
 			E::Rom256x16 => {
 				const BYTE_MASK: u32 = 0b1111_1111;
-				let address = pin_state::bit_states(in_state!(0)) as usize;
+				let address = in_state!(0).bit_states() as usize;
 				let data = self.chips[chip_idx.0].internal_state[address];
-				set_out!(0, (data >> 8) & BYTE_MASK);
-				set_out!(1, data & BYTE_MASK);
+				set_out!(0, PinState::from_raw((data >> 8) & BYTE_MASK));
+				set_out!(1, PinState::from_raw(data & BYTE_MASK));
 			}
 			E::Buzzer => {
-				let freq_index = pin_state::bit_states(in_state!(0)) as i32;
-				let volume_index = pin_state::bit_states(in_state!(1)) as u32;
+				let freq_index = in_state!(0).bit_states() as i32;
+				let volume_index = in_state!(1).bit_states() as u32;
 				audio.register_note(freq_index, volume_index);
 			}
 			_ => {
@@ -585,23 +571,23 @@ impl Simulator {
 
 		let internal = &mut self.chips[chip_idx.0].internal_state;
 		let last = internal.len() - 1;
-		let clock_high = pin_state::first_bit_high(clock_pin);
+		let clock_high = clock_pin.first_bit_high();
 		let is_rising_edge = clock_high && internal[last] == 0;
 		internal[last] = clock_high as u32;
 
 		if is_rising_edge {
-			if pin_state::first_bit_high(reset_pin) {
+			if reset_pin.first_bit_high() {
 				internal.iter_mut().take(256).for_each(|x| *x = 0);
-			} else if pin_state::first_bit_high(write_enable_pin) {
-				let addr = pin_state::bit_states(address_pin) as usize;
-				internal[addr] = pin_state::bit_states(data_pin) as u32;
+			} else if write_enable_pin.first_bit_high() {
+				let addr = address_pin.bit_states() as usize;
+				internal[addr] = data_pin.bit_states() as u32;
 			}
 		}
 
-		let addr = pin_state::bit_states(address_pin) as usize;
+		let addr = address_pin.bit_states() as usize;
 		let out_val = self.chips[chip_idx.0].internal_state[addr] as u16 as u32;
 		let out_pin = self.chips[chip_idx.0].output_pins[0];
-		self.pins[out_pin.0].state = out_val;
+		self.pins[out_pin.0].state = PinState::from_raw(out_val);
 	}
 
 	fn process_display_rgb(&mut self, chip_idx: ChipIdx) {
@@ -622,35 +608,33 @@ impl Simulator {
 
 		let internal = &mut self.chips[chip_idx.0].internal_state;
 		let last = internal.len() - 1;
-		let clock_high = pin_state::first_bit_high(clock_pin);
+		let clock_high = clock_pin.first_bit_high();
 		let is_rising_edge = clock_high && internal[last] == 0;
 		internal[last] = clock_high as u32;
 
 		if is_rising_edge {
-			if pin_state::first_bit_high(reset_pin) {
+			if reset_pin.first_bit_high() {
 				for i in 0..ADDRESS_SPACE {
 					internal[i + ADDRESS_SPACE] = 0;
 				}
-			} else if pin_state::first_bit_high(write_pin) {
-				let addr = pin_state::bit_states(address_pin) as usize + ADDRESS_SPACE;
-				let data = pin_state::bit_states(red_pin) as u32
-					| ((pin_state::bit_states(green_pin) as u32) << 4)
-					| ((pin_state::bit_states(blue_pin) as u32) << 8);
+			} else if write_pin.first_bit_high() {
+				let addr = address_pin.bit_states() as usize + ADDRESS_SPACE;
+				let data = red_pin.bit_states() as u32 | ((green_pin.bit_states() as u32) << 4) | ((blue_pin.bit_states() as u32) << 8);
 				internal[addr] = data;
 			}
 
-			if pin_state::first_bit_high(refresh_pin) {
+			if refresh_pin.first_bit_high() {
 				for i in 0..ADDRESS_SPACE {
 					internal[i] = internal[i + ADDRESS_SPACE];
 				}
 			}
 		}
 
-		let col_data = self.chips[chip_idx.0].internal_state[pin_state::bit_states(address_pin) as usize];
+		let col_data = self.chips[chip_idx.0].internal_state[address_pin.bit_states() as usize];
 		macro_rules! set_out {
 			($i:expr, $v:expr) => {{
 				let p = self.chips[chip_idx.0].output_pins[$i];
-				self.pins[p.0].state = $v;
+				self.pins[p.0].state = PinState::from_raw($v);
 			}};
 		}
 		set_out!(0, (col_data) & 0b1111);
@@ -674,30 +658,30 @@ impl Simulator {
 
 		let internal = &mut self.chips[chip_idx.0].internal_state;
 		let last = internal.len() - 1;
-		let clock_high = pin_state::first_bit_high(clock_pin);
+		let clock_high = clock_pin.first_bit_high();
 		let is_rising_edge = clock_high && internal[last] == 0;
 		internal[last] = clock_high as u32;
 
 		if is_rising_edge {
-			if pin_state::first_bit_high(reset_pin) {
+			if reset_pin.first_bit_high() {
 				for i in 0..ADDRESS_SPACE {
 					internal[i + ADDRESS_SPACE] = 0;
 				}
-			} else if pin_state::first_bit_high(write_pin) {
-				let addr = pin_state::bit_states(address_pin) as usize + ADDRESS_SPACE;
-				internal[addr] = pin_state::bit_states(pixel_input_pin) as u32;
+			} else if write_pin.first_bit_high() {
+				let addr = address_pin.bit_states() as usize + ADDRESS_SPACE;
+				internal[addr] = pixel_input_pin.bit_states() as u32;
 			}
 
-			if pin_state::first_bit_high(refresh_pin) {
+			if refresh_pin.first_bit_high() {
 				for i in 0..ADDRESS_SPACE {
 					internal[i] = internal[i + ADDRESS_SPACE];
 				}
 			}
 		}
 
-		let pixel_state = self.chips[chip_idx.0].internal_state[pin_state::bit_states(address_pin) as usize] as u16 as u32;
+		let pixel_state = self.chips[chip_idx.0].internal_state[address_pin.bit_states() as usize] as u16 as u32;
 		let out_pin = self.chips[chip_idx.0].output_pins[0];
-		self.pins[out_pin.0].state = pixel_state;
+		self.pins[out_pin.0].state = PinState::from_raw(pixel_state);
 	}
 }
 

@@ -88,7 +88,7 @@ fn point_in_input_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount) -
 /// every cell. `pos` is the dev-pin's own saved position, the same value
 /// passed to `draw_input_dev_pin_body`. Bit-0's cell is the top-left of
 /// the grid (see `layout::input_bit_cell_offsets`), matching the same
-/// bit-index convention `pin_state::get_bit_tristated_value` uses --
+/// bit-index convention `PinState::bit` uses --
 /// callers wiring up an actual click-to-toggle handler can flip bit
 /// `bit_index` of the pin's state directly.
 pub fn hit_test_input_dev_pin_bit(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> Option<u32> {

@@ -128,6 +128,7 @@ fn output_stage_flattens_peaks_but_passes_quiet_samples_through() {
 mod end_to_end {
 	use logic_sim::audio::{SimAudio, FREQ_COUNT};
 	use logic_sim::description::{ChipDescription, ChipLibrary, ChipType, SubChipDescription};
+	use logic_sim::pin_state::PinState;
 	use logic_sim::sim::{ExternalInput, Simulator};
 	use logic_sim::{PinAddress, Vec2};
 
@@ -150,8 +151,10 @@ mod end_to_end {
 	/// The buzzer's builtin pin layout: PITCH (id 1, 8-bit) then VOLUME
 	/// (id 0, 4-bit); the sim arm reads them in that order.
 	fn drive(sim: &mut Simulator, audio: &mut SimAudio, pitch: u32, volume: u32) {
-		let inputs =
-			[ExternalInput { address: PinAddress::new(1, 1), state: pitch }, ExternalInput { address: PinAddress::new(1, 0), state: volume }];
+		let inputs = [
+			ExternalInput { address: PinAddress::new(1, 1), state: PinState::from_raw(pitch) },
+			ExternalInput { address: PinAddress::new(1, 0), state: PinState::from_raw(volume) },
+		];
 		sim.run_simulation_step(&inputs, audio);
 	}
 

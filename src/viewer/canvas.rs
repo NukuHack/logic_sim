@@ -8,7 +8,6 @@
 //! the wire-placement flow.
 
 use crate::description::ChipDescription;
-use crate::pin_state;
 use crate::render::camera::Camera;
 use crate::render::layout;
 use crate::render::scene::{self, SceneGeometry};
@@ -45,10 +44,7 @@ pub(crate) fn hit_test_root_input_pin_click(root_desc: &ChipDescription, world_p
 fn toggle_driven_input_bit(library: &mut ChipLibrary, root_chip_name: &str, pin_id: i32, bit_index: u32) {
 	let chip = library.get_mut(root_chip_name);
 	if let Some(pin) = chip.input_pins.iter_mut().find(|p| p.id == pin_id) {
-		let last_state = pin.driven_state;
-		let mut bits = pin_state::bit_states(last_state);
-		bits ^= 1 << bit_index;
-		pin_state::set(&mut pin.driven_state, bits, pin_state::tristate_flags(last_state));
+		pin.driven_state.toggle_bit(bit_index);
 	}
 }
 

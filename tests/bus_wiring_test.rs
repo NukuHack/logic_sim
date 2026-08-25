@@ -343,8 +343,8 @@ fn simulator_feeds_multiple_inputs_into_a_bus_wire_through_the_origin() {
 	let drive = |sim: &mut logic_sim::Simulator, audio: &mut logic_sim::audio::SimAudio| {
 		let mut inputs = Vec::new();
 		for id in [8u32, 9] {
-			inputs.push(logic_sim::ExternalInput { address: PinAddress::new(id as i32, 0), state: 0 }); // IN B low
-			inputs.push(logic_sim::ExternalInput { address: PinAddress::new(id as i32, 1), state: 1 });
+			inputs.push(logic_sim::ExternalInput { address: PinAddress::new(id as i32, 0), state: logic_sim::pin_state::PinState::LOW }); // IN B low
+			inputs.push(logic_sim::ExternalInput { address: PinAddress::new(id as i32, 1), state: logic_sim::pin_state::PinState::HIGH });
 		}
 		sim.run_simulation_step(&inputs, audio);
 	};
@@ -355,7 +355,7 @@ fn simulator_feeds_multiple_inputs_into_a_bus_wire_through_the_origin() {
 	}
 
 	let terminus_input = sim.find_pin(sim.root(), PinAddress::new(10, 0)).expect("terminus input pin exists");
-	assert_eq!(sim.pin(terminus_input).state & 1, 1, "merged bus signal reaches the terminus");
+	assert_eq!(sim.pin(terminus_input).state.bit_states() & 1, 1, "merged bus signal reaches the terminus");
 }
 
 #[test]

@@ -2,6 +2,7 @@
 //! build the runtime simulation graph. Mirrors DLS.Description in the
 //! original C# codebase.
 use crate::{
+	pin_state::PinState,
 	render::theme::{Rgba, COLORS},
 	structs::Vec2,
 };
@@ -333,7 +334,7 @@ pub struct PinDescription {
 	/// saved on disk under this pin's `ValueDisplayMode` field). Defaults
 	/// to `None` (no value shown).
 	pub value_display_mode: ValueDisplayMode,
-	/// Raw `pin_state` value (bit states in the low 16 bits, tristate
+	/// Packed pin state (bit states in the low 16 bits, tristate
 	/// flags in the high 16) currently being driven into this pin by the
 	/// player clicking it, when it's one of a chip's own boundary
 	/// *input* dev-pins (see `render::scene::draw_input_dev_pin_body`'s
@@ -345,7 +346,7 @@ pub struct PinDescription {
 	/// UI-driven state -- and meaningless for anything other than an
 	/// input dev-pin, so it defaults to `0` (all-low, not tristated,
 	/// i.e. "never touched") for every other kind of pin.
-	pub driven_state: u32,
+	pub driven_state: PinState,
 }
 
 impl PinDescription {
@@ -357,12 +358,20 @@ impl PinDescription {
 			bit_count,
 			colour: Color::default(),
 			value_display_mode: ValueDisplayMode::None,
-			driven_state: 0,
+			driven_state: PinState::LOW,
 		}
 	}
 
 	pub fn with_colour(name: impl Into<String>, id: i32, bit_count: PinBitCount, colour: Color) -> Self {
-		Self { name: name.into(), id, position: Vec2::default(), bit_count, colour, value_display_mode: ValueDisplayMode::None, driven_state: 0 }
+		Self {
+			name: name.into(),
+			id,
+			position: Vec2::default(),
+			bit_count,
+			colour,
+			value_display_mode: ValueDisplayMode::None,
+			driven_state: PinState::LOW,
+		}
 	}
 
 	/// Full constructor mirroring every on-disk field, used when parsing a
@@ -376,7 +385,7 @@ impl PinDescription {
 		colour: Color,
 		value_display_mode: ValueDisplayMode,
 	) -> Self {
-		Self { name: name.into(), id, position, bit_count, colour, value_display_mode, driven_state: 0 }
+		Self { name: name.into(), id, position, bit_count, colour, value_display_mode, driven_state: PinState::LOW }
 	}
 }
 

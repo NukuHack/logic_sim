@@ -25,7 +25,7 @@ pub trait PinStateLookup {
 
 	/// Same as `logic_state`, but for one specific bit of a multi-bit pin
 	/// (`bit_index` counting from 0, the same convention
-	/// `pin_state::get_bit_tristated_value` uses), so a wire carrying more
+	/// `PinState::bit` uses), so a wire carrying more
 	/// than one bit can be drawn as that many individually-coloured
 	/// strands (see `draw_wires`) instead of a single "averaged" colour.
 	/// Defaults to `logic_state` regardless of `bit_index` -- correct for
@@ -83,21 +83,19 @@ impl<'a> PinStateLookup for SimulatorPinState<'a> {
 	fn is_high(&self, pin_owner_id: i32, pin_id: i32) -> Option<bool> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;
-		Some(crate::pin_state::first_bit_high(self.sim.pin(pin_idx).state))
+		Some(self.sim.pin(pin_idx).state.first_bit_high())
 	}
 
 	fn logic_state(&self, pin_owner_id: i32, pin_id: i32) -> Option<LogicState> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;
-		let raw = crate::pin_state::get_bit_tristated_value(self.sim.pin(pin_idx).state, 0);
-		Some(LogicState::from_int(raw as u8))
+		Some(self.sim.pin(pin_idx).state.bit(0))
 	}
 
 	fn bit_logic_state(&self, pin_owner_id: i32, pin_id: i32, bit_index: u32) -> Option<LogicState> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;
-		let raw = crate::pin_state::get_bit_tristated_value(self.sim.pin(pin_idx).state, bit_index);
-		Some(LogicState::from_int(raw as u8))
+		Some(self.sim.pin(pin_idx).state.bit(bit_index))
 	}
 
 	fn internal_state(&self, owner_id: i32) -> Option<&[u32]> {

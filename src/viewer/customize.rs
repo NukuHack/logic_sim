@@ -385,6 +385,7 @@ fn parse_hex_colour(text: &str) -> Option<[f32; 4]> {
 mod tests {
 	use super::*;
 	use crate::description::{ChipType, PinBitCount, PinDescription};
+	use crate::pin_state::PinState;
 	use crate::render::customize_ui::{display_entries, CustomizeInteraction};
 
 	fn sized_draft() -> ChipDescription {
@@ -482,7 +483,7 @@ mod tests {
 		// requesting a single step makes that frame advance the simulation
 		// by exactly one deterministic tick (wall-clock pacing would make
 		// "one frame" an arbitrary number of ticks).
-		v.library.get_mut("Panel").input_pins[0].driven_state = 1;
+		v.library.get_mut("Panel").input_pins[0].driven_state = PinState::HIGH;
 		v.prefs.prefs_sim_paused = true;
 		v.advance_single_step = true;
 		open_customize(&mut v);

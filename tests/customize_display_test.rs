@@ -42,7 +42,7 @@ fn embedded_display_states_resolve_through_the_live_simulator() {
 	library.add(panel.clone());
 	let mut sim = Simulator::build(&panel, &library);
 
-	let high = vec![ExternalInput { address: PinAddress::new(1, 0), state: 1 }];
+	let high = vec![ExternalInput { address: PinAddress::new(1, 0), state: logic_sim::pin_state::PinState::HIGH }];
 	for _ in 0..4 {
 		sim.run_simulation_step(&high, &mut logic_sim::audio::SimAudio::new());
 	}
@@ -54,7 +54,10 @@ fn embedded_display_states_resolve_through_the_live_simulator() {
 
 	drop(lookup);
 	for _ in 0..4 {
-		sim.run_simulation_step(&[ExternalInput { address: PinAddress::new(1, 0), state: 0 }], &mut logic_sim::audio::SimAudio::new());
+		sim.run_simulation_step(
+			&[ExternalInput { address: PinAddress::new(1, 0), state: logic_sim::pin_state::PinState::LOW }],
+			&mut logic_sim::audio::SimAudio::new(),
+		);
 	}
 	let lookup = SimulatorPinState { sim: &sim, scope: sim.root() };
 	assert_eq!(lookup.is_high(4, 0), Some(false), "back to low after driving low");
@@ -128,7 +131,7 @@ fn placed_panel_embedded_display_lights_on_canvas() {
 	// Drive the panel instance's boundary pin from outside (its address in
 	// the host/root scope is owner=9), then draw the host scene.
 	let mut sim = Simulator::build(&host.clone(), &library);
-	let driven = vec![ExternalInput { address: PinAddress::new(9, 1), state: 1 }];
+	let driven = vec![ExternalInput { address: PinAddress::new(9, 1), state: logic_sim::pin_state::PinState::HIGH }];
 	for _ in 0..4 {
 		sim.run_simulation_step(&driven, &mut logic_sim::audio::SimAudio::new());
 	}

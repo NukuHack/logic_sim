@@ -45,7 +45,7 @@ fn build_sim_around(builtin_name: &str, out_bit_count: PinBitCount, internal_dat
 
 fn read_output(sim: &Simulator, out_pin_id: i32) -> u32 {
 	let pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("wrapper output pin should resolve");
-	sim.pin(pin).state
+	sim.pin(pin).state.raw()
 }
 
 // ---- Key chip ----

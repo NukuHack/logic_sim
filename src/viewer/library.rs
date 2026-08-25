@@ -5,6 +5,7 @@
 //! `viewer::actions`).
 
 use crate::json::{ChipCollection, ProjectDescription};
+use crate::pin_state::PinState;
 use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::state::ViewerState;
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
@@ -304,7 +305,7 @@ pub(crate) fn move_selected_library_row(v: &mut ViewerState, down: bool, force_j
 pub(crate) fn reset_all_driven_inputs(library: &mut ChipLibrary) {
 	for chip in library.iter_mut() {
 		for pin in &mut chip.input_pins {
-			pin.driven_state = 0;
+			pin.driven_state = PinState::LOW;
 		}
 	}
 }

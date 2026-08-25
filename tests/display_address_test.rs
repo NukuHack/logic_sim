@@ -9,8 +9,8 @@
 //! sequencing behaves as the source implies.
 
 use logic_sim::{
-	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, Vec2,
-	WireDescription,
+	pin_state::PinState, ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator,
+	SubChipDescription, Vec2, WireDescription,
 };
 
 const SUBCHIP_ID: i32 = 1;
@@ -62,7 +62,8 @@ fn build_display_sim(builtin_name: &str, sub_inputs: &[(i32, PinBitCount)], sub_
 /// Drives `values` (wrapper-level pin id -> state) for `steps` simulation steps in a row, letting
 /// combinational propagation (and, for the last step of a phase, a clock edge) settle.
 fn drive(sim: &mut Simulator, values: &[(i32, u32)], steps: usize) {
-	let inputs: Vec<ExternalInput> = values.iter().map(|&(id, state)| ExternalInput { address: PinAddress::new(id, id), state }).collect();
+	let inputs: Vec<ExternalInput> =
+		values.iter().map(|&(id, state)| ExternalInput { address: PinAddress::new(id, id), state: PinState::from_raw(state) }).collect();
 	for _ in 0..steps {
 		sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 	}
@@ -70,7 +71,7 @@ fn drive(sim: &mut Simulator, values: &[(i32, u32)], steps: usize) {
 
 fn read(sim: &Simulator, out_pin_id: i32) -> u32 {
 	let pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("wrapper output pin should resolve");
-	sim.pin(pin).state
+	sim.pin(pin).state.raw()
 }
 
 // ---- DOT DISPLAY ----
