@@ -3,10 +3,12 @@
 //! canvas/bottom-bar/flyout/overlay-panel/context-menu layers. Input
 //! dispatch in the event handlers consults exactly what's built here.
 //!
-//! This is also where the simulation is advanced each frame (the
-//! `SimThread` beat of the original, run inline): pacing against the
-//! project's target rate, honouring pause/single-step, and feeding the
-//! measured speed back for the preferences panel.
+//! This is also where the frame syncs with the background simulation
+//! thread (see [`crate::viewer::sim_thread`]): prefs-derived pacing
+//! inputs (pause, target rate, clock speed) are pushed out, the input
+//! dev-pins' driven states are published for the worker to apply, and the
+//! thread's measured speed / single-step counter are read back for the
+//! preferences panel and paused banner.
 
 use crate::render::camera::Camera;
 use crate::render::context_menu;
@@ -20,7 +22,6 @@ use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
-use crate::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks};
 
 use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, PENDING_PLACEMENT_ALPHA};
 use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};
@@ -103,86 +104,23 @@ pub(crate) fn build_menu_stack(
 	menu_stack
 }
 
-/// Advances the open chip's simulation by however many ticks are due at
-/// the project's target rate (fed by every input dev-pin's live driven
-/// state) -- the main-thread equivalent of `SimThread.Run`'s paced loop:
+/// Syncs the open chip's simulation thread with this frame's live state
+/// (the main-thread half of the original's `Project.Update` /
+/// `SimThread` split -- stepping itself happens on the worker):
 ///
-/// - paused (and no single step pending): nothing steps, and timing state
-///   is held so leaving pause can't burst-catch-up;
-/// - otherwise: elapsed wall time converts into tick debt, whole ticks are
-///   stepped, and the count feeds the rolling throughput window behind the
-///   preferences panel's "steps per second (current)" readout;
-/// - a pending single step (`ViewerState::advance_single_step`) runs
-///   exactly one tick regardless of pacing, mirroring
-///   `Project.advanceSingleSimStep`.
+/// - prefs-derived pacing inputs are pushed out (pause flag, target rate,
+///   clock speed), so the panel/shortcut paths only ever touch `prefs`;
+/// - every input dev-pin's current driven state is published, mirroring
+///   the original capturing `inputPins` once per Update for the thread;
+/// - the thread's measured ticks/second and paused single-step counter
+///   are read back for the preferences readout and paused banner.
 fn update_viewer_sim(v: &mut ViewerState) {
-	let now = std::time::Instant::now();
 	v.sync_sim_clock_pref();
+	v.sim.set_paused(v.prefs.prefs_sim_paused);
+	v.sim.set_target_ticks_per_second(v.target_ticks_per_second() as u32);
 
-	let paused = v.prefs.prefs_sim_paused;
-	let last = match v.sim_pacing.last_tick {
-		Some(last) => last,
-		None => {
-			// First frame ever: start the clock here (a plain wall-clock
-			// tick would be ~zero anyway), but still honour a pending
-			// single step below so a paused viewer responds immediately.
-			v.sim_pacing.last_tick = Some(now);
-			v.sim_pacing.was_paused = paused;
-			now
-		}
-	};
-	let elapsed = now.duration_since(last);
-	v.sim_pacing.last_tick = Some(now);
-
-	if v.advance_single_step {
-		v.advance_single_step = false;
-		if paused {
-			v.paused_step_counter += 1;
-			run_one_sim_step(v);
-			return;
-		}
-	}
-
-	if paused {
-		// Mirrors `SimThread`'s paused branch: sleep-equivalent, no debt
-		// accrues. `was_paused` is cleared on resume below. The audio mix
-		// still decays (`UpdateInPausedState`) so a sounding buzzer fades
-		// out rather than hanging.
-		let mut audio = lock_audio(&v.audio);
-		v.sim.update_in_paused_state(&mut audio.sim_audio);
-		v.sim_pacing.debt_ticks = 0.0;
-		v.sim_pacing.was_paused = true;
-		return;
-	}
-
-	if v.sim_pacing.was_paused {
-		// Just unpaused: start measuring fresh so stale pre-pause samples
-		// don't paint a burst onto the readout.
-		v.sim_pacing.window.clear();
-		v.sim_pacing.debt_ticks = 0.0;
-		v.sim_pacing.avg_ticks_per_sec = 0.0;
-		v.sim_pacing.was_paused = false;
-	}
-
-	v.sim_pacing.debt_ticks = accumulate_tick_debt(v.sim_pacing.debt_ticks, elapsed.as_secs_f64(), v.target_ticks_per_second() as f64);
-	let (steps, remaining_debt) = take_due_ticks(v.sim_pacing.debt_ticks);
-	v.sim_pacing.debt_ticks = remaining_debt;
-
-	for _ in 0..steps {
-		run_one_sim_step(v);
-	}
-	if steps > 0 {
-		v.sim_pacing.window.record(now, steps);
-		if let Some(avg) = v.sim_pacing.window.avg_per_sec(now) {
-			v.sim_pacing.avg_ticks_per_sec = avg;
-		}
-	}
-}
-
-/// One simulation step with every input dev-pin's current driven state
-/// (`Simulator.RunSimulationStep(simChip, project.inputPins, ..)`).
-fn run_one_sim_step(v: &mut ViewerState) {
-	let mut audio = lock_audio(&v.audio);
+	// Every input dev-pin's current driven state
+	// (`Simulator.RunSimulationStep(simChip, project.inputPins, ..)`).
 	let external_inputs: Vec<crate::sim::ExternalInput> = v
 		.library
 		.get(&v.root_chip_name)
@@ -190,13 +128,10 @@ fn run_one_sim_step(v: &mut ViewerState) {
 		.iter()
 		.map(|pin| crate::sim::ExternalInput { address: crate::description::PinAddress::new(pin.id, 0), state: pin.driven_state })
 		.collect();
-	v.sim.run_simulation_step(&external_inputs, &mut audio.sim_audio);
-}
+	v.sim.publish_external_inputs(external_inputs);
 
-/// Locks the shared buzzer-audio state for the simulation side, recovering
-/// from a poisoned lock (an audio panic must not take the whole editor down).
-fn lock_audio(audio: &crate::audio::SharedAudioState) -> std::sync::MutexGuard<'_, crate::audio::AudioState> {
-	audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+	v.paused_step_counter = v.sim.paused_step_counter();
+	v.sim_pacing.avg_ticks_per_sec = v.sim.avg_ticks_per_sec();
 }
 
 /// Rebuilds the viewer's UI stack from live state, bottom-to-top: canvas
@@ -213,9 +148,13 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 
 	let root_desc = v.library.get(&v.root_chip_name).clone();
 	let hover_world_pos = v.camera.screen_to_world(mouse);
+	// The scene reads pin states straight out of the shared arena under a
+	// short-lived lock -- the read half of the original's per-frame
+	// `ViewedChip.UpdateStateFromSim` sync.
 	let (mut chip_scene, component_spans) = {
+		let sim_guard = v.sim.lock();
 		let root_ref = v.library.get(&v.root_chip_name);
-		let lookup = SimulatorPinState { sim: &v.sim, scope: v.sim.root() };
+		let lookup = SimulatorPinState { sim: &sim_guard, scope: sim_guard.root() };
 		build_scene_with_spans(root_ref, &v.library, &lookup, Some(hover_world_pos))
 	};
 

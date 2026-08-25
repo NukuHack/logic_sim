@@ -1,11 +1,12 @@
-//! Simulation pacing + throughput measurement for the viewer's main-thread
-//! stepping, adapting `DLS.Simulation.SimThread`. The original runs a
-//! dedicated thread that spins until each tick's target duration elapses and
-//! keeps a rolling window of per-tick timestamps to measure the achieved
-//! ticks/second; here the simulation steps inside the render loop instead, so
-//! the same two jobs are expressed as pure bookkeeping the frame loop feeds:
-//! a tick-debt accumulator ("how many ticks should have run by now") and a
-//! windowed counter pair (mirroring `SimThread.SimulationPerformanceTimeWindowSec`).
+//! Simulation pacing + throughput measurement, adapting
+//! `DLS.Simulation.SimThread`. The original runs a dedicated thread that
+//! spins until each tick's target duration elapses and keeps a rolling
+//! window of per-tick timestamps to measure the achieved ticks/second.
+//! The same two jobs are expressed here as pure bookkeeping -- a tick-debt
+//! accumulator ("how many ticks should have run by now") and a windowed
+//! counter pair (mirroring `SimThread.SimulationPerformanceTimeWindowSec`)
+//! -- which [`crate::viewer::sim_thread`]'s worker feeds from its own
+//! thread, keeping simulation speed decoupled from the render framerate.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

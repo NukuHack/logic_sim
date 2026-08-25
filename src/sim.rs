@@ -6,7 +6,8 @@
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
 use crate::pin_state::{LogicState, PinState};
-use rand::Rng;
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,7 +97,11 @@ pub struct Simulator {
 	can_dynamic_reorder_this_frame: bool,
 
 	pcg_rng_state: u32,
-	rng: rand::rngs::ThreadRng,
+	/// `StdRng` rather than `ThreadRng` so a whole built `Simulator` is
+	/// `Send` and can be stepped on the background sim thread (see
+	/// `viewer::sim_thread`); nothing about the simulation depends on
+	/// which thread's entropy pool seeded it.
+	rng: StdRng,
 
 	start_time: Instant,
 	elapsed_seconds_old: f64,
@@ -139,7 +144,7 @@ impl Simulator {
 			needs_order_pass: true,
 			can_dynamic_reorder_this_frame: false,
 			pcg_rng_state: 0,
-			rng: rand::thread_rng(),
+			rng: StdRng::from_entropy(),
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
 			held_keys: std::collections::HashSet::new(),

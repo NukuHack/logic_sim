@@ -10,12 +10,11 @@ use crate::sim::key_mods_bits;
 use crate::sim::Simulator;
 use crate::viewer::chip_interaction;
 use crate::viewer::customize::CustomizeState;
-use crate::viewer::sim_timing::PerfWindow;
+use crate::viewer::sim_thread::SimHandle;
 use crate::viewer::wire_draft::PendingWire;
 use crate::{ChipLibrary, ProjectDescription};
 
 use crate::structs::Vec2;
-use std::time::Instant;
 
 /// One editor panel from `render::editor_ui` that can sit in
 /// [`ViewerState::overlays`]. Overlays are entries of the live UI stack:
@@ -158,18 +157,13 @@ pub(crate) enum PendingUnsavedAction {
 	ReturnToMenu,
 }
 
-/// Bookkeeping for stepping the simulation from the render loop at the
-/// project's target rate (see [`crate::viewer::sim_timing`] for the math):
-/// when the last frame stepped, how many ticks are still "owed", the
-/// rolling throughput window behind the preferences panel's measured-speed
-/// display, and whether the previous frame saw the sim paused (so leaving
-/// pause starts measurement and debt from scratch instead of bursting).
+/// Bookkeeping fed back from the background simulation thread each frame
+/// (the thread itself owns all the pacing state -- see
+/// [`crate::viewer::sim_thread`]): the measured-speed readout behind the
+/// preferences panel and the single-step counter shown on the paused
+/// banner.
 #[derive(Default)]
 pub(crate) struct SimPacing {
-	pub(crate) last_tick: Option<Instant>,
-	pub(crate) debt_ticks: f64,
-	pub(crate) window: PerfWindow,
-	pub(crate) was_paused: bool,
 	/// Latest measured average ticks/second (`0` while paused or before
 	/// anything has been measured).
 	pub(crate) avg_ticks_per_sec: f64,
@@ -181,7 +175,10 @@ pub(crate) struct ViewerState {
 	pub(crate) project_name: String,
 	pub(crate) library: ChipLibrary,
 	pub(crate) root_chip_name: String,
-	pub(crate) sim: Simulator,
+	/// The simulated world, stepped on its own background thread (see
+	/// [`SimHandle`]); the main thread reads it through short locks and
+	/// swaps whole new simulators in on structural edits.
+	pub(crate) sim: SimHandle,
 	pub(crate) camera: Camera,
 	pub(crate) dragging: bool,
 	pub(crate) last_cursor: Vec2,
@@ -206,15 +203,14 @@ pub(crate) struct ViewerState {
 	/// `viewer::save_flow`).
 	pub(crate) unsaved_drafts: std::collections::HashSet<String>,
 
-	/// Pacing/throughput state for stepping the simulation (see [`SimPacing`]).
+	/// Pacing/throughput readouts fed back from the background simulation
+	/// thread each frame (see [`SimPacing`]).
 	pub(crate) sim_pacing: SimPacing,
-	/// Set when the player requests one single step while the sim is
-	/// paused (`SimNextStepShortcutTriggered`); consumed by the next
-	/// frame's simulation update.
-	pub(crate) advance_single_step: bool,
 	/// How many single steps have advanced since the sim was paused --
 	/// shown on the paused banner, mirroring
-	/// `Project.simPausedSingleStepCounter`.
+	/// `Project.simPausedSingleStepCounter`. Owned by the sim thread (see
+	/// [`crate::viewer::sim_thread`]); mirrored here each frame for
+	/// drawing.
 	pub(crate) paused_step_counter: u32,
 
 	/// Which of the preferences panel's numeric fields currently owns
@@ -362,7 +358,7 @@ impl ViewerState {
 		let mut v = Self {
 			project_name: project_name.to_string(),
 			library,
-			sim,
+			sim: SimHandle::new(sim, std::sync::Arc::clone(&audio)),
 			root_chip_name,
 			camera: Camera::new(viewport),
 			dragging: false,
@@ -372,7 +368,6 @@ impl ViewerState {
 			prefs: ProjectDescription::default(),
 			unsaved_drafts: std::collections::HashSet::new(),
 			sim_pacing: SimPacing::default(),
-			advance_single_step: false,
 			paused_step_counter: 0,
 			prefs_field_focus: None,
 			prefs_clock_text: String::new(),
@@ -432,11 +427,14 @@ impl ViewerState {
 	/// root chip is actually changing.
 	pub(crate) fn rebuild_sim(&mut self) {
 		let root_desc = self.library.get(&self.root_chip_name).clone();
-		let held_keys = std::mem::take(&mut self.sim.held_keys);
-		let key_modifiers = self.sim.key_modifiers;
-		self.sim = Simulator::build(&root_desc, &self.library);
-		self.sim.held_keys = held_keys;
-		self.sim.key_modifiers = key_modifiers;
+		// Carry the player-driven transient input state across the swap so
+		// an in-place edit doesn't drop held keys / modifiers (see
+		// `SimHandle::take_transient_input_state`).
+		let (held_keys, key_modifiers) = self.sim.take_transient_input_state();
+		let mut sim = Simulator::build(&root_desc, &self.library);
+		sim.held_keys = held_keys;
+		sim.key_modifiers = key_modifiers;
+		self.sim.replace(sim);
 		self.sync_sim_clock_pref();
 	}
 
@@ -455,12 +453,12 @@ impl ViewerState {
 	/// Ctrl-hold forces snapping regardless of prefs; "If Grid Shown"
 	/// snaps only while the grid is displayed; "Always" snaps always.
 	pub(crate) fn should_snap_to_grid(&self) -> bool {
-		self.sim.key_modifiers & key_mods_bits::CONTROL != 0 || (self.prefs.prefs_snapping == 1 && self.show_grid()) || self.prefs.prefs_snapping == 2
+		self.sim.key_modifiers() & key_mods_bits::CONTROL != 0 || (self.prefs.prefs_snapping == 1 && self.show_grid()) || self.prefs.prefs_snapping == 2
 	}
 
 	/// Same three-way structure as [`Self::should_snap_to_grid`], for shift.
 	pub(crate) fn force_straight_wires(&self) -> bool {
-		self.sim.key_modifiers & key_mods_bits::SHIFT != 0
+		self.sim.key_modifiers() & key_mods_bits::SHIFT != 0
 			|| (self.prefs.prefs_straight_wires == 1 && self.show_grid())
 			|| self.prefs.prefs_straight_wires == 2
 	}
@@ -468,7 +466,7 @@ impl ViewerState {
 	/// Pushes the clock-speed pref into the live simulator (`SimThread.Run`
 	/// assigning `Simulator.stepsPerClockTransition` every tick).
 	pub(crate) fn sync_sim_clock_pref(&mut self) {
-		self.sim.steps_per_clock_transition = self.prefs.prefs_sim_steps_per_clock_tick.max(0) as u32;
+		self.sim.set_steps_per_clock_transition(self.prefs.prefs_sim_steps_per_clock_tick.max(0) as u32);
 	}
 
 	// ---- Shortcut-driven pref mutations (`PreferencesMenu.HandleKeyboardShortcuts`) ----
@@ -486,7 +484,7 @@ impl ViewerState {
 	/// Mirrors the single-step shortcut: only does anything while paused.
 	pub(crate) fn request_single_sim_step(&mut self) {
 		if self.prefs.prefs_sim_paused {
-			self.advance_single_step = true;
+			self.sim.request_single_step();
 		}
 	}
 }

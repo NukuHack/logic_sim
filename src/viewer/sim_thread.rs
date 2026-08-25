@@ -1,0 +1,381 @@
+//! The simulation's own background thread, porting `DLS.Simulation.SimThread`'s
+//! role (and `Project.StartSimulation`/`NotifyExit`): the whole `Simulator`
+//! lives behind a mutex shared with the main thread, and a dedicated worker
+//! steps it against the project's target rate -- using the exact pacing
+//! math already ported in [`crate::viewer::sim_timing`] (tick-debt
+//! accumulator + rolling throughput window) -- so simulation speed no
+//! longer tracks the render framerate.
+//!
+//! Division of labour mirrors the original's thread/main split:
+//! - main thread: builds/replaces simulators (`Project.LoadDevChipOrCreateNewIfDoesntExist`),
+//!   feeds input-pin driven states once per frame (`inputPins = editModeChip.GetInputPins()`),
+//!   flips pause/target-rate prefs, and *reads* pin states freely for rendering
+//!   (the read half of `ViewedChip.UpdateStateFromSim`, which ran on the
+//!   sim thread there -- here rendering simply locks the shared arena);
+//! - worker thread: applies those inputs every step and runs the paced
+//!   step loop, including the paused branch's decay-only
+//!   `UpdateInPausedState` beat and the single-step-while-paused counter.
+
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+use crate::sim::{ExternalInput, Simulator};
+use crate::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks, PerfWindow};
+
+/// How long the worker idles between passes while paused -- the
+/// `Thread.Sleep(10)` of the original's paused branch.
+const PAUSED_SLEEP: Duration = Duration::from_millis(10);
+
+/// Idle sleep between paced passes that owed no ticks: short enough that
+/// the sim never visibly lags its schedule, long enough not to burn a
+/// core spinning (the original busy-spin-waits instead; this port prefers
+/// leaving the render thread alone).
+const IDLE_SLEEP: Duration = Duration::from_micros(200);
+
+/// Control plane shared between the main thread and the worker. Plain
+/// atomics with relaxed ordering -- every value stands alone, so the
+/// worst a torn ordering can do is apply a change one worker pass late.
+struct SimControls {
+	stop: AtomicBool,
+	paused: AtomicBool,
+	/// Set by the host to request exactly one step while paused
+	/// (`Project.advanceSingleSimStep`).
+	single_step: AtomicBool,
+	/// Single steps advanced since the sim paused
+	/// (`Project.simPausedSingleStepCounter`).
+	step_counter: AtomicU32,
+	target_ticks_per_second: AtomicU32,
+	steps_per_clock_transition: AtomicU32,
+	/// Latest measured average ticks/second, stored as `f64::to_bits`.
+	avg_ticks_per_sec_bits: AtomicU64,
+}
+
+impl SimControls {
+	fn new() -> Self {
+		Self {
+			stop: AtomicBool::new(false),
+			paused: AtomicBool::new(false),
+			single_step: AtomicBool::new(false),
+			step_counter: AtomicU32::new(0),
+			target_ticks_per_second: AtomicU32::new(1),
+			steps_per_clock_transition: AtomicU32::new(0),
+			avg_ticks_per_sec_bits: AtomicU64::new(0),
+		}
+	}
+}
+
+fn f64_bits_to_atomic(value: f64) -> AtomicU64 {
+	AtomicU64::new(value.to_bits())
+}
+
+/// Main-thread handle over the simulated world: owns the shared
+/// `Simulator`, the worker thread, and the control plane. Dropping it
+/// stops the worker and joins it.
+pub(crate) struct SimHandle {
+	sim: Arc<Mutex<Simulator>>,
+	inputs: Arc<Mutex<Vec<ExternalInput>>>,
+	controls: Arc<SimControls>,
+	worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SimHandle {
+	/// Wraps `sim` and starts its background stepping thread.
+	pub(crate) fn new(sim: Simulator, audio: crate::audio::SharedAudioState) -> Self {
+		let sim = Arc::new(Mutex::new(sim));
+		let controls = Arc::new(SimControls::new());
+		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), Arc::new(Mutex::new(Vec::new())), audio);
+		Self { sim, inputs: Arc::new(Mutex::new(Vec::new())), controls, worker: Some(worker) }
+	}
+
+	/// Locks the shared simulator for reading/rendering or wholesale
+	/// mutation. Recovers from poisoning like every other lock here: an
+	/// audio panic must not take the editor down with it.
+	pub(crate) fn lock(&self) -> MutexGuard<'_, Simulator> {
+		self.sim.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+	}
+
+	/// Swaps in a freshly built simulator (structural edit / chip switch /
+	/// project open). Blocks until any in-flight step finishes, then
+	/// replaces the arena wholesale -- the worker picks up whatever sits
+	/// inside on its next pass, so no restart signalling is needed.
+	pub(crate) fn replace(&self, sim: Simulator) {
+		*self.lock() = sim;
+	}
+
+	// ---- Keyboard state feeding (the old direct field writes) ----
+
+	pub(crate) fn key_modifiers(&self) -> u32 {
+		self.lock().key_modifiers
+	}
+
+	pub(crate) fn set_key_modifiers(&self, modifiers: u32) {
+		self.lock().key_modifiers = modifiers;
+	}
+
+	pub(crate) fn held_key_press(&self, key: char) {
+		self.lock().held_keys.insert(key);
+	}
+
+	pub(crate) fn held_key_release(&self, key: char) {
+		self.lock().held_keys.remove(&key);
+	}
+
+	pub(crate) fn clear_held_keys(&self) {
+		self.lock().held_keys.clear();
+	}
+
+	/// Moves the player-driven transient input state (held keys +
+	/// modifiers) out of the outgoing simulator so [`Self::replace`] can
+	/// carry it into the rebuilt one -- what `ViewerState::rebuild_sim`
+	/// used to do across its plain field swap.
+	pub(crate) fn take_transient_input_state(&self) -> (std::collections::HashSet<char>, u32) {
+		let mut sim = self.lock();
+		(std::mem::take(&mut sim.held_keys), sim.key_modifiers)
+	}
+
+	// ---- Prefs-derived control plumbing ----
+
+	pub(crate) fn set_steps_per_clock_transition(&self, steps: u32) {
+		self.controls.steps_per_clock_transition.store(steps, Ordering::Relaxed);
+	}
+
+	pub(crate) fn set_paused(&self, paused: bool) {
+		self.controls.paused.store(paused, Ordering::Relaxed);
+		if paused {
+			// A fresh pause starts the single-step count over, matching the
+			// original (the counter only ever accumulates while paused).
+			self.controls.step_counter.store(0, Ordering::Relaxed);
+		}
+	}
+
+	pub(crate) fn set_target_ticks_per_second(&self, ticks: u32) {
+		self.controls.target_ticks_per_second.store(ticks.max(1), Ordering::Relaxed);
+	}
+
+	/// Publishes this frame's snapshot of every input dev-pin's driven
+	/// state; the worker applies it to each step it runs until superseded
+	/// (mirroring how the original captures `inputPins` once per Update).
+	pub(crate) fn publish_external_inputs(&self, inputs: Vec<ExternalInput>) {
+		*self.inputs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = inputs;
+	}
+
+	pub(crate) fn request_single_step(&self) {
+		self.controls.single_step.store(true, Ordering::Relaxed);
+	}
+
+	/// Latest measured average ticks/second (`0` before anything measured).
+	pub(crate) fn avg_ticks_per_sec(&self) -> f64 {
+		f64::from_bits(self.controls.avg_ticks_per_sec_bits.load(Ordering::Relaxed))
+	}
+
+	pub(crate) fn paused_step_counter(&self) -> u32 {
+		self.controls.step_counter.load(Ordering::Relaxed)
+	}
+}
+
+impl Drop for SimHandle {
+	fn drop(&mut self) {
+		self.controls.stop.store(true, Ordering::Relaxed);
+		if let Some(worker) = self.worker.take() {
+			let _ = worker.join();
+		}
+	}
+}
+
+fn spawn_worker(
+	sim: Arc<Mutex<Simulator>>,
+	controls: Arc<SimControls>,
+	inputs: Arc<Mutex<Vec<ExternalInput>>>,
+	audio: crate::audio::SharedAudioState,
+) -> std::thread::JoinHandle<()> {
+	std::thread::Builder::new().name("DLS_SimThread".to_string()).spawn(move || worker_loop(sim, controls, inputs, audio)).expect("failed to spawn sim thread")
+}
+
+/// One simulation step with the latest published external inputs --
+/// `Simulator.RunSimulationStep(simChip, inputPins, audioState.simAudio)`.
+/// The clock-speed pref is pushed in every step, mirroring `SimThread.Run`
+/// assigning `Simulator.stepsPerClockTransition` each iteration.
+fn step_once(sim: &Mutex<Simulator>, controls: &SimControls, inputs: &Mutex<Vec<ExternalInput>>, audio: &crate::audio::SharedAudioState) {
+	let external_inputs = inputs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+	let mut sim = sim.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	sim.steps_per_clock_transition = controls.steps_per_clock_transition.load(Ordering::Relaxed);
+	let mut audio_guard = audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+	sim.run_simulation_step(&external_inputs, &mut audio_guard.sim_audio);
+}
+
+fn worker_loop(
+	sim: Arc<Mutex<Simulator>>,
+	controls: Arc<SimControls>,
+	inputs: Arc<Mutex<Vec<ExternalInput>>>,
+	audio: crate::audio::SharedAudioState,
+) {
+	struct WorkerPacing {
+		last_tick: Option<Instant>,
+		debt_ticks: f64,
+		window: PerfWindow,
+		was_paused: bool,
+	}
+	impl Default for WorkerPacing {
+		fn default() -> Self {
+			Self { last_tick: None, debt_ticks: 0.0, window: PerfWindow::default(), was_paused: false }
+		}
+	}
+
+	let mut pacing = WorkerPacing::default();
+
+	while !controls.stop.load(Ordering::Relaxed) {
+		let now = Instant::now();
+		let paused = controls.paused.load(Ordering::Relaxed);
+		let step_requested = controls.single_step.swap(false, Ordering::Relaxed);
+
+		if paused && !step_requested {
+			// Mirrors `SimThread`'s paused branch: sleep-equivalent, no
+			// debt accrues. The audio mix still decays
+			// (`UpdateInPausedState`) so a sounding buzzer fades away
+			// rather than hanging.
+			let mut audio_guard = audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+			sim.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).update_in_paused_state(&mut audio_guard.sim_audio);
+			pacing.last_tick = Some(now);
+			pacing.debt_ticks = 0.0;
+			pacing.was_paused = true;
+			std::thread::sleep(PAUSED_SLEEP);
+			continue;
+		}
+
+		if step_requested {
+			controls.step_counter.fetch_add(1, Ordering::Relaxed);
+		} else {
+			controls.step_counter.store(0, Ordering::Relaxed);
+		}
+
+		if paused {
+			// A requested single step runs exactly one tick regardless of
+			// pacing (`Project.advanceSingleSimStep`) and mustn't disturb
+			// the paused timing hold below.
+			step_once(&sim, &controls, &inputs, &audio);
+			pacing.last_tick = Some(now);
+			pacing.debt_ticks = 0.0;
+			pacing.window.record(now, 1);
+			store_avg(&controls, &pacing.window, now);
+			std::thread::sleep(PAUSED_SLEEP);
+			continue;
+		}
+
+		if pacing.was_paused {
+			// Just unpaused: start measuring fresh so stale pre-pause
+			// samples don't paint a burst onto the readout.
+			pacing.window.clear();
+			pacing.debt_ticks = 0.0;
+			controls.avg_ticks_per_sec_bits.store(0, Ordering::Relaxed);
+			pacing.was_paused = false;
+			pacing.last_tick = None;
+		}
+
+		let elapsed = now.duration_since(pacing.last_tick.unwrap_or(now));
+		pacing.last_tick = Some(now);
+		pacing.debt_ticks = accumulate_tick_debt(pacing.debt_ticks, elapsed.as_secs_f64(), f64::from(controls.target_ticks_per_second.load(Ordering::Relaxed)));
+		let (steps, remaining_debt) = take_due_ticks(pacing.debt_ticks);
+		pacing.debt_ticks = remaining_debt;
+
+		for _ in 0..steps {
+			step_once(&sim, &controls, &inputs, &audio);
+		}
+		if steps > 0 {
+			pacing.window.record(now, steps);
+			store_avg(&controls, &pacing.window, now);
+			std::thread::yield_now();
+		} else {
+			std::thread::sleep(IDLE_SLEEP);
+		}
+	}
+}
+
+fn store_avg(controls: &SimControls, window: &PerfWindow, now: Instant) {
+	if let Some(avg) = window.avg_per_sec(now) {
+		controls.avg_ticks_per_sec_bits.store(avg.to_bits(), Ordering::Relaxed);
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	//! White-box: `SimHandle`'s worker only exists to service a live
+	//! `ViewerState`, so driving the handle directly (with polling
+	//! deadlines instead of sleeps) is the only way to observe the
+	//! thread's pacing/single-step behaviour headlessly.
+
+	use super::*;
+	use crate::description::{ChipDescription, ChipLibrary, ChipType};
+
+	fn blank_simulator() -> Simulator {
+		let mut library = ChipLibrary::new();
+		library.add(ChipDescription::new("BLANK", ChipType::Custom));
+		Simulator::build(library.get("BLANK"), &library)
+	}
+
+	fn handle(paused: bool, ticks_per_second: u32) -> SimHandle {
+		let handle = SimHandle::new(blank_simulator(), crate::audio::default_shared_state());
+		handle.set_paused(paused);
+		handle.set_target_ticks_per_second(ticks_per_second);
+		handle.set_steps_per_clock_transition(250);
+		handle
+	}
+
+	fn wait_until(deadline: Duration, mut predicate: impl FnMut() -> bool) -> bool {
+		let start = Instant::now();
+		while start.elapsed() < deadline {
+			if predicate() {
+				return true;
+			}
+			std::thread::sleep(Duration::from_micros(200));
+		}
+		predicate()
+	}
+
+	#[test]
+	fn single_steps_advance_exactly_once_each_while_paused() {
+		let h = handle(true, 1);
+		assert_eq!(frame(&h), 0);
+
+		for expected in 1..=3 {
+			h.request_single_step();
+			assert!(wait_until(Duration::from_secs(2), || frame(&h) >= expected), "step {expected} never landed");
+		}
+		assert_eq!(frame(&h), 3, "each request advances exactly one simulation frame");
+		assert_eq!(h.paused_step_counter(), 3);
+	}
+
+	fn frame(h: &SimHandle) -> u64 {
+		h.lock().simulation_frame
+	}
+
+	#[test]
+	fn unpaused_sim_runs_on_the_worker_without_main_thread_help() {
+		let h = handle(false, 500_000);
+		assert!(wait_until(Duration::from_secs(5), || frame(&h) > 0), "worker never stepped");
+		assert!(wait_until(Duration::from_secs(5), || h.avg_ticks_per_sec() > 0.0), "throughput window never measured");
+	}
+
+	#[test]
+	fn replace_swaps_in_the_new_arena_for_subsequent_reads() {
+		let h = handle(true, 1);
+		h.replace(blank_simulator());
+		assert_eq!(frame(&h), 0, "a replaced simulator starts from frame zero");
+		assert!(h.lock().chips.iter().all(|c| c.sub_chips.is_empty()));
+	}
+
+	#[test]
+	fn keyboard_state_feeds_through_the_handle() {
+		let h = handle(true, 1);
+		h.set_key_modifiers(7);
+		h.held_key_press('A');
+		assert_eq!(h.key_modifiers(), 7);
+		assert!(h.lock().held_keys.contains(&'A'));
+		h.held_key_release('A');
+		assert!(h.lock().held_keys.is_empty());
+		h.held_key_press('B');
+		let (keys, mods) = h.take_transient_input_state();
+		assert!(keys.contains(&'B') && mods == 7);
+		assert!(h.lock().held_keys.is_empty(), "take clears the source");
+	}
+}

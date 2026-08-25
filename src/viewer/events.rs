@@ -63,7 +63,7 @@ impl ApplicationHandler for App {
 			WindowEvent::ModifiersChanged(mods) => {
 				self.modifiers = mods.state();
 				if let Screen::Viewer(v) = &mut self.screen {
-					v.sim.key_modifiers = encode_modifiers(self.modifiers);
+					v.sim.set_key_modifiers(encode_modifiers(self.modifiers));
 				}
 			}
 
@@ -73,8 +73,8 @@ impl ApplicationHandler for App {
 			WindowEvent::Focused(false) => {
 				self.modifiers = winit::keyboard::ModifiersState::empty();
 				if let Screen::Viewer(v) = &mut self.screen {
-					v.sim.held_keys.clear();
-					v.sim.key_modifiers = 0;
+					v.sim.clear_held_keys();
+					v.sim.set_key_modifiers(0);
 				}
 			}
 
@@ -435,12 +435,8 @@ impl App {
 					if let Some(c) = s.chars().next() {
 						let c = c.to_ascii_uppercase();
 						match event.state {
-							ElementState::Pressed => {
-								v.sim.held_keys.insert(c);
-							}
-							ElementState::Released => {
-								v.sim.held_keys.remove(&c);
-							}
+							ElementState::Pressed => v.sim.held_key_press(c),
+							ElementState::Released => v.sim.held_key_release(c),
 						}
 					}
 				}

@@ -127,7 +127,7 @@ impl App {
 				v.mark_unsaved_draft(&root_chip_name);
 				// In case modifier keys are already held down (e.g. Alt from the menu action that
 				// opened this project) by the time the viewer appears, rather than only picking them up on the next change.
-				v.sim.key_modifiers = encode_modifiers(self.modifiers);
+				v.sim.set_key_modifiers(encode_modifiers(self.modifiers));
 
 				let mut prefs = project_desc;
 				if prefs.chip_collections.is_empty() {

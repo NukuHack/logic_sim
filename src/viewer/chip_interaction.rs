@@ -225,7 +225,7 @@ fn boxes_overlap(a_centre: Vec2, a_size: Vec2, b_centre: Vec2, b_size: Vec2) -> 
 }
 
 fn multi_mode_held(v: &ViewerState) -> bool {
-	v.sim.key_modifiers & key_mods_bits::SHIFT != 0
+	v.sim.key_modifiers() & key_mods_bits::SHIFT != 0
 }
 
 /// Whether the carried selection currently overlaps anything it may not
@@ -373,10 +373,10 @@ mod tests {
 		// A degenerate (click-sized) band adds nothing further -- and with
 		// shift held (so the press didn't clear first) the existing
 		// selection survives it untouched.
-		v.sim.key_modifiers = key_mods_bits::SHIFT;
+		v.sim.set_key_modifiers(key_mods_bits::SHIFT);
 		begin_selection_box(&mut v, Vec2::new(-1.0, -1.0));
 		handle_canvas_release(&mut v, Vec2::new(-1.0000001, -1.0));
-		v.sim.key_modifiers = 0;
+		v.sim.set_key_modifiers(0);
 		assert_eq!(v.selected_ids, vec![a]);
 	}
 
@@ -408,7 +408,7 @@ mod tests {
 		let mut v = viewer_with_builtins();
 		let a = place_nand(&mut v, Vec2::ZERO);
 		let b = place_nand(&mut v, Vec2::new(4.0, 0.0));
-		v.sim.key_modifiers = key_mods_bits::SHIFT;
+		v.sim.set_key_modifiers(key_mods_bits::SHIFT);
 
 		begin_drag_on_component(&mut v, a, Vec2::ZERO);
 		assert_eq!(v.selected_ids, vec![a]);
@@ -417,7 +417,7 @@ mod tests {
 		begin_drag_on_component(&mut v, a, Vec2::ZERO);
 		assert_eq!(v.selected_ids, vec![b], "shift-pressing a selected component removes it again");
 
-		v.sim.key_modifiers = 0;
+		v.sim.set_key_modifiers(0);
 	}
 
 	/// The real click router: an empty-canvas press must open the rubber
@@ -539,10 +539,10 @@ mod tests {
 		let b = place_nand(&mut v, Vec2::new(1.0, 0.0));
 		v.prefs.prefs_snapping = 2; // "always snap"
 
-		v.sim.key_modifiers = key_mods_bits::SHIFT;
+		v.sim.set_key_modifiers(key_mods_bits::SHIFT);
 		begin_drag_on_component(&mut v, a, Vec2::new(0.0, 0.0));
 		begin_drag_on_component(&mut v, b, Vec2::new(1.0, 0.0));
-		v.sim.key_modifiers = 0;
+		v.sim.set_key_modifiers(0);
 
 		update_move_to_cursor(&mut v, Vec2::new(1.53, 0.47)); // anchor was on b (the last press)
 

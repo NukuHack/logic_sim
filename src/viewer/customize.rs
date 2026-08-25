@@ -300,7 +300,8 @@ pub(crate) fn build_layer(v: &ViewerState, vw: f32, vh: f32, mouse: Vec2) -> Cus
 		return CustomizeFrameOut { frame: Default::default(), layout: Default::default(), list_scroll_max: 0.0 };
 	};
 	let entries = display_entries(&customize.draft, &v.library);
-	let pin_state = SimulatorPinState { sim: &v.sim, scope: v.sim.root() };
+	let sim_guard = v.sim.lock();
+	let pin_state = SimulatorPinState { sim: &sim_guard, scope: sim_guard.root() };
 	let ctx = CustomizeCtx {
 		draft: &customize.draft,
 		library: &v.library,
@@ -480,14 +481,23 @@ mod tests {
 
 		// Drive the input high (what toggling a switch does), then open the
 		// customizer and build one frame of the real UI stack. Pausing and
-		// requesting a single step makes that frame advance the simulation
+		// requesting a single step makes the background sim thread advance
 		// by exactly one deterministic tick (wall-clock pacing would make
 		// "one frame" an arbitrary number of ticks).
 		v.library.get_mut("Panel").input_pins[0].driven_state = PinState::HIGH;
 		v.prefs.prefs_sim_paused = true;
-		v.advance_single_step = true;
 		open_customize(&mut v);
 		assert!(v.overlays.contains(&Overlay::CustomizeChip));
+
+		v.sim.request_single_step();
+		let stepped = {
+			let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+			while std::time::Instant::now() < deadline && v.sim.lock().simulation_frame == 0 {
+				std::thread::sleep(std::time::Duration::from_micros(200));
+			}
+			v.sim.lock().simulation_frame >= 1
+		};
+		assert!(stepped, "the paused single step never ran");
 
 		let stack = build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::new(900.0, 400.0));
 		let layer = stack.layers().iter().find(|l| l.id == LayerId::CustomizePanel).expect("customize layer built");
