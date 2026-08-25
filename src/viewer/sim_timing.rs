@@ -46,6 +46,13 @@ pub fn take_due_ticks(debt_ticks: f64) -> (u64, f64) {
 	(steps, debt_ticks - steps as f64)
 }
 
+/// Puts ticks a pass reserved but couldn't run (its time budget expired,
+/// handing the arena back to the renderer early) back onto the debt,
+/// clamped by the same ceiling [`accumulate_tick_debt`] enforces.
+pub fn restore_unfinished_ticks(debt_ticks: f64, unrun_ticks: u64, ticks_per_second: f64) -> f64 {
+	accumulate_tick_debt(debt_ticks + unrun_ticks as f64, 0.0, ticks_per_second)
+}
+
 /// Rolling "average ticks per second over the last
 /// [`PERF_WINDOW_SECS`]" measurement. The original enqueues one timestamp
 /// per tick; this records one `(time, count)` entry per frame batch, which
@@ -94,5 +101,45 @@ impl PerfWindow {
 	pub fn clear(&mut self) {
 		self.entries.clear();
 		self.total = 0;
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	//! White-box: pure pacing arithmetic with hard edges (clamps, caps,
+	//! fractional carry) that only a direct unit test can pin exactly.
+
+	use super::*;
+
+	#[test]
+	fn debt_accumulates_by_elapsed_times_rate_and_clamps() {
+		assert!((accumulate_tick_debt(0.0, 0.1, 120.0) - 12.0).abs() < 1e-9, "under the ceiling, debt accrues as elapsed x rate");
+		assert!((accumulate_tick_debt(3.25, 0.0, 120.0) - 3.25).abs() < 1e-9, "no elapsed time adds nothing");
+		let max = MAX_CATCHUP_SECS * 120.0;
+		assert_eq!(accumulate_tick_debt(0.0, 60.0, 120.0), max, "time beyond the catch-up window clamps at the ceiling");
+		assert_eq!(accumulate_tick_debt(max, 60.0, 120.0), max, "debt never exceeds the catch-up ceiling");
+	}
+
+	#[test]
+	fn due_ticks_carry_their_fraction_and_drop_excess_beyond_the_cap() {
+		let (steps, rest) = take_due_ticks(7.75);
+		assert_eq!((steps, (rest * 100.0).round() as u64), (7, 75));
+
+		let huge = MAX_STEPS_PER_FRAME as f64 + 500.0;
+		let (capped, rest) = take_due_ticks(huge);
+		assert_eq!(capped, MAX_STEPS_PER_FRAME);
+		assert!((rest - 500.0).abs() < 1e-9, "excess beyond the cap is dropped");
+
+		assert_eq!(take_due_ticks(0.99), (0, 0.99), "a fraction of a tick is not yet due");
+	}
+
+	#[test]
+	fn unfinished_ticks_return_to_debt_under_the_ceiling() {
+		let restored = restore_unfinished_ticks(0.4, 12, 1000.0);
+		assert!((restored - 12.4).abs() < 1e-9);
+
+		let tps = 1000.0;
+		let max = MAX_CATCHUP_SECS * tps;
+		assert_eq!(restore_unfinished_ticks(max - 2.0, 50, tps), max, "the hand-back honours the catch-up ceiling");
 	}
 }

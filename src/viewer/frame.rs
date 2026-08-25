@@ -205,8 +205,11 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// The scene shows the top of the view stack when one is open (a chip
 	// being watched in view-only mode), else the edited root -- with pin
 	// states resolved against that chip's own live sim scope, which is
-	// exactly how a viewed subchip's subtree stays "live".
-	let scene_chip_name = match &v.resolve_scene_target() {
+	// exactly how a viewed subchip's subtree stays "live". Resolved once
+	// here: every call takes the shared arena's lock and walks the view
+	// path, so the name and the scope mustn't each resolve their own.
+	let scene_target = v.resolve_scene_target();
+	let scene_chip_name = match &scene_target {
 		SceneTarget::EditRoot => v.root_chip_name.clone(),
 		SceneTarget::Viewed { name, .. } => name.clone(),
 	};
@@ -215,7 +218,6 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// short-lived lock -- the read half of the original's per-frame
 	// `ViewedChip.UpdateStateFromSim` sync.
 	let (mut chip_scene, component_spans) = {
-		let scene_target = v.resolve_scene_target();
 		let sim_guard = v.sim.lock();
 		let scope = match scene_target {
 			SceneTarget::EditRoot => sim_guard.root(),
