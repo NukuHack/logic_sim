@@ -4,7 +4,6 @@
 
 use crate::render::context_menu::{ContextMenuAction, ContextMenuItem};
 use crate::render::editor_ui::LibrarySelection;
-use crate::viewer::canvas::delete_component;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
 use crate::viewer::state::{open_overlay, KeySelectPurpose, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState};
@@ -179,7 +178,7 @@ pub(crate) fn apply_context_menu_action(
 				v.pin_edit = Some(PinEditState { is_input, pin_id: id, display_mode_index });
 			}
 		}
-		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => delete_component(v, id),
+		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
 
 		(ContextMenuAction::Configure, ContextTarget::Component(id)) => {
 			let sub_chip_name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
@@ -208,7 +207,7 @@ pub(crate) fn apply_context_menu_action(
 			}
 		}
 
-		(ContextMenuAction::Delete, ContextTarget::Component(id)) => delete_component(v, id),
+		(ContextMenuAction::Delete, ContextTarget::Component(id)) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
 
 		_ => {}
 	}

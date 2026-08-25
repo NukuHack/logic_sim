@@ -196,8 +196,12 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			wire.points.reverse();
 		}
 
-		v.library.get_mut(&root_chip_name).wires.push(wire);
+		let chip = v.library.get_mut(&root_chip_name);
+		let wire_index = chip.wires.len();
+		chip.wires.push(wire);
+		drop(chip);
 		v.rebuild_sim();
+		crate::viewer::undo::record_add_wire(v, v.library.get(&root_chip_name).wires[wire_index].clone(), wire_index);
 		*status = None;
 		return;
 	}
@@ -222,8 +226,12 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 					if !pending.start.is_source() {
 						wire.points.reverse();
 					}
-					v.library.get_mut(&root_chip_name).wires.push(wire);
+					let chip = v.library.get_mut(&root_chip_name);
+					let wire_index = chip.wires.len();
+					chip.wires.push(wire);
+					drop(chip);
 					v.rebuild_sim();
+					crate::viewer::undo::record_add_wire(v, v.library.get(&root_chip_name).wires[wire_index].clone(), wire_index);
 					*status = None;
 					return;
 				}
@@ -357,6 +365,8 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 
 	let first_id = next_component_id(v.library.get(&v.root_chip_name));
 	let chip = v.library.get_mut(&v.root_chip_name);
+	let mut placed_subchips: Vec<SubChipDescription> = Vec::new();
+	let mut placed_pins: Vec<(PinDescription, bool)> = Vec::new();
 	for (index, (offset, component)) in carry.iter().enumerate() {
 		let id = first_id + index as i32;
 		let place_pos = if snap { crate::render::layout::snap_to_grid_centred(world_pos + *offset) } else { world_pos + *offset };
@@ -366,8 +376,10 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			new_pin.position = place_pos;
 			if is_input {
 				chip.input_pins.push(new_pin);
+				placed_pins.push((chip.input_pins.last().expect("just pushed").clone(), true));
 			} else {
 				chip.output_pins.push(new_pin);
+				placed_pins.push((chip.output_pins.last().expect("just pushed").clone(), false));
 			}
 			continue;
 		}
@@ -384,8 +396,10 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
+		placed_subchips.push(chip.sub_chips.last().expect("just pushed").clone());
 	}
 	v.rebuild_sim();
+	crate::viewer::undo::record_add_elements(v, placed_subchips, placed_pins);
 }
 
 /// Builds the translucent "ghost" preview of everything currently carried
@@ -471,27 +485,13 @@ pub(crate) fn draw_pending_wire_preview(geo: &mut SceneGeometry, pending: &Pendi
 	}
 }
 
-/// Deletes subchip/dev-pin `id` from the current root chip, plus every
-/// wire directly attached to it -- but, per the brief, only the "shortest
-/// possible section" of wiring: just the wire(s) whose source or target
-/// pin actually belongs to this subchip (via `scene::delete_wire`, which
-/// itself only cascades to wires *tapping onto* one of those, never
-/// anything further away). A wire fanning out from one of this
-/// component's *output* pins to some other, unrelated component is left
-/// completely alone at the far end -- only the segment that touched the
-/// deleted component goes.
-///
-/// `id` may equally be a placed subchip's `SubChipDescription::id` or one of
-/// the current chip's own boundary dev-pins' `PinDescription::id` -- the two
-/// share one id space (see `next_component_id`), and a wire's cascade-delete
-/// above already keys off `pin_owner_id` without caring which kind of thing
-/// it belonged to, so removing the component itself just means checking all
-/// three lists it could actually be sitting in.
-pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
+/// Every component id that goes away when `id` is deleted from the
+/// current root chip: `id` itself plus, transitively, any linked bus
+/// partner pulled along with it (`GetNonIncludedLinkedBusElements` keeps
+/// pairs together on delete in the original).
+pub(crate) fn compute_component_delete_set(v: &ViewerState, id: i32) -> Vec<i32> {
 	let root_chip_name = v.root_chip_name.clone();
 
-	// Bus chips go together with their linked partner (`GetNonIncludedLinkedBusElements`
-	// keeps the pair together on delete in the original).
 	let mut ids = vec![id];
 	loop {
 		let mut added = false;
@@ -507,9 +507,29 @@ pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
 			break;
 		}
 	}
+	ids
+}
+
+/// Physically removes components `ids` (and their attached wiring) from
+/// the current root chip -- but, per the brief, only the "shortest
+/// possible section" of wiring: just the wire(s) whose source or target
+/// pin actually belongs to one of these components (via
+/// `scene::delete_wire`, which itself only cascades to wires *tapping
+/// onto* one of those, never anything further away). A wire fanning out
+/// from one of these components' *output* pins to some other, unrelated
+/// component is left completely alone at the far end -- only the segment
+/// that touched the deleted component goes.
+///
+/// `ids` may mix placed subchips' `SubChipDescription::id`s and boundary
+/// dev-pins' `PinDescription::id`s freely -- the two share one id space
+/// (see `next_component_id`). Does NOT rebuild the simulation; callers
+/// decide when to pay for that (batching several mutations into one
+/// rebuild).
+pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
+	let root_chip_name = v.root_chip_name.clone();
 
 	let chip = v.library.get_mut(&root_chip_name);
-	for &id in &ids {
+	for &id in ids {
 		loop {
 			let next = chip.wires.iter().position(|w| w.source_pin_address.pin_owner_id == id || w.target_pin_address.pin_owner_id == id);
 			match next {
@@ -524,7 +544,13 @@ pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
 	chip.sub_chips.retain(|s| !ids.contains(&s.id));
 	chip.input_pins.retain(|p| !ids.contains(&p.id));
 	chip.output_pins.retain(|p| !ids.contains(&p.id));
-	v.rebuild_sim();
+}
+
+/// Deletes subchip/dev-pin `id` plus everything [`compute_component_delete_set`]
+/// says must go with it -- the plain (undo-unaware) entry point used
+/// where no history recording is wanted.
+pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
+	crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id));
 }
 
 /// Applies a canvas click that the UI stack let fall all the way through

@@ -6,7 +6,7 @@
 
 use crate::render::context_menu::{ContextMenuAction, ContextMenuItem, ContextMenuState};
 use crate::render::editor_ui::EditorAction;
-use crate::render::scene::{delete_wire, hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips};
+use crate::render::scene::{hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips};
 use crate::render::ui_stack::{InputResult, LayerId};
 use crate::structs::Vec2;
 use crate::viewer::app::{App, Screen};
@@ -347,14 +347,15 @@ impl App {
 		// 4) A wire -- deleted immediately, no popup (see this method's
 		// doc comment). Edited-chip territory only.
 		if can_edit {
-			let root_desc = v.library.get(&root_chip_name);
 			// Fixed screen-pixel tolerance converted to world units, so the click target stays the
 			// same apparent size regardless of current zoom.
-			let max_dist = wire_click_tolerance(&v.camera);
-			if let Some(wire_idx) = hit_test_wire(root_desc, &v.library, world_pos, max_dist) {
-				let chip = v.library.get_mut(&root_chip_name);
-				delete_wire(chip, wire_idx);
-				v.rebuild_sim();
+			let hit = {
+				let root_desc = v.library.get(&root_chip_name);
+				let max_dist = wire_click_tolerance(&v.camera);
+				hit_test_wire(root_desc, &v.library, world_pos, max_dist)
+			};
+			if let Some(wire_idx) = hit {
+				crate::viewer::undo::delete_wire_with_undo(v, &root_chip_name, wire_idx);
 			}
 		}
 	}

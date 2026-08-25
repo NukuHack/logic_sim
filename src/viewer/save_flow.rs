@@ -108,6 +108,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 				}
 			}
 
+			v.undo.clear();
 			v.exit_view_mode();
 			v.root_chip_name = new_name.to_string();
 			*status = Some(format!("Saved as '{new_name}'"));
@@ -152,6 +153,7 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			v.mark_saved(new_name);
 			v.mark_saved(&old_name);
 			register_chip_name_in_project(v, paths, Some(&old_name), new_name);
+			v.undo.clear();
 			v.exit_view_mode();
 			v.root_chip_name = new_name.to_string();
 			*status = Some(format!("Renamed '{old_name}' to '{new_name}'"));
@@ -393,6 +395,7 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 	v.library.add(ChipDescription::new(&name, ChipType::Custom));
 	v.mark_unsaved_draft(&name);
 
+	v.undo.clear();
 	v.exit_view_mode();
 	v.root_chip_name = name.clone();
 	reset_all_driven_inputs(&mut v.library);
@@ -430,6 +433,7 @@ pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: 
 	if is_custom_chip(&v.library, name) {
 		if switching {
 			discard_unsaved_changes(v, paths);
+			v.undo.clear();
 			v.exit_view_mode();
 		}
 		v.root_chip_name = name.to_string();

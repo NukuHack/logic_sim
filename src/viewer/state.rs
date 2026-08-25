@@ -357,6 +357,10 @@ pub(crate) struct ViewerState {
 	/// chip (`Project.chipViewStack`; empty = editing normally). See
 	/// [`ViewedChip`] and [`ViewerState::can_edit_viewed_chip`].
 	pub(crate) view_stack: Vec<ViewedChip>,
+
+	/// Undo/redo history for the edited chip (`DevChipInstance`'s
+	/// `UndoController`). Cleared wherever the edited root changes.
+	pub(crate) undo: crate::viewer::undo::UndoController,
 }
 
 impl ViewerState {
@@ -417,6 +421,7 @@ impl ViewerState {
 			selected_ids: Vec::new(),
 			canvas_interaction: Default::default(),
 			view_stack: Vec::new(),
+			undo: Default::default(),
 		};
 		v.sync_sim_clock_pref();
 		v

@@ -162,9 +162,22 @@ pub(crate) fn update_move_to_cursor(v: &mut ViewerState, cursor_world: Vec2) {
 /// nothing is in flight (e.g. the press landed on a UI layer).
 pub(crate) fn handle_canvas_release(v: &mut ViewerState, cursor_world: Vec2) {
 	match v.canvas_interaction.clone() {
-		CanvasInteraction::MovingSelection { .. } => {
+		CanvasInteraction::MovingSelection { originals, .. } => {
 			if move_is_illegal(v) {
 				revert_move(v);
+			} else {
+				// A committed drag is one recorded move action
+				// (`FinishMovingElements` -> `RecordMoveElements`); a
+				// reverted one records nothing, and neither does a plain
+				// click that never actually moved anything.
+				let root_chip_name = v.root_chip_name.clone();
+				let chip = v.library.get(&root_chip_name);
+				let entries: Vec<(i32, Vec2, Vec2)> = originals
+					.iter()
+					.filter_map(|&(id, original)| chip.sub_chips.iter().find(|s| s.id == id).map(|s| (id, original, s.position)))
+					.filter(|&(_, original, new)| original != new)
+					.collect();
+				crate::viewer::undo::record_move(v, entries);
 			}
 			// The selection itself survives the drag (only Escape/right-click
 			// clears it), mirroring `FinishMovingElements`.

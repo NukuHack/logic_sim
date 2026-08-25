@@ -7,7 +7,6 @@
 use crate::render::editor_ui::{self, EditorAction, LibrarySelection, PrefValueField};
 use crate::render::ui_stack::LayerId;
 use crate::viewer::actions::{apply_editor_action, open_library_panel};
-use crate::viewer::canvas::delete_component;
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::customize as customize_flow;
 use crate::viewer::library::reset_library_popup_state;
@@ -280,6 +279,25 @@ pub(crate) fn handle_viewer_key(
 		{
 			request_start_new_chip(v, paths, status);
 		}
+		// Ctrl+Z undo / Ctrl+Shift+Z redo (`KeyboardShortcuts.UndoShortcutTriggered`
+		// / `.RedoShortcutTriggered`), replaying the edited chip's recorded
+		// actions -- see `viewer::undo`.
+		Key::Character(s)
+			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
+				&& modifiers.control_key()
+				&& modifiers.shift_key()
+				&& s.eq_ignore_ascii_case("z") =>
+		{
+			crate::viewer::undo::try_redo(v);
+		}
+		Key::Character(s)
+			if (v.stack.keyboard_target().is_none() || v.stack.keyboard_target() == Some(LayerId::Library))
+				&& modifiers.control_key()
+				&& !modifiers.shift_key()
+				&& s.eq_ignore_ascii_case("z") =>
+		{
+			crate::viewer::undo::try_undo(v);
+		}
 		Key::Named(NamedKey::Tab) if v.stack.keyboard_target().is_none() => {
 			open_library_panel(v);
 		}
@@ -325,12 +343,12 @@ pub(crate) fn can_delete_selection(v: &ViewerState) -> bool {
 	v.stack.keyboard_target().is_none() && v.pending_wire.is_none() && v.pending_place.is_empty() && !v.selected_ids.is_empty()
 }
 
-/// Deletes every selected component; bus partners cascade along inside
-/// [`delete_component`].
+/// Deletes every selected component in one recorded (undoable) action;
+/// bus partners cascade along inside
+/// [`crate::viewer::canvas::apply_component_deletion`].
 pub(crate) fn delete_selected(v: &mut ViewerState) {
-	for id in std::mem::take(&mut v.selected_ids) {
-		delete_component(v, id);
-	}
+	let selected = std::mem::take(&mut v.selected_ids);
+	crate::viewer::undo::delete_components_with_undo(v, selected.into_iter());
 }
 
 /// Whether there is any in-flight canvas state the Escape cascade should

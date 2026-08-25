@@ -15,6 +15,7 @@
 //! unsaved-changes gate over leaving a chip), [`popups`]
 //! (generic popup confirm handlers), [`context_menu`] (right-click popups),
 //! [`actions`] (editor action funnel), [`input`] (keyboard routing),
+//! [`undo`] (the editor's undo/redo history),
 //! [`sim_timing`] (pacing math shared by the background thread),
 //! [`sim_thread`] (the background simulation thread itself),
 //! [`frame`] (per-frame UI-stack construction), [`app`] (app shell +
@@ -36,6 +37,7 @@ pub mod save_flow;
 pub mod sim_timing;
 pub mod sim_thread;
 pub mod state;
+pub mod undo;
 pub mod wire_draft;
 
 pub use app::run;
