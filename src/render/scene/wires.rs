@@ -4,7 +4,6 @@
 //! without orphaning anything that taps onto it.
 
 use crate::description::{ChipDescription, Color, WireConnectionType};
-use crate::pin_state::LogicState;
 use crate::render::foundation::{offset_polyline, SceneGeometry};
 use crate::render::layout;
 use crate::render::scene::lookup::PinStateLookup;
@@ -49,7 +48,7 @@ fn draw_wire_strands(
 	for bit_index in 0..bit_count {
 		let offset = layout::WIRE_THICKNESS * (bit_index as f32 - (bit_count - 1) as f32 / 2.0);
 		let strand_points = if offset == 0.0 { centreline.to_vec() } else { offset_polyline(centreline, offset) };
-		let logic = pin_state.bit_logic_state(pin_owner_id, pin_id, bit_index).unwrap_or(LogicState::Low);
+		let logic = pin_state.bit_logic_state(pin_owner_id, pin_id, bit_index).unwrap_or_default();
 		let strand_colour = theme::state_colour(logic, colour);
 		geo.add_polyline(&strand_points, layout::WIRE_THICKNESS, strand_colour);
 	}

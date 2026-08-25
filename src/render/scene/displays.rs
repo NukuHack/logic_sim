@@ -16,7 +16,6 @@
 //! descended draw blank, matching the original's `sim == null` branches.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, SubChipDescription};
-use crate::pin_state::LogicState;
 use crate::render::foundation::SceneGeometry;
 use crate::render::scene::lookup::{AllLow, PinStateLookup};
 use crate::render::theme::{self, Rgba};
@@ -414,7 +413,7 @@ pub(crate) fn draw_pixel_grid(
 pub(crate) fn draw_led(geo: &mut SceneGeometry, clip: ClipRect, centre: Vec2, scale: f32, owner_id: i32, pin_state: &dyn PinStateLookup) {
 	clip.add_rect(geo, centre, Vec2::splat(scale), theme::STATE_DISCONNECTED_COL);
 
-	let logic = pin_state.logic_state(owner_id, 0).unwrap_or(LogicState::Low);
+	let logic = pin_state.logic_state(owner_id, 0).unwrap_or_default();
 	let colour_index = pin_state.internal_state(owner_id).and_then(|s| s.first().copied()).unwrap_or(Color::White.to_int() as u32);
 	let palette = Color::from_int(colour_index as i32);
 	let fill = theme::state_colour(logic, palette);
@@ -753,6 +752,7 @@ mod tests {
 	/// disconnected rather than reading as merely "off".
 	#[test]
 	fn led_fill_shows_all_three_wire_states() {
+		use crate::pin_state::LogicState;
 		let led = ChipDescription::new("LED", ChipType::DisplayLed);
 		let mut library = ChipLibrary::new();
 		library.add(led.clone());
@@ -770,7 +770,7 @@ mod tests {
 		struct Level(LogicState);
 		impl PinStateLookup for Level {
 			fn is_high(&self, _o: i32, _p: i32) -> Option<bool> {
-				Some(self.0 == LogicState::High)
+				Some(self.0.is_high())
 			}
 			fn logic_state(&self, _o: i32, _p: i32) -> Option<LogicState> {
 				Some(self.0)
