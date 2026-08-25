@@ -49,7 +49,7 @@ fn loaded_not_chip_simulates_correctly_using_real_builtins() {
 	let mut sim = Simulator::build(&not_desc, &library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val as u16) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
@@ -80,8 +80,8 @@ fn loaded_or_chip_simulates_correctly() {
 	for &a in &[0u32, 1] {
 		for &b in &[0u32, 1] {
 			let inputs = vec![
-				ExternalInput { address: PinAddress::new(a_id, a_id), state: PinState::from_raw(a) },
-				ExternalInput { address: PinAddress::new(b_id, b_id), state: PinState::from_raw(b) },
+				ExternalInput { address: PinAddress::new(a_id, a_id), state: PinState::from_raw(a as u16) },
+				ExternalInput { address: PinAddress::new(b_id, b_id), state: PinState::from_raw(b as u16) },
 			];
 			for _ in 0..4 {
 				sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
@@ -142,8 +142,8 @@ fn tri_state_buffer_output_floats_when_disabled() {
 	let out_pin = sim.find_pin(sim.root(), logic_sim::PinAddress::new(OUT, OUT)).expect("wrapper output pin should resolve");
 	let step_with = |sim: &mut Simulator, data: u32, enable: u32| {
 		let inputs = vec![
-			ExternalInput { address: logic_sim::PinAddress::new(DATA, DATA), state: PinState::from_raw(data) },
-			ExternalInput { address: logic_sim::PinAddress::new(ENABLE, ENABLE), state: PinState::from_raw(enable) },
+			ExternalInput { address: logic_sim::PinAddress::new(DATA, DATA), state: PinState::from_raw(data as u16) },
+			ExternalInput { address: logic_sim::PinAddress::new(ENABLE, ENABLE), state: PinState::from_raw(enable as u16) },
 		];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());

@@ -60,7 +60,7 @@ fn wrap_builtin(
 }
 
 fn drive_and_step(sim: &mut Simulator, in_state: u32, steps: usize) {
-	let inputs = [ExternalInput { address: PinAddress::new(IN_PIN_ID, IN_PIN_ID), state: PinState::from_raw(in_state) }];
+	let inputs = [ExternalInput { address: PinAddress::new(IN_PIN_ID, IN_PIN_ID), state: PinState::from_raw(in_state as u16) }];
 	for _ in 0..steps {
 		sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 	}
@@ -68,7 +68,7 @@ fn drive_and_step(sim: &mut Simulator, in_state: u32, steps: usize) {
 
 fn read(sim: &Simulator, out_pin_id: i32) -> u32 {
 	let pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("wrapper output pin should resolve");
-	sim.pin(pin).state.raw()
+	sim.pin(pin).state.raw() as u32
 }
 
 // ---- PULSE ----

@@ -599,7 +599,7 @@ impl Simulator {
 				set_out!(0, PinState::from_bool(is_held));
 			}
 			E::KeyMods => {
-				set_out!(0, PinState::from_raw(self.key_modifiers & 0xFF));
+				set_out!(0, PinState::from_raw((self.key_modifiers & 0xFF) as u16));
 			}
 			E::DisplayRgb => self.process_display_rgb(chip_idx),
 			E::DisplayDot => self.process_display_dot(chip_idx),
@@ -608,8 +608,8 @@ impl Simulator {
 				const BYTE_MASK: u32 = 0b1111_1111;
 				let address = in_state!(0).bit_states() as usize;
 				let data = self.chips[chip_idx.0].internal_state[address];
-				set_out!(0, PinState::from_raw((data >> 8) & BYTE_MASK));
-				set_out!(1, PinState::from_raw(data & BYTE_MASK));
+				set_out!(0, PinState::from_raw(((data >> 8) & BYTE_MASK) as u16));
+				set_out!(1, PinState::from_raw((data & BYTE_MASK) as u16));
 			}
 			E::Buzzer => {
 				let freq_index = in_state!(0).bit_states() as i32;
@@ -653,9 +653,10 @@ impl Simulator {
 		}
 
 		let addr = address_pin.bit_states() as usize;
-		let out_val = self.chips[chip_idx.0].internal_state[addr] as u16 as u32;
 		let out_pin = self.chips[chip_idx.0].output_pins[0];
-		self.pins[out_pin.0].state = PinState::from_raw(out_val);
+		// RAM cells start as full random u32 words (see `build_internal_state`),
+		// but the data pin is 8 bits wide: drive its low byte, fully connected.
+		self.pins[out_pin.0].state = PinState::from_parts(self.chips[chip_idx.0].internal_state[addr] as u8, 0);
 	}
 
 	fn process_display_rgb(&mut self, chip_idx: ChipIdx) {
@@ -702,7 +703,7 @@ impl Simulator {
 		macro_rules! set_out {
 			($i:expr, $v:expr) => {{
 				let p = self.chips[chip_idx.0].output_pins[$i];
-				self.pins[p.0].state = PinState::from_raw($v);
+				self.pins[p.0].state = PinState::from_raw(($v) as u16);
 			}};
 		}
 		set_out!(0, (col_data) & 0b1111);
@@ -747,9 +748,9 @@ impl Simulator {
 			}
 		}
 
-		let pixel_state = self.chips[chip_idx.0].internal_state[address_pin.bit_states() as usize] as u16 as u32;
+		let pixel_state = self.chips[chip_idx.0].internal_state[address_pin.bit_states() as usize] as u8;
 		let out_pin = self.chips[chip_idx.0].output_pins[0];
-		self.pins[out_pin.0].state = PinState::from_raw(pixel_state);
+		self.pins[out_pin.0].state = PinState::from_parts(pixel_state, 0);
 	}
 }
 

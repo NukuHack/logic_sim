@@ -53,7 +53,7 @@ fn simulates_the_loaded_not_chip_correctly() {
 	let mut sim = Simulator::build(&not_desc, &library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val as u16) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
@@ -931,7 +931,7 @@ fn simulates_the_loaded_not_chip_correctly2() {
 	let mut sim = Simulator::build(&not_desc, &library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val as u16) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}
@@ -973,7 +973,7 @@ fn simulates_loaded_not_chip_with_serialization_roundtrip() {
 	let mut sim = Simulator::build(&roundtrip_not, &new_library);
 
 	for &input_val in &[0u32, 1] {
-		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val) }];
+		let inputs = vec![ExternalInput { address: PinAddress::new(in_pin_id, in_pin_id), state: PinState::from_raw(input_val as u16) }];
 		for _ in 0..3 {
 			sim.run_simulation_step(&inputs, &mut logic_sim::audio::SimAudio::new());
 		}

@@ -43,7 +43,7 @@ fn build_sim_around(builtin_name: &str, out_bit_count: PinBitCount, internal_dat
 	(sim, 100) // 100 == OUT_PIN_ID above
 }
 
-fn read_output(sim: &Simulator, out_pin_id: i32) -> u32 {
+fn read_output(sim: &Simulator, out_pin_id: i32) -> u16 {
 	let pin = sim.find_pin(sim.root(), PinAddress::new(out_pin_id, out_pin_id)).expect("wrapper output pin should resolve");
 	sim.pin(pin).state.raw()
 }
@@ -144,11 +144,11 @@ fn key_mods_chip_outputs_current_modifier_bitmask() {
 	}
 
 	let state = read_output(&sim, out_id);
-	// Low 16 bits are the driven bit-states...
-	assert_eq!(state & 0xFFFF, key_mods_bits::SHIFT | key_mods_bits::ALT);
+	// Low byte is the driven bit-states half of the pin state word...
+	assert_eq!((state & 0xFF) as u32, key_mods_bits::SHIFT | key_mods_bits::ALT);
 	// ...and the pin should be fully driven (no tristated bits), so the
-	// high 16 bits (the tristate-flag half of the pin state word) are 0.
-	assert_eq!(state >> 16, 0);
+	// high byte (the tristate-flag half of the pin state word) is 0.
+	assert_eq!(state >> 8, 0);
 }
 
 #[test]

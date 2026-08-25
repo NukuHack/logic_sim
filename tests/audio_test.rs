@@ -152,8 +152,8 @@ mod end_to_end {
 	/// (id 0, 4-bit); the sim arm reads them in that order.
 	fn drive(sim: &mut Simulator, audio: &mut SimAudio, pitch: u32, volume: u32) {
 		let inputs = [
-			ExternalInput { address: PinAddress::new(1, 1), state: PinState::from_raw(pitch) },
-			ExternalInput { address: PinAddress::new(1, 0), state: PinState::from_raw(volume) },
+			ExternalInput { address: PinAddress::new(1, 1), state: PinState::from_raw(pitch as u16) },
+			ExternalInput { address: PinAddress::new(1, 0), state: PinState::from_raw(volume as u16) },
 		];
 		sim.run_simulation_step(&inputs, audio);
 	}
