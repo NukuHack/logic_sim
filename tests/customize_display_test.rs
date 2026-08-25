@@ -91,7 +91,7 @@ fn saved_panel_displays_survive_round_trip_with_ids_intact() {
 /// (the pre-fix behaviour) leaves every embedded display permanently dark.
 #[test]
 fn placed_panel_embedded_display_lights_on_canvas() {
-	use logic_sim::render::scene::{build_scene, PinStateLookup};
+	use logic_sim::render::scene::build_scene;
 
 	let mut library = ChipLibrary::new();
 	register_all_builtins(&mut library);

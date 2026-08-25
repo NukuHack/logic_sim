@@ -202,11 +202,6 @@ pub enum Color {
 }
 
 impl Color {
-	/// Clamp a saved pin/wire colour palette index into the valid 0..=7 range
-	/// used by `render::theme`'s `COLOR` table.
-	/// Negative or out-of-range values (shouldn't normally occur, but the
-	/// on-disk value is an unchecked int) fall back to 0 rather than panicking
-	/// or silently wrapping.
 	pub fn from_int(a: i32) -> Self {
 		Self::try_from(a).unwrap_or_default()
 	}
@@ -351,7 +346,8 @@ impl DisplayDescription {
 /// colour/bit-count/simulation-state lookups), but that end's *position*
 /// must be resolved along the referenced wire's segment instead of at the
 /// pin itself. See `render::scene`'s wire-endpoint resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
 pub enum WireConnectionType {
 	#[default]
 	ToPins = 0,
@@ -360,19 +356,12 @@ pub enum WireConnectionType {
 }
 
 impl WireConnectionType {
-	/// `WireConnectionType` as stored on disk: `ToPins` = 0, `ToWireSource` = 1,
-	/// `ToWireTarget` = 2, matching the original C# enum's declaration order.
-	pub fn from_int(v: i32) -> Self {
-		match v {
-			0 => Self::ToPins,
-			1 => Self::ToWireSource,
-			2 => Self::ToWireTarget,
-			_ => Self::default(),
-		}
+	pub fn from_int(a: i32) -> Self {
+		Self::try_from(a).unwrap_or_default()
 	}
 
 	pub fn to_int(&self) -> i32 {
-		*self as i32
+		(*self).into()
 	}
 }
 

@@ -2,9 +2,7 @@
 //! Pin state is stored as a u32, with format:
 //! Tristate flags (most significant 16 bits) | Bit states (least significant 16 bits)
 
-pub const LOGIC_LOW: u16 = 0;
-pub const LOGIC_HIGH: u16 = 1;
-pub const LOGIC_OFF: u16 = 2;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 /// Mask for a single bit value (bit state, and tristate flag)
 pub const SINGLE_BIT_MASK: u32 = 1 | (1 << 16);
@@ -38,7 +36,7 @@ pub fn get_bit_tristated_value(state: u32, bit_index: u32) -> u16 {
 
 #[inline(always)]
 pub fn first_bit_high(state: u32) -> bool {
-	(state & 1) as u16 == LOGIC_HIGH
+	(state & 1) as u8 == LOGIC_HIGH
 }
 
 #[inline(always)]
@@ -46,16 +44,16 @@ pub fn set_all_disconnected(state: &mut u32) {
 	set(state, 0, u16::MAX);
 }
 
+const LOW_MASK: u16 = 0b1111;
+const HIGH_MASK: u16 = 0b1111_0000;
 pub fn set_4bit_from_8bit_source(state: &mut u32, source_8bit: u32, first_nibble: bool) {
 	let source_bit_states = bit_states(source_8bit);
 	let source_tristate_flags = tristate_flags(source_8bit);
 
 	if first_nibble {
-		const MASK: u16 = 0b1111;
-		set(state, source_bit_states & MASK, source_tristate_flags & MASK);
+		set(state, source_bit_states & LOW_MASK, source_tristate_flags & LOW_MASK);
 	} else {
-		const MASK: u16 = 0b1111_0000;
-		set(state, (source_bit_states & MASK) >> 4, (source_tristate_flags & MASK) >> 4);
+		set(state, (source_bit_states & HIGH_MASK) >> 4, (source_tristate_flags & HIGH_MASK) >> 4);
 	}
 }
 
@@ -69,22 +67,25 @@ pub fn set_8bit_from_4bit_sources(state: &mut u32, a: u32, b: u32) {
 /// colour: `High`/`Low` map to the lit/dim variant of a pin's palette
 /// colour, `Disconnected` always renders flat black regardless of palette
 /// (mirrors `LOGIC_DISCONNECTED` / `DrawSettings.StateDisconnectedCol`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u8)]
 pub enum LogicState {
-	Low,
-	High,
-	Disconnected,
+	Low = 0,
+	High = 1,
+	#[default]
+	Disconnected = 2,
 }
-
+pub const LOGIC_HIGH: u8 = LogicState::High.to_int();
+pub const LOGIC_LOW: u8 = LogicState::Low.to_int();
+pub const LOGIC_DISCONNECTED: u8 = LogicState::Disconnected.to_int();
 impl LogicState {
-	/// Builds a `LogicState` from the raw tristated bit value returned by
-	pub fn from_tristated_value(raw: u16) -> Self {
-		match raw {
-			LOGIC_LOW => LogicState::Low,
-			LOGIC_HIGH => LogicState::High,
-			LOGIC_OFF => LogicState::Disconnected,
-			_ => LogicState::Disconnected,
-		}
+	/// Builds a `LogicState` from the raw tristated bit value
+	pub fn from_int(a: u8) -> Self {
+		Self::try_from(a).unwrap_or_default()
+	}
+
+	pub const fn to_int(&self) -> u8 {
+		*self as u8 // a bit unsafe, but theoretically should work flawlessly
 	}
 }
 

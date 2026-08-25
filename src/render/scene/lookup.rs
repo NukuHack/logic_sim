@@ -90,14 +90,14 @@ impl<'a> PinStateLookup for SimulatorPinState<'a> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;
 		let raw = crate::pin_state::get_bit_tristated_value(self.sim.pin(pin_idx).state, 0);
-		Some(LogicState::from_tristated_value(raw))
+		Some(LogicState::from_int(raw as u8))
 	}
 
 	fn bit_logic_state(&self, pin_owner_id: i32, pin_id: i32, bit_index: u32) -> Option<LogicState> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;
 		let raw = crate::pin_state::get_bit_tristated_value(self.sim.pin(pin_idx).state, bit_index);
-		Some(LogicState::from_tristated_value(raw))
+		Some(LogicState::from_int(raw as u8))
 	}
 
 	fn internal_state(&self, owner_id: i32) -> Option<&[u32]> {

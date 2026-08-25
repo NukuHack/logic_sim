@@ -641,7 +641,7 @@ mod tests {
 		try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
 
 		// Wire something across the pair so deletion must cascade it away.
-		let (origin_id, terminus_id) = {
+		let (origin_id, _terminus_id) = {
 			let chip = v.library.get_mut("ROOT");
 			let (origin_id, terminus_id) = (chip.sub_chips[0].id, chip.sub_chips[1].id);
 			chip.wires.push(WireDescription::new(PinAddress::new(origin_id, 1), PinAddress::new(terminus_id, 0)));
