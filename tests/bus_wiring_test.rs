@@ -158,6 +158,159 @@ fn corresponding_terminus_maps_each_bus_width_and_nothing_else() {
 	assert_eq!(ChipType::BusTerminus4Bit.corresponding_bus_terminus(), None, "a terminus has no further pair");
 }
 
+#[test]
+fn corresponding_origin_is_the_inverse_lookup() {
+	use logic_sim::ChipType;
+	assert_eq!(ChipType::BusTerminus1Bit.corresponding_bus_origin(), Some(ChipType::Bus1Bit));
+	assert_eq!(ChipType::BusTerminus4Bit.corresponding_bus_origin(), Some(ChipType::Bus4Bit));
+	assert_eq!(ChipType::BusTerminus8Bit.corresponding_bus_origin(), Some(ChipType::Bus8Bit));
+	assert_eq!(ChipType::Nand.corresponding_bus_origin(), None);
+	assert_eq!(ChipType::Bus4Bit.corresponding_bus_origin(), None, "an origin has no inverse pair of its own");
+}
+
+// ---- resolve_bus_pair_completion: any-bus-to-any-bus completions ----
+
+/// Two independently-placed pairs: origins A (id 1) / B (id 3), termini
+/// A' (id 2) / B' (id 4), each linked to its own partner by default.
+fn two_pairs() -> (ChipLibrary, ChipDescription) {
+	let library = bus_library();
+	let mut chip = ChipDescription::new("PAIRS", ChipType::Custom);
+	for (name, id, partner) in [("BUS-4", 1, 2), ("BUS-TERMINUS-4", 2, 1), ("BUS-4", 3, 4), ("BUS-TERMINUS-4", 4, 3)] {
+		chip.sub_chips.push(SubChipDescription {
+			name: name.into(),
+			id,
+			internal_data: Some(vec![partner]),
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+	}
+	(library, chip)
+}
+
+fn data_of(chip: &ChipDescription, id: i32) -> Vec<u32> {
+	chip.sub_chips.iter().find(|s| s.id == id).expect("subchip exists").internal_data.clone().expect("has data")
+}
+
+fn name_of(chip: &ChipDescription, id: i32) -> String {
+	chip.sub_chips.iter().find(|s| s.id == id).expect("subchip exists").name.clone()
+}
+
+/// Wiring an origin onto another origin converts the second one into a
+/// terminus -- flip inverted so its (formerly right-side) output pin stays
+/// physically on that side -- and links the pair instantly, clearing the
+/// orphaned previous partners' pointers.
+#[test]
+fn bus_to_bus_completes_by_converting_the_second_into_a_linked_terminus() {
+	let (library, mut chip) = two_pairs();
+
+	let (source, target) = bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 3).expect("bus->bus completes");
+
+	assert_eq!(source, PinAddress::new(1, 1), "the wire runs from the surviving origin's visible output...");
+	assert_eq!(target, PinAddress::new(3, 0), "...to the converted half's input");
+	assert_eq!(name_of(&chip, 3), "BUS-TERMINUS-4", "the second bus became a terminus");
+	assert_eq!(data_of(&chip, 3), vec![1, 1], "linked back to the first, flip inverted (was unflipped)");
+	assert_eq!(data_of(&chip, 1), vec![3, 0], "the first links forward, its own flip untouched");
+	assert!(bus_wiring::bus_pair_linked(&chip, &library, 1, 3));
+
+	// The halves' previous partners are orphaned: their pointers are
+	// cleared (not left dangling at a chip that's now paired elsewhere),
+	// so deletes don't cascade across the old pairs.
+	assert_eq!(data_of(&chip, 2), vec![0, 0]);
+	assert_eq!(data_of(&chip, 4), vec![0, 0]);
+	assert!(!bus_wiring::bus_pair_linked(&chip, &library, 1, 2));
+	assert!(!bus_wiring::bus_pair_linked(&chip, &library, 3, 4));
+}
+
+/// Wiring a terminus onto another terminus converts the second one into a
+/// bus origin -- again flip-inverted -- and the finished wire runs from
+/// the NEW origin's output to the first terminus' input.
+#[test]
+fn terminus_to_terminus_completes_by_converting_the_second_into_a_linked_origin() {
+	let (library, mut chip) = two_pairs();
+
+	let (source, target) = bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 2, 4).expect("terminus->terminus completes");
+
+	assert_eq!(source, PinAddress::new(4, 1), "the converted half is the wire's source");
+	assert_eq!(target, PinAddress::new(2, 0));
+	assert_eq!(name_of(&chip, 4), "BUS-4", "the second terminus became an origin");
+	assert_eq!(data_of(&chip, 4), vec![2, 1], "flip inverted across the conversion");
+	assert_eq!(data_of(&chip, 2), vec![4, 0]);
+	assert!(bus_wiring::bus_pair_linked(&chip, &library, 2, 4));
+	assert!(!bus_wiring::bus_pair_linked(&chip, &library, 1, 2));
+	assert!(!bus_wiring::bus_pair_linked(&chip, &library, 3, 4));
+}
+
+/// An already-compatible bus->terminus completion needs no conversion but
+/// still links instantly -- and preserves both halves' existing flip
+/// states.
+#[test]
+fn bus_to_terminus_links_without_conversion_or_flip_changes() {
+	let (library, mut chip) = two_pairs();
+	// Make both halves flipped to prove flips survive untouched.
+	for id in [1, 4] {
+		if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == id) {
+			let mut data = sub.internal_data.clone().unwrap_or_default();
+			data.resize(2, 0);
+			data[1] = 1;
+			sub.internal_data = Some(data);
+		}
+	}
+
+	let (source, target) = bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 4).expect("origin->terminus completes");
+
+	assert_eq!((source, target), (PinAddress::new(1, 1), PinAddress::new(4, 0)));
+	assert_eq!(name_of(&chip, 4), "BUS-TERMINUS-4", "no conversion needed");
+	assert_eq!(data_of(&chip, 1), vec![4, 1], "relinked, flip kept");
+	assert_eq!(data_of(&chip, 4), vec![1, 1], "relinked, flip kept");
+	assert!(bus_wiring::bus_pair_linked(&chip, &library, 1, 4));
+	// The reversed start order resolves identically (start keeps its type).
+	let (library, mut chip) = two_pairs();
+	let reversed = bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 4, 1).expect("terminus-start order works too");
+	assert_eq!(reversed, (PinAddress::new(1, 1), PinAddress::new(4, 0)));
+}
+
+/// The flip inversion is exactly what keeps the visible pin on its
+/// physical side: whatever side a component's visible pin sat on before
+/// the conversion, it sits on after.
+#[test]
+fn conversions_invert_the_flip_so_the_visible_pin_keeps_its_side() {
+	let (library, mut chip) = two_pairs();
+	// Flip origin B (visible pin moves to the LEFT).
+	if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == 3) {
+		sub.internal_data = Some(vec![4, 1]);
+	}
+
+	bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 3).expect("completes");
+
+	assert_eq!(data_of(&chip, 3), vec![1, 0], "flipped origin -> unflipped terminus (left stays left)");
+
+	// And the mirror case: a flipped terminus converting to an origin.
+	let (library, mut chip) = two_pairs();
+	if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == 4) {
+		sub.internal_data = Some(vec![3, 1]);
+	}
+	bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 2, 4).expect("completes");
+	assert_eq!(data_of(&chip, 4), vec![2, 0], "flipped terminus (pin left) -> unflipped origin (pin left)");
+}
+
+/// Non-bus endpoints never reach the resolver successfully.
+#[test]
+fn resolver_rejects_non_bus_and_unknown_endpoints() {
+	let (library, mut chip) = two_pairs();
+	chip.sub_chips.push(SubChipDescription {
+		name: "NAND".into(),
+		id: 7,
+		internal_data: None,
+		position: Vec2::ZERO,
+		label: None,
+		pin_colour_info: vec![],
+	});
+
+	assert!(bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 7).is_err(), "plain gate end rejected");
+	assert!(bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 99).is_err(), "unknown end rejected");
+}
+
 /// The electrical payoff of "wiring into a bus wire": two NAND outputs
 /// completed onto the bus wire both merge into the origin's hidden input
 /// (via `TargetPin_BusCorrected`), and the terminus side reads the result.

@@ -104,6 +104,19 @@ impl ChipType {
 			_ => None,
 		}
 	}
+
+	/// The inverse lookup: the bus-*origin* chip type paired with this
+	/// terminus type. `None` for anything that isn't a bus terminus
+	/// (origins pair the other way via
+	/// [`ChipType::corresponding_bus_terminus`]).
+	pub fn corresponding_bus_origin(self) -> Option<ChipType> {
+		match self {
+			ChipType::BusTerminus1Bit => Some(ChipType::Bus1Bit),
+			ChipType::BusTerminus4Bit => Some(ChipType::Bus4Bit),
+			ChipType::BusTerminus8Bit => Some(ChipType::Bus8Bit),
+			_ => None,
+		}
+	}
 	/// Reconstruct from an integer, matching the original C# enum order.
 	/// Invalid values fall back to `Custom`.
 	pub fn from_int(v: i32) -> Self {

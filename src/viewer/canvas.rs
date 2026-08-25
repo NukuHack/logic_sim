@@ -96,11 +96,16 @@ fn try_start_pending_wire(v: &mut ViewerState, world_pos: Vec2) -> bool {
 /// `Some`) with a click at `world_pos`:
 ///  - landing on a pin of the *opposite* role (see `PinHit::is_wire_source`/
 ///    `PendingWireEnd::is_source`) completes the wire, connecting through
-///    any bend points collected so far -- except that two bus chips may only
-///    join when they're a linked pair;
+///    any bend points collected so far -- and so does landing on *any*
+///    other bus-family chip's pin: the completing click converts that
+///    second chip to the complementary origin/terminus type (keeping its
+///    visible pin side) and links the pair instantly (see
+///    `viewer::bus_wiring::resolve_bus_pair_completion`);
 ///  - landing on a pin of the *same* role (e.g. input-to-input,
 ///    output-to-output) is rejected with a status message, leaving the
-///    placement active so the player can just try a different pin;
+///    placement active so the player can just try a different pin --
+///    unless both ends are bus chips, where the conversion above absorbs
+///    exactly those cases;
 ///  - landing on an existing wire *completes into it* ("wiring into the
 ///    wire"): inputs may tap into any wire, outputs only into bus wires,
 ///    and the electrical endpoints resolve from the tapped wire
@@ -118,14 +123,30 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	let placed = scene::place_sub_chips(root_desc, &v.library);
 
 	if let Some(hit) = scene::hit_test_any_pin(root_desc, &placed, world_pos) {
-		let pending = v.pending_wire.as_ref().expect("caller only calls this with a pending wire");
+		let pending_ref = v.pending_wire.as_ref().expect("caller only calls this with a pending wire");
 		/*		// optional : if you want to only connect same bitcount wires
 			   if pending.bit_count != hit.bit_count {
 				   *status = Some("Can't connect different bitcounts".to_string());
 				   return;
 			   }
 		*/
-		if pending.start.is_source() == hit.is_wire_source() {
+		// Any bus-family chip may wire to any other bus-family chip (see
+		// `resolve_bus_pair_completion`): the completing click converts the
+		// second half to the complementary origin/terminus type -- keeping
+		// its visible pin side -- and links the pair instantly. That makes
+		// the usual same-role rejections inapplicable here: two origins'
+		// visible output pins read as "output to output" but are exactly
+		// how two plain buses join.
+		let bus_start_owner = match pending_ref.start {
+			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
+				let start_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type());
+				let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(|t| t.is_bus_type());
+				(start_is_bus && end_is_bus).then_some(start_owner)
+			}
+			PendingWireEnd::WireTap { .. } => None,
+		};
+
+		if bus_start_owner.is_none() && pending_ref.start.is_source() == hit.is_wire_source() {
 			*status = Some(if hit.is_wire_source() {
 				"Can't connect an output to an output".to_string()
 			} else {
@@ -134,36 +155,44 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			return;
 		}
 
-		// A wire between two bus chips (origin output -> terminus input) is
-		// only allowed between a *linked* pair -- `CanCompleteWireConnection`'s
-		// `LinkedBusPairID` check.
-		if let PendingWireEnd::Pin { owner_id, .. } = pending.start {
-			let start_type = bus_wiring::owner_chip_type(root_desc, &v.library, owner_id);
-			let end_type = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id);
-			let both_bus = start_type.is_some_and(|t| t.is_bus_type()) && end_type.is_some_and(|t| t.is_bus_type());
-			if both_bus && !bus_wiring::bus_pair_linked(root_desc, &v.library, owner_id, hit.owner_id) {
-				*status = Some("Bus chips can only be wired to their linked partner".to_string());
-				return;
-			}
-		}
-
 		let pending = v.pending_wire.take().expect("checked above");
-		let end_pin_address = PinAddress::new(hit.owner_id, hit.pin_id);
 
-		let mut wire = if pending.start.is_source() {
-			match pending.start {
-				PendingWireEnd::Pin { owner_id, pin_id, .. } => WireDescription::new(PinAddress::new(owner_id, pin_id), end_pin_address),
-				PendingWireEnd::WireTap { wire_index, segment_index, point, source_pin_address } => {
-					WireDescription::new_tapped_source(source_pin_address, end_pin_address, wire_index as i32, segment_index, point)
+		let mut wire = match bus_start_owner {
+			Some(start_owner) => {
+				// Resolve on a scratch copy -- the resolver reads sibling
+				// descriptions out of the same library the edited chip
+				// lives in -- then write the converted/linked chip back.
+				let mut edited = v.library.get(&root_chip_name).clone();
+				match bus_wiring::resolve_bus_pair_completion(&mut edited, &v.library, start_owner, hit.owner_id) {
+					Ok((source, target)) => {
+						*v.library.get_mut(&root_chip_name) = edited;
+						WireDescription::new(source, target)
+					}
+					Err(reason) => {
+						v.pending_wire = Some(pending);
+						*status = Some(reason.to_string());
+						return;
+					}
 				}
 			}
-		} else {
-			// The clicked pin is the real source; the wire always started from a plain pin in this
-			// branch (a wire tap is always treated as the source -- see `PendingWireEnd::is_source`).
-			let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else {
-				unreachable!("a wire tap is always the source end, so this branch never sees one")
-			};
-			WireDescription::new(end_pin_address, PinAddress::new(owner_id, pin_id))
+			None => {
+				let end_pin_address = PinAddress::new(hit.owner_id, hit.pin_id);
+				if pending.start.is_source() {
+					match pending.start {
+						PendingWireEnd::Pin { owner_id, pin_id, .. } => WireDescription::new(PinAddress::new(owner_id, pin_id), end_pin_address),
+						PendingWireEnd::WireTap { wire_index, segment_index, point, source_pin_address } => {
+							WireDescription::new_tapped_source(source_pin_address, end_pin_address, wire_index as i32, segment_index, point)
+						}
+					}
+				} else {
+					// The clicked pin is the real source; the wire always started from a plain pin in this
+					// branch (a wire tap is always treated as the source -- see `PendingWireEnd::is_source`).
+					let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else {
+						unreachable!("a wire tap is always the source end, so this branch never sees one")
+					};
+					WireDescription::new(end_pin_address, PinAddress::new(owner_id, pin_id))
+				}
+			}
 		};
 
 		wire.points = pending.bend_points;
@@ -656,16 +685,18 @@ mod tests {
 	}
 
 	/// World-space position of a placed subchip's pin, resolved the same way
-	/// the renderer lays pins out (`place_sub_chips` + `pin_world_position`).
+	/// the renderer lays pins out (`place_sub_chips` + `pin_world_position`,
+	/// including the bus-chip flip flag).
 	fn pin_pos(v: &ViewerState, owner_id: i32, pin_id: i32) -> Vec2 {
 		let root_desc = v.library.get(&v.root_chip_name);
 		let placed = scene::place_sub_chips(root_desc, &v.library);
 		let sub = placed.iter().find(|p| p.id == owner_id).expect("owner placed");
+		let is_flipped = sub.desc.chip_type.is_bus_type() && sub.internal_data.get(1).copied().unwrap_or(0) != 0;
 		if let Some((i, _)) = sub.desc.input_pins.iter().enumerate().find(|(_, p)| p.id == pin_id) {
-			layout::pin_world_position(sub.centre, sub.size, sub.input_pin_y[i], true)
+			layout::pin_world_position(sub.centre, sub.size, sub.input_pin_y[i], true ^ is_flipped)
 		} else {
 			let (i, _) = sub.desc.output_pins.iter().enumerate().find(|(_, p)| p.id == pin_id).expect("pin exists");
-			layout::pin_world_position(sub.centre, sub.size, sub.output_pin_y[i], false)
+			layout::pin_world_position(sub.centre, sub.size, sub.output_pin_y[i], false ^ is_flipped)
 		}
 	}
 
@@ -697,11 +728,13 @@ mod tests {
 		assert_eq!(chip.wires[0].target_pin_address, PinAddress::new(terminus_id, 0));
 	}
 
-	/// Two independently-dropped pairs are NOT linked: crossing them
-	/// (origin A -> terminus B) is refused and leaves the wire placement
-	/// active so the player can pick the right partner instead.
+	/// Two independently-dropped pairs are NOT linked, but crossing them
+	/// (origin A -> terminus B) is now exactly the "any bus to any bus"
+	/// rule: the wire completes and the two halves link instantly, while
+	/// the orphaned previous partners' pointers are cleared so a later
+	/// delete of either doesn't cascade across the old pairs.
 	#[test]
-	fn unlinked_bus_pairs_refuse_cross_pair_wiring() {
+	fn cross_pair_origin_to_terminus_wiring_links_instantly() {
 		let mut v = viewer_with_builtins();
 		for pos in [Vec2::ZERO, Vec2::new(20.0, 0.0)] {
 			chip_interaction::start_placing(&mut v, "BUS-4");
@@ -709,7 +742,7 @@ mod tests {
 		}
 		let chip = v.library.get("ROOT").clone();
 		let ids: Vec<i32> = chip.sub_chips.iter().map(|s| s.id).collect();
-		let (origin_a, terminus_b) = (ids[0], ids[3]);
+		let (origin_a, terminus_a, origin_b, terminus_b) = (ids[0], ids[1], ids[2], ids[3]);
 
 		let mut status = None;
 		let origin_a_out = pin_pos(&v, origin_a, 1);
@@ -717,9 +750,119 @@ mod tests {
 		handle_canvas_click(&mut v, origin_a_out, &mut status);
 		handle_canvas_click(&mut v, terminus_b_in, &mut status);
 
-		assert!(status.as_deref().is_some_and(|m| m.contains("linked partner")), "cross-pair wiring explains itself");
-		assert!(v.pending_wire.is_some(), "the placement stays active for a retry");
-		assert!(v.library.get("ROOT").wires.is_empty(), "no wire got created between unlinked buses");
+		assert_eq!(status, None);
+		assert!(v.pending_wire.is_none(), "the placement completed");
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.wires.len(), 1);
+		assert!(bus_wiring::is_bus_wire(chip, &v.library, &chip.wires[0]));
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(origin_a, 1));
+		assert_eq!(chip.wires[0].target_pin_address, PinAddress::new(terminus_b, 0));
+
+		assert!(bus_wiring::bus_pair_linked(chip, &v.library, origin_a, terminus_b), "the crossed halves linked instantly");
+		let data = |id: i32| chip.sub_chips.iter().find(|s| s.id == id).expect("exists").internal_data.clone().unwrap();
+		assert_eq!(data(terminus_a), vec![0, 0], "A's old terminus is unlinked (no dangling pointer)");
+		assert_eq!(data(origin_b), vec![0, 0], "B's old origin is unlinked (no dangling pointer)");
+	}
+
+	/// Any bus to any other: completing a wire from one bus ORIGIN onto
+	/// another bus origin converts the second into a terminus -- flipped
+	/// relative to its old state so its visible pin stays on the same
+	/// physical side -- and links the pair instantly. The finished wire
+	/// runs origin-output -> converted-terminus-input, i.e. a proper bus
+	/// wire.
+	#[test]
+	fn origin_to_origin_click_converts_the_second_bus_into_a_linked_terminus() {
+		let mut v = viewer_with_builtins();
+		for pos in [Vec2::ZERO, Vec2::new(20.0, 0.0)] {
+			chip_interaction::start_placing(&mut v, "BUS-4");
+			try_place_pending_components(&mut v, pos, &mut None);
+		}
+		let ids: Vec<i32> = v.library.get("ROOT").sub_chips.iter().map(|s| s.id).collect();
+		let (origin_a, _terminus_a, origin_b) = (ids[0], ids[1], ids[2]);
+
+		// The click lands on B's visible output pin (unflipped => right side).
+		let clicked = pin_pos(&v, origin_b, 1);
+		assert!(clicked.x > sub_position(&v, origin_b).x, "sanity: B's visible pin starts on its right");
+
+		let mut status = None;
+		let origin_a_out = pin_pos(&v, origin_a, 1);
+		handle_canvas_click(&mut v, origin_a_out, &mut status);
+		handle_canvas_click(&mut v, clicked, &mut status);
+
+		assert_eq!(status, None);
+		assert!(v.pending_wire.is_none(), "output-to-output between buses completes via conversion");
+		let chip = v.library.get("ROOT");
+		let b = chip.sub_chips.iter().find(|s| s.id == origin_b).expect("B exists");
+		assert_eq!(b.name, "BUS-TERMINUS-4", "the second bus became a terminus");
+		assert_eq!(b.internal_data, Some(vec![origin_a as u32, 1]), "linked back to A, flip inverted relative to its old state");
+
+		assert_eq!(chip.wires.len(), 1);
+		assert!(bus_wiring::is_bus_wire(chip, &v.library, &chip.wires[0]), "the result is a proper bus wire");
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(origin_a, 1));
+		assert_eq!(chip.wires[0].target_pin_address, PinAddress::new(origin_b, 0), "the wire targets B's input");
+
+		// The conversion kept the pin physically where it was clicked: same
+		// side of the body (exact x differs because the renamed body is a
+		// different width).
+		let now_input = pin_pos(&v, origin_b, 0);
+		assert!(now_input.x > sub_position(&v, origin_b).x, "the converted terminus' pin stays on the right");
+		assert_eq!(now_input.y, clicked.y, "same row as before");
+	}
+
+	/// The mirror case: completing from one terminus onto another converts
+	/// the second into a bus origin (flip inverted again) and the finished
+	/// wire sources from the NEW origin's output into the first terminus'
+	/// input.
+	#[test]
+	fn terminus_to_terminus_click_converts_the_second_terminus_into_a_linked_origin() {
+		let mut v = viewer_with_builtins();
+		for pos in [Vec2::ZERO, Vec2::new(20.0, 0.0)] {
+			chip_interaction::start_placing(&mut v, "BUS-TERMINUS-4");
+			try_place_pending_components(&mut v, pos, &mut None);
+		}
+		let ids: Vec<i32> = v.library.get("ROOT").sub_chips.iter().map(|s| s.id).collect();
+		let (terminus_a, terminus_b) = (ids[0], ids[1]);
+
+		let clicked = pin_pos(&v, terminus_b, 0);
+
+		let mut status = None;
+		let terminus_a_in = pin_pos(&v, terminus_a, 0);
+		handle_canvas_click(&mut v, terminus_a_in, &mut status); // target-role start
+		handle_canvas_click(&mut v, clicked, &mut status); // same role -- absorbed by conversion
+
+		assert_eq!(status, None);
+		assert!(v.pending_wire.is_none());
+		let chip = v.library.get("ROOT");
+		let b = chip.sub_chips.iter().find(|s| s.id == terminus_b).expect("B exists");
+		assert_eq!(b.name, "BUS-4", "the second terminus became an origin");
+		assert_eq!(b.internal_data, Some(vec![terminus_a as u32, 1]), "linked to A, flip inverted relative to its old state");
+
+		assert_eq!(chip.wires.len(), 1);
+		assert!(bus_wiring::is_bus_wire(chip, &v.library, &chip.wires[0]));
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(terminus_b, 1), "the new origin drives the wire");
+		assert_eq!(chip.wires[0].target_pin_address, PinAddress::new(terminus_a, 0));
+
+		// Same-role rejections still apply when no bus conversion absorbs them.
+		let mut v2 = viewer_with_builtins();
+		let nand_a = place_nand_for_test(&mut v2, Vec2::ZERO);
+		let nand_b = place_nand_for_test(&mut v2, Vec2::new(6.0, 0.0));
+		let nand_out_a = pin_pos(&v2, nand_a, 2);
+		let nand_out_b = pin_pos(&v2, nand_b, 2);
+		handle_canvas_click(&mut v2, nand_out_a, &mut status); // NAND OUT (pin 2), source role
+		handle_canvas_click(&mut v2, nand_out_b, &mut status);
+		assert!(status.as_deref().is_some_and(|m| m.contains("output to an output")), "gate-to-gate output clicks are still rejected");
+		assert!(v2.pending_wire.is_some(), "the placement stays active for a retry");
+		assert!(v2.library.get("ROOT").wires.is_empty());
+	}
+
+	fn place_nand_for_test(v: &mut ViewerState, pos: Vec2) -> i32 {
+		chip_interaction::start_placing(v, "NAND");
+		try_place_pending_components(v, pos, &mut None);
+		v.library.get("ROOT").sub_chips.last().expect("placed").id
+	}
+
+	fn sub_position(v: &ViewerState, id: i32) -> Vec2 {
+		v.library.get("ROOT").sub_chips.iter().find(|s| s.id == id).expect("component exists").position
 	}
 
 	/// The ghost preview draws every entry of the carry, not just one --
