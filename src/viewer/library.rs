@@ -5,7 +5,6 @@
 //! `viewer::actions`).
 
 use crate::json::{ChipCollection, ProjectDescription};
-use crate::pin_state::PinState;
 use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::state::ViewerState;
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
@@ -293,20 +292,6 @@ pub(crate) fn move_selected_library_row(v: &mut ViewerState, down: bool, force_j
 			}
 		}
 		LibrarySelection::None => {}
-	}
-}
-
-/// Zeroes `driven_state` on every input dev-pin of every chip in
-/// `library` -- called whenever the viewer switches which chip is the
-/// current root, so a switch clicked while viewing chip A doesn't stay
-/// "remembered" the next time the player navigates back to A (each visit
-/// starts from a fresh, all-off simulation, rather than the pin's state
-/// being some kind of persistent save data).
-pub(crate) fn reset_all_driven_inputs(library: &mut ChipLibrary) {
-	for chip in library.iter_mut() {
-		for pin in &mut chip.input_pins {
-			pin.driven_state = PinState::LOW;
-		}
 	}
 }
 

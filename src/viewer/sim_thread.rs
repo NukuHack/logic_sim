@@ -8,19 +8,22 @@
 //!
 //! Division of labour mirrors the original's thread/main split:
 //! - main thread: builds/replaces simulators (`Project.LoadDevChipOrCreateNewIfDoesntExist`),
-//!   feeds input-pin driven states once per frame (`inputPins = editModeChip.GetInputPins()`),
-//!   flips pause/target-rate prefs, and *reads* pin states freely for rendering
-//!   (the read half of `ViewedChip.UpdateStateFromSim`, which ran on the
-//!   sim thread there -- here rendering simply locks the shared arena);
-//! - worker thread: applies those inputs every step and runs the paced
-//!   step loop, including the paused branch's decay-only
+//!   toggles player-driven input dev-pins straight into the shared
+//!   simulator (`Simulator::driven_inputs`), flips pause/target-rate
+//!   prefs, and *reads* pin states freely for rendering (the read half of
+//!   `ViewedChip.UpdateStateFromSim`, which ran on the sim thread there --
+//!   here rendering simply locks the shared arena);
+//! - worker thread: applies those driven inputs every step and runs the
+//!   paced step loop, including the paused branch's decay-only
 //!   `UpdateInPausedState` beat and the single-step-while-paused counter.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use crate::sim::{ExternalInput, Simulator};
+use crate::pin_state::PinState;
+use crate::sim::Simulator;
 use crate::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks, PerfWindow};
 
 /// How long the worker idles between passes while paused -- the
@@ -70,7 +73,6 @@ impl SimControls {
 /// stops the worker and joins it.
 pub(crate) struct SimHandle {
 	sim: Arc<Mutex<Simulator>>,
-	inputs: Arc<Mutex<Vec<ExternalInput>>>,
 	controls: Arc<SimControls>,
 	worker: Option<std::thread::JoinHandle<()>>,
 }
@@ -80,9 +82,8 @@ impl SimHandle {
 	pub(crate) fn new(sim: Simulator, audio: crate::audio::SharedAudioState) -> Self {
 		let sim = Arc::new(Mutex::new(sim));
 		let controls = Arc::new(SimControls::new());
-		let inputs = Arc::new(Mutex::new(Vec::new()));
-		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), Arc::clone(&inputs), audio);
-		Self { sim, inputs, controls, worker: Some(worker) }
+		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), audio);
+		Self { sim, controls, worker: Some(worker) }
 	}
 
 	/// Locks the shared simulator for reading/rendering or wholesale
@@ -101,6 +102,19 @@ impl SimHandle {
 	}
 
 	// ---- Keyboard state feeding (the old direct field writes) ----
+
+	/// Flips one bit of an input dev-pin's player-driven state -- what
+	/// clicking that pin's per-bit grid does (see
+	/// `Simulator::toggle_driven_input_bit`).
+	pub(crate) fn toggle_driven_input_bit(&self, pin_id: i32, bit_index: u32) {
+		self.lock().toggle_driven_input_bit(pin_id, bit_index);
+	}
+
+	/// Drops every player-driven input so all root inputs read as LOW --
+	/// used when the viewer switches which chip it's simulating.
+	pub(crate) fn reset_driven_inputs(&self) {
+		self.lock().reset_driven_inputs();
+	}
 
 	pub(crate) fn key_modifiers(&self) -> u32 {
 		self.lock().key_modifiers
@@ -123,12 +137,12 @@ impl SimHandle {
 	}
 
 	/// Moves the player-driven transient input state (held keys +
-	/// modifiers) out of the outgoing simulator so [`Self::replace`] can
-	/// carry it into the rebuilt one -- what `ViewerState::rebuild_sim`
-	/// used to do across its plain field swap.
-	pub(crate) fn take_transient_input_state(&self) -> (std::collections::HashSet<char>, u32) {
+	/// modifiers + toggled input dev-pins) out of the outgoing simulator
+	/// so [`Self::replace`] can carry it into the rebuilt one -- what
+	/// `ViewerState::rebuild_sim` used to do across its plain field swap.
+	pub(crate) fn take_transient_input_state(&self) -> (HashSet<char>, u32, HashMap<i32, PinState>) {
 		let mut sim = self.lock();
-		(std::mem::take(&mut sim.held_keys), sim.key_modifiers)
+		(std::mem::take(&mut sim.held_keys), sim.key_modifiers, std::mem::take(&mut sim.driven_inputs))
 	}
 
 	// ---- Prefs-derived control plumbing ----
@@ -147,13 +161,6 @@ impl SimHandle {
 
 	pub(crate) fn set_target_ticks_per_second(&self, ticks: u32) {
 		self.controls.target_ticks_per_second.store(ticks.max(1), Ordering::Relaxed);
-	}
-
-	/// Publishes this frame's snapshot of every input dev-pin's driven
-	/// state; the worker applies it to each step it runs until superseded
-	/// (mirroring how the original captures `inputPins` once per Update).
-	pub(crate) fn publish_external_inputs(&self, inputs: Vec<ExternalInput>) {
-		*self.inputs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = inputs;
 	}
 
 	pub(crate) fn request_single_step(&self) {
@@ -179,36 +186,25 @@ impl Drop for SimHandle {
 	}
 }
 
-fn spawn_worker(
-	sim: Arc<Mutex<Simulator>>,
-	controls: Arc<SimControls>,
-	inputs: Arc<Mutex<Vec<ExternalInput>>>,
-	audio: crate::audio::SharedAudioState,
-) -> std::thread::JoinHandle<()> {
+fn spawn_worker(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) -> std::thread::JoinHandle<()> {
 	std::thread::Builder::new()
 		.name("DLS_SimThread".to_string())
-		.spawn(move || worker_loop(sim, controls, inputs, audio))
+		.spawn(move || worker_loop(sim, controls, audio))
 		.expect("failed to spawn sim thread")
 }
 
-/// One simulation step with the latest published external inputs --
-/// `Simulator.RunSimulationStep(simChip, inputPins, audioState.simAudio)`.
-/// The clock-speed pref is pushed in every step, mirroring `SimThread.Run`
-/// assigning `Simulator.stepsPerClockTransition` each iteration.
-fn step_once(sim: &Mutex<Simulator>, controls: &SimControls, inputs: &Mutex<Vec<ExternalInput>>, audio: &crate::audio::SharedAudioState) {
-	let external_inputs = inputs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+/// One simulation step -- `Simulator.RunSimulationStep(simChip, inputPins,
+/// audioState.simAudio)`. The clock-speed pref is pushed in every step,
+/// mirroring `SimThread.Run` assigning `Simulator.stepsPerClockTransition`
+/// each iteration.
+fn step_once(sim: &Mutex<Simulator>, controls: &SimControls, audio: &crate::audio::SharedAudioState) {
 	let mut sim = sim.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 	sim.steps_per_clock_transition = controls.steps_per_clock_transition.load(Ordering::Relaxed);
 	let mut audio_guard = audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-	sim.run_simulation_step(&external_inputs, &mut audio_guard.sim_audio);
+	sim.run_simulation_step(&[], &mut audio_guard.sim_audio);
 }
 
-fn worker_loop(
-	sim: Arc<Mutex<Simulator>>,
-	controls: Arc<SimControls>,
-	inputs: Arc<Mutex<Vec<ExternalInput>>>,
-	audio: crate::audio::SharedAudioState,
-) {
+fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) {
 	#[derive(Default)]
 	struct WorkerPacing {
 		last_tick: Option<Instant>,
@@ -248,7 +244,7 @@ fn worker_loop(
 			// A requested single step runs exactly one tick regardless of
 			// pacing (`Project.advanceSingleSimStep`) and mustn't disturb
 			// the paused timing hold below.
-			step_once(&sim, &controls, &inputs, &audio);
+			step_once(&sim, &controls, &audio);
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
 			pacing.window.record(now, 1);
@@ -275,7 +271,7 @@ fn worker_loop(
 		pacing.debt_ticks = remaining_debt;
 
 		for _ in 0..steps {
-			step_once(&sim, &controls, &inputs, &audio);
+			step_once(&sim, &controls, &audio);
 		}
 		if steps > 0 {
 			pacing.window.record(now, steps);
@@ -368,7 +364,7 @@ mod tests {
 	}
 
 	#[test]
-	fn keyboard_state_feeds_through_the_handle() {
+	fn transient_input_state_feeds_through_the_handle() {
 		let h = handle(true, 1);
 		h.set_key_modifiers(7);
 		h.held_key_press('A');
@@ -377,8 +373,11 @@ mod tests {
 		h.held_key_release('A');
 		assert!(h.lock().held_keys.is_empty());
 		h.held_key_press('B');
-		let (keys, mods) = h.take_transient_input_state();
+		h.lock().set_driven_input(3, crate::pin_state::PinState::HIGH);
+		let (keys, mods, driven) = h.take_transient_input_state();
 		assert!(keys.contains(&'B') && mods == 7);
+		assert_eq!(driven.get(&3), Some(&crate::pin_state::PinState::HIGH), "toggled inputs travel with the rest");
 		assert!(h.lock().held_keys.is_empty(), "take clears the source");
+		assert!(h.lock().driven_inputs.is_empty(), "take clears the source");
 	}
 }

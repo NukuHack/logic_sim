@@ -6,7 +6,7 @@
 //! the open chip has in-memory-only edits and prompting before any flow
 //! would walk away from them.
 use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
-use crate::viewer::library::{is_custom_chip, reset_all_driven_inputs, DEFAULT_LIBRARY_COLLECTION_NAME};
+use crate::viewer::library::{is_custom_chip, DEFAULT_LIBRARY_COLLECTION_NAME};
 use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, Overlay, PendingUnsavedAction, ViewerState};
 use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver};
 
@@ -398,7 +398,7 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 	v.undo.clear();
 	v.exit_view_mode();
 	v.root_chip_name = name.clone();
-	reset_all_driven_inputs(&mut v.library);
+	v.sim.reset_driven_inputs();
 	v.rebuild_sim();
 	v.camera_fitted = false;
 	reset_canvas_interaction(v);
@@ -437,7 +437,7 @@ pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: 
 			v.exit_view_mode();
 		}
 		v.root_chip_name = name.to_string();
-		reset_all_driven_inputs(&mut v.library);
+		v.sim.reset_driven_inputs();
 		v.rebuild_sim();
 		if switching {
 			v.camera_fitted = false;

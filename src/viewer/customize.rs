@@ -484,14 +484,14 @@ mod tests {
 		// requesting a single step makes the background sim thread advance
 		// by exactly one deterministic tick (wall-clock pacing would make
 		// "one frame" an arbitrary number of ticks).
-		v.library.get_mut("Panel").input_pins[0].driven_state = PinState::HIGH;
+		v.sim.lock().set_driven_input(1, PinState::HIGH);
 		v.prefs.prefs_sim_paused = true;
 		open_customize(&mut v);
 		assert!(v.overlays.contains(&Overlay::CustomizeChip));
 
-		// A warm-up frame publishes the input pins' driven states to the
-		// sim thread -- what the running app's earlier frames have always
-		// done by the time the player pauses and single-steps.
+		// A warm-up frame pushes the pause pref into the sim handle --
+		// what the running app's earlier frames have always done by the
+		// time the player pauses and single-steps.
 		let _ = build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::new(900.0, 400.0));
 
 		v.sim.request_single_step();

@@ -112,6 +112,14 @@ pub struct Simulator {
 	/// KeyMods-chip state: current modifier keys, as a `key_mods_bits` bitmask
 	/// (set by host).
 	pub key_modifiers: u32,
+	/// Player-driven states for the root chip's own input dev-pins, keyed by
+	/// pin id -- what clicking a switch's bit grid toggles. Deliberately
+	/// sparse: only pins the player has actually touched get an entry (a
+	/// handful of switches, not one state per pin in the library), and any
+	/// unlisted pin is driven as a connected LOW, exactly like an untouched
+	/// switch sitting at off. Cleared when the viewer switches to another
+	/// root chip and carried across in-place rebuilds.
+	pub driven_inputs: std::collections::HashMap<i32, PinState>,
 }
 
 /// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's
@@ -150,6 +158,7 @@ impl Simulator {
 			elapsed_seconds_old: 0.0,
 			held_keys: std::collections::HashSet::new(),
 			key_modifiers: 0,
+			driven_inputs: std::collections::HashMap::new(),
 		}
 	}
 
@@ -195,11 +204,37 @@ impl Simulator {
 		c.input_pins.iter().chain(c.output_pins.iter()).find(|&&p| self.pins[p.0].id == address.pin_owner_id).copied()
 	}
 
-	/// Run a single simulation step: apply external inputs, then propagate
-	/// signals through the whole chip graph. Buzzer outputs land in
-	/// `audio`, whose smoothing advances by the real time this step took --
-	/// the exact beat of `Simulator.RunSimulationStep`. `audio` lives
-	/// outside the simulator (on the host app) so it survives rebuilds.
+	// ---- Player-driven input dev-pins (see `Self::driven_inputs`) ----
+
+	/// Flips one bit of the player-driven state for the root chip's input
+	/// dev-pin `pin_id` -- what clicking that pin's per-bit grid does. An
+	/// untracked pin starts from LOW, and toggling leaves it actively
+	/// driven (a clicked switch is never floating).
+	pub fn toggle_driven_input_bit(&mut self, pin_id: i32, bit_index: u32) {
+		self.driven_inputs.entry(pin_id).or_insert(PinState::LOW).toggle_bit(bit_index);
+	}
+
+	/// Overwrites the whole player-driven state for one input dev-pin.
+	pub fn set_driven_input(&mut self, pin_id: i32, state: PinState) {
+		self.driven_inputs.insert(pin_id, state);
+	}
+
+	/// Drops every player-driven input so all root inputs read as LOW
+	/// again -- used when the viewer switches which chip it's simulating
+	/// (a toggled switch's state shouldn't outlive the simulation run it
+	/// was set in).
+	pub fn reset_driven_inputs(&mut self) {
+		self.driven_inputs.clear();
+	}
+
+	/// Run a single simulation step: apply externally-driven input states,
+	/// then propagate signals through the whole chip graph. Buzzer outputs
+	/// land in `audio`, whose smoothing advances by the real time this step
+	/// took -- the exact beat of `Simulator.RunSimulationStep`. The
+	/// player-driven switches come from `self.driven_inputs`; `external_inputs`
+	/// is for one-shot programmatic stimulus (tests/hosts driving any pin by
+	/// address) and is applied on top. `audio` lives outside the simulator
+	/// (on the host app) so it survives rebuilds.
 	pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput], audio: &mut crate::audio::SimAudio) {
 		audio.init_frame();
 
@@ -207,7 +242,14 @@ impl Simulator {
 		self.can_dynamic_reorder_this_frame = self.simulation_frame.is_multiple_of(100);
 		self.simulation_frame += 1;
 
-		// Step 1) copy externally-driven (player-controlled) input states in.
+		// Step 1) copy externally-driven (player-controlled) input states in:
+		// every root input dev-pin is actively driven each frame -- the
+		// player's toggle where one exists, a connected LOW otherwise --
+		// then any host-supplied addresses on top of that.
+		for p in self.chips[self.root.0].input_pins.clone() {
+			let state = self.driven_inputs.get(&self.pins[p.0].id).copied().unwrap_or(PinState::LOW);
+			self.pins[p.0].state = state;
+		}
 		for input in external_inputs {
 			if let Some(pin_idx) = self.find_pin(self.root, input.address) {
 				self.pins[pin_idx.0].state = input.state;

@@ -5,8 +5,7 @@
 //!
 //! This is also where the frame syncs with the background simulation
 //! thread (see [`crate::viewer::sim_thread`]): prefs-derived pacing
-//! inputs (pause, target rate, clock speed) are pushed out, the input
-//! dev-pins' driven states are published for the worker to apply, and the
+//! inputs (pause, target rate, clock speed) are pushed out, and the
 //! thread's measured speed / single-step counter are read back for the
 //! preferences panel and paused banner.
 
@@ -175,25 +174,16 @@ pub(crate) fn build_menu_stack(
 ///
 /// - prefs-derived pacing inputs are pushed out (pause flag, target rate,
 ///   clock speed), so the panel/shortcut paths only ever touch `prefs`;
-/// - every input dev-pin's current driven state is published, mirroring
-///   the original capturing `inputPins` once per Update for the thread;
 /// - the thread's measured ticks/second and paused single-step counter
 ///   are read back for the preferences readout and paused banner.
+///
+/// Player-driven input dev-pins need no publishing here: their toggles go
+/// straight into the shared simulator's `driven_inputs` at click time
+/// (see `viewer::canvas`), where every step picks them up.
 fn update_viewer_sim(v: &mut ViewerState) {
 	v.sync_sim_clock_pref();
 	v.sim.set_paused(v.prefs.prefs_sim_paused);
 	v.sim.set_target_ticks_per_second(v.target_ticks_per_second() as u32);
-
-	// Every input dev-pin's current driven state
-	// (`Simulator.RunSimulationStep(simChip, project.inputPins, ..)`).
-	let external_inputs: Vec<crate::sim::ExternalInput> = v
-		.library
-		.get(&v.root_chip_name)
-		.input_pins
-		.iter()
-		.map(|pin| crate::sim::ExternalInput { address: crate::description::PinAddress::new(pin.id, 0), state: pin.driven_state })
-		.collect();
-	v.sim.publish_external_inputs(external_inputs);
 
 	v.paused_step_counter = v.sim.paused_step_counter();
 	v.sim_pacing.avg_ticks_per_sec = v.sim.avg_ticks_per_sec();

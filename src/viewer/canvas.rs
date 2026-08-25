@@ -35,19 +35,6 @@ pub(crate) fn hit_test_root_input_pin_click(root_desc: &ChipDescription, world_p
 	None
 }
 
-/// Flips one bit (`bit_index`) of input dev-pin `pin_id`'s own
-/// `PinDescription::driven_state`, directly on its entry in `library` --
-/// see that field's docs for why it lives there rather than in a
-/// separate lookup on [`ViewerState`]. The tristate flags half of the
-/// packed state is left untouched (stays "driven", i.e. `0`) -- a
-/// clicked input is always actively driven, never floating.
-fn toggle_driven_input_bit(library: &mut ChipLibrary, root_chip_name: &str, pin_id: i32, bit_index: u32) {
-	let chip = library.get_mut(root_chip_name);
-	if let Some(pin) = chip.input_pins.iter_mut().find(|p| p.id == pin_id) {
-		pin.driven_state.toggle_bit(bit_index);
-	}
-}
-
 /// Fixed screen-pixel tolerance for landing a click on a wire, converted
 /// to world units -- same value/reasoning as the one right-click wire
 /// deletion uses, so a tap-to-place click feels exactly as forgiving as
@@ -590,8 +577,13 @@ pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: 
 
 	let root_desc = v.library.get(&v.root_chip_name);
 	if let Some((pin_id, bit_index)) = hit_test_root_input_pin_click(root_desc, world_pos) {
-		let root_chip_name = v.root_chip_name.clone();
-		toggle_driven_input_bit(&mut v.library, &root_chip_name, pin_id, bit_index);
+		// Straight into the shared simulator: every sim step drives the
+		// root's input pins from `Simulator::driven_inputs`, so the toggle
+		// is live for the worker without any per-frame publishing. The
+		// tristate half of the packed state stays "driven" (`toggle_bit`
+		// clears it) -- a clicked input is always actively driven, never
+		// floating.
+		v.sim.toggle_driven_input_bit(pin_id, bit_index);
 		return;
 	}
 

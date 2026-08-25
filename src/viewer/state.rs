@@ -445,12 +445,13 @@ impl ViewerState {
 	pub(crate) fn rebuild_sim(&mut self) {
 		let root_desc = self.library.get(&self.root_chip_name).clone();
 		// Carry the player-driven transient input state across the swap so
-		// an in-place edit doesn't drop held keys / modifiers (see
-		// `SimHandle::take_transient_input_state`).
-		let (held_keys, key_modifiers) = self.sim.take_transient_input_state();
+		// an in-place edit doesn't drop held keys / modifiers / toggled
+		// switches (see `SimHandle::take_transient_input_state`).
+		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
 		let mut sim = Simulator::build(&root_desc, &self.library);
 		sim.held_keys = held_keys;
 		sim.key_modifiers = key_modifiers;
+		sim.driven_inputs = driven_inputs;
 		self.sim.replace(sim);
 		self.sync_sim_clock_pref();
 	}
