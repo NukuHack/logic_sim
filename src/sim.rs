@@ -245,9 +245,14 @@ impl Simulator {
 		// Step 1) copy externally-driven (player-controlled) input states in:
 		// every root input dev-pin is actively driven each frame -- the
 		// player's toggle where one exists, a connected LOW otherwise --
-		// then any host-supplied addresses on top of that.
-		for p in self.chips[self.root.0].input_pins.clone() {
-			let state = self.driven_inputs.get(&self.pins[p.0].id).copied().unwrap_or(PinState::LOW);
+		// then any host-supplied addresses on top of that. Iterated by
+		// index: this runs every tick, and cloning the pin list (or any
+		// list below) would malloc per chip per tick.
+		let num_root_inputs = self.chips[self.root.0].input_pins.len();
+		for i in 0..num_root_inputs {
+			let p = self.chips[self.root.0].input_pins[i];
+			let pin_id = self.pins[p.0].id;
+			let state = self.driven_inputs.get(&pin_id).copied().unwrap_or(PinState::LOW);
 			self.pins[p.0].state = state;
 		}
 		for input in external_inputs {
@@ -371,23 +376,33 @@ impl Simulator {
 	}
 
 	fn propagate_inputs(&mut self, chip_idx: ChipIdx) {
-		let pins = self.chips[chip_idx.0].input_pins.clone();
-		for p in pins {
+		// Index iteration everywhere below: these run once per chip per
+		// tick, and cloning each pin list to appease the borrow checker
+		// used to make stepping malloc-bound (the single biggest reason
+		// the port stepped slower than the original).
+		let num_inputs = self.chips[chip_idx.0].input_pins.len();
+		for i in 0..num_inputs {
+			let p = self.chips[chip_idx.0].input_pins[i];
 			self.propagate_signal(p);
 		}
 	}
 
 	fn propagate_outputs(&mut self, chip_idx: ChipIdx) {
-		let pins = self.chips[chip_idx.0].output_pins.clone();
-		for p in pins {
+		let num_outputs = self.chips[chip_idx.0].output_pins.len();
+		for i in 0..num_outputs {
+			let p = self.chips[chip_idx.0].output_pins[i];
 			self.propagate_signal(p);
 		}
 		self.chips[chip_idx.0].num_inputs_ready = 0;
 	}
 
 	fn propagate_signal(&mut self, source: PinIdx) {
-		let targets = self.pins[source.0].connected_target_pins.clone();
-		for target in targets {
+		// The innermost hot loop of the whole simulation -- one pass per
+		// propagated pin per tick. Cloning the target list here was one
+		// heap alloc per wire crossing per chip per tick.
+		let num_targets = self.pins[source.0].connected_target_pins.len();
+		for i in 0..num_targets {
+			let target = self.pins[source.0].connected_target_pins[i];
 			self.receive_input(target, source);
 		}
 	}
@@ -396,6 +411,12 @@ impl Simulator {
 	/// source pin propagates its signal to them.
 	fn receive_input(&mut self, target: PinIdx, source: PinIdx) {
 		let frame = self.simulation_frame;
+		// The source side is read-only here: snapshot it once up front so
+		// the writes below never re-walk `pins[source]`/`chips[..]` (and
+		// so a pin wired to itself still sees its pre-call state).
+		let source_state = self.pins[source.0].state;
+		let source_id = self.pins[source.0].id;
+		let source_parent_chip_id = self.chips[self.pins[source.0].parent_chip.0].id;
 
 		if self.pins[target.0].last_updated_frame_index != frame {
 			self.pins[target.0].last_updated_frame_index = frame;
@@ -403,8 +424,6 @@ impl Simulator {
 		}
 
 		let set;
-		let source_state = self.pins[source.0].state;
-
 		if self.pins[target.0].num_inputs_received_this_frame > 0 {
 			// Already received input this frame: choose randomly whether to
 			// accept the conflicting input (same choice for all bits).
@@ -426,8 +445,9 @@ impl Simulator {
 		}
 
 		if set {
-			self.pins[target.0].latest_source_id = self.pins[source.0].id;
-			self.pins[target.0].latest_source_parent_chip_id = self.chips[self.pins[source.0].parent_chip.0].id;
+			let t = &mut self.pins[target.0];
+			t.latest_source_id = source_id;
+			t.latest_source_parent_chip_id = source_parent_chip_id;
 		}
 
 		self.pins[target.0].num_inputs_received_this_frame += 1;

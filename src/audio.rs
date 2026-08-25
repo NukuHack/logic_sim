@@ -172,17 +172,25 @@ impl AudioState {
 	/// The mixed waveform value at absolute `time` (seconds since the
 	/// player started). Summing only audible slots keeps idle playback cheap.
 	pub fn sample(&self, time: f64) -> f32 {
-		let mut sum = 0.0f32;
-		for i in 0..FREQ_COUNT {
-			let amplitude = self.sim_audio.target_amplitudes_per_freq[i] as f32;
-			if amplitude < 0.001 {
-				continue;
-			}
-			let phase = time * 2.0 * std::f64::consts::PI * self.sim_audio.freqs_all[i] as f64;
-			sum += square_wave(phase) * amplitude;
-		}
-		sum
+		mix_sample(&self.sim_audio.freqs_all, &self.sim_audio.target_amplitudes_per_freq, time)
 	}
+}
+
+/// One mixed waveform sample over an explicit `(frequencies, amplitudes)`
+/// pair -- the computation behind [`AudioState::sample`], split out so the
+/// output callback can snapshot those two arrays under its shortest
+/// possible lock and sum harmonics outside it (see [`spawn_player`]).
+fn mix_sample(freqs_all: &[f32; FREQ_COUNT], amplitudes: &[f64; FREQ_COUNT], time: f64) -> f32 {
+	let mut sum = 0.0f32;
+	for i in 0..FREQ_COUNT {
+		let amplitude = amplitudes[i] as f32;
+		if amplitude < 0.001 {
+			continue;
+		}
+		let phase = time * 2.0 * std::f64::consts::PI * freqs_all[i] as f64;
+		sum += square_wave(phase) * amplitude;
+	}
+	sum
 }
 
 /// Output-device handle playing whatever [`AudioState`] the app shares in.
@@ -215,12 +223,12 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	let mut config: cpal::StreamConfig = config.into();
 	// Pin a generous period instead of accepting the device default: cpal's
 	// ALSA backend pairs the default negotiation with only a two-period ring
-	// (here: 512-frame periods => ~21 ms total buffer), which underruns
-	// whenever the output worker stalls past a single ~10 ms period -- routine
-	// under load even when outputting silence (the errors also fire while no
-	// buzzer sounds, since the stream runs from app start either way). Buzzer
-	// audio has no interactive-latency requirement (the mix follows the
-	// simulation), so trading ~43 ms of latency for ~85 ms of buffer is free.
+	// (here: 2048-frame periods => ~85 ms total buffer), which rides out
+	// stalls that would underrun a ~10 ms period -- routine under load even
+	// when outputting silence (the errors also fire while no buzzer sounds,
+	// since the stream runs from app start either way). Buzzer audio has no
+	// interactive-latency requirement (the mix follows the simulation), so
+	// trading ~43 ms of latency for ~85 ms of buffer is free.
 	config.buffer_size = cpal::BufferSize::Fixed(AUDIO_PERIOD_FRAMES);
 	// Sample count since start -- dividing by the rate reconstructs the
 	// callback's exact time without float drift accumulating per sample.
@@ -235,9 +243,20 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 				// Poison recovery, not just a failed lock: an audio panic on
 				// either side must degrade to silence, never to repeating
 				// whatever stale bytes were last left in the buffer.
-				let state = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+				//
+				// The lock is held only for a ~3 KB array copy: the mix
+				// itself (up to 20 harmonics per sounding slot, per frame)
+				// runs on the snapshot outside it. Synthesizing under the
+				// lock made this RT thread block the simulation worker for
+				// milliseconds per period -- and queue behind its batch
+				// holds -- which is exactly how a well-buffered stream
+				// still underruns.
+				let (freqs, amplitudes) = {
+					let state = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+					(*state.sim_audio.freqs_all(), *state.sim_audio.amplitudes())
+				};
 				for frame in data.chunks_mut(channels) {
-					let sample = process_output_sample(GAIN * state.sample(time));
+					let sample = process_output_sample(GAIN * mix_sample(&freqs, &amplitudes, time));
 					frame.fill(sample);
 					time += 1.0 / sample_rate;
 				}
