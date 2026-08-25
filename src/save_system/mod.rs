@@ -2,7 +2,8 @@
 //! `Loader`, `SavePaths`, `SaveUtils`, `UpgradeHelper`) plus the persistence-relevant parts of
 //! `DLS.Game.Main` and `DLS.Game.BuiltinCollectionCreator`. Submodules cover where things live on
 //! disk, the save-format compatibility version type, filename/timestamp helpers, project defaults,
-//! the in-memory `Project`, file read/write, and create-or-load-project orchestration.
+//! the in-memory `Project`, file read/write, old-save upgrades, and create-or-load-project
+//! orchestration.
 
 mod defaults;
 mod loader;
@@ -11,6 +12,7 @@ mod paths;
 mod project;
 mod saver;
 mod timestamp;
+mod upgrade;
 mod util;
 mod version;
 

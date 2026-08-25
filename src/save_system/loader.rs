@@ -4,7 +4,7 @@
 use std::io;
 
 use crate::builtins;
-use crate::description::ChipLibrary;
+use crate::description::{ChipDescription, ChipLibrary};
 use crate::json::{parse_project_description, ProjectDescription};
 use crate::save_system::paths::SavePaths;
 use crate::save_system::project::Project;
@@ -90,11 +90,19 @@ impl Loader {
 		let mut library = ChipLibrary::new();
 		let mut custom_names_lower = std::collections::HashSet::new();
 
+		let mut custom_chips: Vec<ChipDescription> = Vec::with_capacity(description.all_custom_chip_names.len());
 		for chip_name in &description.all_custom_chip_names {
 			let chip_path = chips_dir.join(format!("{chip_name}.json"));
 			let text = std::fs::read_to_string(&chip_path)?;
 			let chip_desc = crate::json::parse_chip_description(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 			custom_names_lower.insert(chip_desc.name.to_ascii_lowercase());
+			custom_chips.push(chip_desc);
+		}
+
+		// Bring chips saved by older game versions up to the current format
+		// before they enter the library (`UpgradeHelper.ApplyVersionChanges`).
+		crate::save_system::upgrade::apply_version_changes(&mut custom_chips);
+		for chip_desc in custom_chips {
 			library.add(chip_desc);
 		}
 

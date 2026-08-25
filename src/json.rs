@@ -165,6 +165,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 	desc.colour = [raw.colour.r, raw.colour.g, raw.colour.b, raw.colour.a];
 	desc.name_location = raw.name_location;
 	desc.size = raw.size;
+	desc.dls_version = raw.dls_version.clone();
 
 	desc.input_pins = raw
 		.input_pins
@@ -227,7 +228,13 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 /// replacement for the editor.
 pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<String> {
 	let raw = JsonChipDescription {
-		dls_version: Some("0.0.0".to_string()),
+		// Every save is stamped with the running build's version, mirroring
+		// `DescriptionCreator.CreateChipDescription`'s `DLSVersion =
+		// Main.DLSVersion` -- the in-memory value may legitimately be older
+		// (a just-migrated pre-2.1.5 chip), but what hits disk from here on
+		// *is* current-format data. Writing anything older would make the
+		// loader re-apply the one-shot migrations on every load.
+		dls_version: Some(crate::save_system::version::DLS_VERSION.to_string()),
 		name: desc.name.clone(),
 		name_location: desc.name_location,
 		chip_type: desc.chip_type,

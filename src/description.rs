@@ -596,6 +596,13 @@ pub struct ChipDescription {
 	/// on disk (`NameLocation`). Defaults to `Centre`, matching the
 	/// original's default for newly-created chips.
 	pub name_location: NameLocation,
+	/// The `DLSVersion_LastSaved` string this chip's own save file declared,
+	/// as parsed from disk (`None` when absent, e.g. for chips built up in
+	/// code rather than loaded). Only consumed by the save-format upgrade
+	/// pass (see `save_system::upgrade`) to decide whether a freshly-loaded
+	/// chip needs pre-2.1.5 migrations applied; re-stamped with the current
+	/// version on every save (see `json::serialize_chip_description`).
+	pub dls_version: Option<String>,
 	/// This chip's body footprint as saved on disk (`Size`), in world/grid
 	/// units. The original computes this at save time via
 	/// `SubChipHelper.CalculateMinChipSize`, which folds in the actual
@@ -621,6 +628,7 @@ impl ChipDescription {
 			displays: Vec::new(),
 			colour: [0.0, 0.0, 0.0, 0.0],
 			name_location: NameLocation::default(),
+			dls_version: None,
 			size: Vec2::default(),
 		}
 	}
