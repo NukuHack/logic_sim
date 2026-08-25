@@ -197,12 +197,6 @@ pub(crate) struct ViewerState {
 	pub(crate) last_cursor: Vec2,
 	pub(crate) camera_fitted: bool,
 
-	/// The app's shared buzzer-audio state: simulation steps register
-	/// notes into it, the output stream samples from it. Shared (rather
-	/// than owned here) so the stream keeps running across project
-	/// switches, like the original's ever-present `AudioUnity`.
-	pub(crate) audio: crate::audio::SharedAudioState,
-
 	/// The project's saved prefs/collections, edited live by the
 	/// preferences/library overlays and written back to disk on Apply.
 	pub(crate) prefs: ProjectDescription,
@@ -386,7 +380,6 @@ impl ViewerState {
 			dragging: false,
 			last_cursor: Vec2::ZERO,
 			camera_fitted: false,
-			audio,
 			prefs: ProjectDescription::default(),
 			unsaved_drafts: std::collections::HashSet::new(),
 			sim_pacing: SimPacing::default(),
@@ -477,7 +470,9 @@ impl ViewerState {
 	/// Ctrl-hold forces snapping regardless of prefs; "If Grid Shown"
 	/// snaps only while the grid is displayed; "Always" snaps always.
 	pub(crate) fn should_snap_to_grid(&self) -> bool {
-		self.sim.key_modifiers() & key_mods_bits::CONTROL != 0 || (self.prefs.prefs_snapping == 1 && self.show_grid()) || self.prefs.prefs_snapping == 2
+		self.sim.key_modifiers() & key_mods_bits::CONTROL != 0
+			|| (self.prefs.prefs_snapping == 1 && self.show_grid())
+			|| self.prefs.prefs_snapping == 2
 	}
 
 	/// Same three-way structure as [`Self::should_snap_to_grid`], for shift.
@@ -533,8 +528,7 @@ impl ViewerState {
 			SceneTarget::EditRoot => self.root_chip_name.clone(),
 			SceneTarget::Viewed { name, .. } => name,
 		};
-		let name =
-			self.library.get(&displayed_name).sub_chips.iter().find(|s| s.id == subchip_id).map(|s| s.name.clone());
+		let name = self.library.get(&displayed_name).sub_chips.iter().find(|s| s.id == subchip_id).map(|s| s.name.clone());
 		let Some(name) = name.filter(|name| self.library.try_get(name).is_some()) else { return };
 
 		let mut path = self.view_stack.last().map(|top| top.path.clone()).unwrap_or_default();
@@ -801,7 +795,11 @@ mod view_stack_tests {
 		// Entering again resolves against the chip currently on screen,
 		// not the edited root (`EnterViewMode` reads `ViewedChip`).
 		v.enter_view_mode(88);
-		assert_eq!(v.viewed_chips_string(), "Viewing: LEAF > ROOT", "ancestors nearest first, like UpdateViewedChipsString");
+		assert_eq!(
+			v.viewed_chips_string(),
+			"Viewing: MID > ROOT",
+			"ancestors of what's on screen, nearest first -- the original's SkipLast(1).Reverse() over [root, MID, LEAF] reads \"MID > ROOT\""
+		);
 		match v.resolve_scene_target() {
 			SceneTarget::Viewed { name, .. } => assert_eq!(name, "LEAF"),
 			SceneTarget::EditRoot => panic!("nested view lost"),

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Unified check/build script for logic_sim.
-# Usage: ./build.sh [-y | -n | -q | -r]
-#   -y  Run all checks and tests, then build
+# Usage: ./build.sh [-y | -c | -n | -q | -r]
+#   -y  Run all checks and tests (including Miri, best-effort), then build
+#   -c  Like -y but WITHOUT Miri (everything else: fmt, clippy, full tests)
 #   -n  Skip everything except build
 #   -q  Quick: only unit tests (cargo test --lib), then build
 #   -r  Same as -y, then run the built app (cargo run --release)
@@ -14,24 +15,27 @@ RUN_ALL=false
 SKIP_ALL=false
 QUICK=false
 RUN_AFTER_BUILD=false
+RUN_MIRI=false
 
 # Parse flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -y) RUN_ALL=true; shift ;;
+    -y) RUN_ALL=true; RUN_MIRI=true; shift ;;
+    -c) RUN_ALL=true; shift ;;
     -n) SKIP_ALL=true; shift ;;
     -q) QUICK=true; shift ;;
-    -r) RUN_ALL=true; RUN_AFTER_BUILD=true; shift ;;
-    *) echo "Usage: $0 [-y | -n | -q | -r]"; echo "  -y  Run all checks and tests, then build"; echo "  -n  Skip everything except build"; echo "  -q  Quick: only unit tests, then build"; echo "  -r  Same as -y, then run the app (cargo run --release)"; exit 1 ;;
+    -r) RUN_ALL=true; RUN_MIRI=true; RUN_AFTER_BUILD=true; shift ;;
+    *) echo "Usage: $0 [-y | -c | -n | -q | -r]"; echo "  -y  Run all checks and tests (incl. Miri), then build"; echo "  -c  All checks and tests, NO Miri"; echo "  -n  Skip everything except build"; echo "  -q  Quick: only unit tests, then build"; echo "  -r  Same as -y, then run the app"; exit 1 ;;
   esac
 done
 
 if ! $RUN_ALL && ! $SKIP_ALL && ! $QUICK; then
-  echo "Usage: $0 [-y | -n | -q | -r]"
-  echo "  -y  Run all checks and tests, then build"
+  echo "Usage: $0 [-y | -c | -n | -q | -r]"
+  echo "  -y  Run all checks and tests (incl. Miri), then build"
+  echo "  -c  All checks and tests, NO Miri"
   echo "  -n  Skip everything except build"
   echo "  -q  Quick: only unit tests, then build"
-  echo "  -r  Same as -y, then run the app (cargo run --release)"
+  echo "  -r  Same as -y, then run the app"
   exit 1
 fi
 
@@ -82,7 +86,7 @@ else
     fi
   fi
 
-  # Full test suite + Miri (only in -y, best-effort)
+  # Full test suite + Miri (only in -y/-r; -c skips just the Miri part)
   if $RUN_ALL; then
     echo "==> Running all tests (unit, integration, docs)..."
     set +e
@@ -92,17 +96,21 @@ else
     if [ "$ALL_TEST_STATUS" -ne 0 ]; then
       echo "==> WARNING: full test suite failed (exit $ALL_TEST_STATUS). Continuing anyway."
     fi
-    if command -v cargo-miri >/dev/null 2>&1 || cargo +nightly miri --version >/dev/null 2>&1; then
-      echo "==> Running cargo miri test --lib"
-      # -Zmiri-disable-isolation: the unit tests round-trip real save files
-      # through std::fs (statx & co.), which Miri only permits with host
-      # access. Without this every fs-backed test dies on an unsupported-
-      # operation error instead of actually checking our code for UB.
-      if ! MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib; then
-        echo "WARN: cargo miri test --lib failed or found UB — investigate before trusting unsafe code"
+    if $RUN_MIRI; then
+      if command -v cargo-miri >/dev/null 2>&1 || cargo +nightly miri --version >/dev/null 2>&1; then
+        echo "==> Running cargo miri test --lib"
+        # -Zmiri-disable-isolation: the unit tests round-trip real save files
+        # through std::fs (statx & co.), which Miri only permits with host
+        # access. Without this every fs-backed test dies on an unsupported-
+        # operation error instead of actually checking our code for UB.
+        if ! MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib; then
+          echo "WARN: cargo miri test --lib failed or found UB — investigate before trusting unsafe code"
+        fi
+      else
+        echo "==> Skipping Miri (nightly + 'miri' rustup component not found)"
       fi
     else
-      echo "==> Skipping Miri (nightly + 'miri' rustup component not found)"
+      echo "==> Skipping Miri (-c flag)."
     fi
   fi
 fi

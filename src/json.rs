@@ -234,7 +234,7 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 		// (a just-migrated pre-2.1.5 chip), but what hits disk from here on
 		// *is* current-format data. Writing anything older would make the
 		// loader re-apply the one-shot migrations on every load.
-		dls_version: Some(crate::save_system::version::DLS_VERSION.to_string()),
+		dls_version: Some(crate::DLS_VERSION.to_string()),
 		name: desc.name.clone(),
 		name_location: desc.name_location,
 		chip_type: desc.chip_type,

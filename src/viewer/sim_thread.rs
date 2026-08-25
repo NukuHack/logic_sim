@@ -80,8 +80,9 @@ impl SimHandle {
 	pub(crate) fn new(sim: Simulator, audio: crate::audio::SharedAudioState) -> Self {
 		let sim = Arc::new(Mutex::new(sim));
 		let controls = Arc::new(SimControls::new());
-		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), Arc::new(Mutex::new(Vec::new())), audio);
-		Self { sim, inputs: Arc::new(Mutex::new(Vec::new())), controls, worker: Some(worker) }
+		let inputs = Arc::new(Mutex::new(Vec::new()));
+		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), Arc::clone(&inputs), audio);
+		Self { sim, inputs, controls, worker: Some(worker) }
 	}
 
 	/// Locks the shared simulator for reading/rendering or wholesale
@@ -356,7 +357,14 @@ mod tests {
 		let h = handle(true, 1);
 		h.replace(blank_simulator());
 		assert_eq!(frame(&h), 0, "a replaced simulator starts from frame zero");
-		assert!(h.lock().chips.iter().all(|c| c.sub_chips.is_empty()));
+		// One lock scope: a second `lock()` inside the same statement would
+		// deadlock the non-reentrant mutex.
+		let no_such_chip = {
+			let sim = h.lock();
+			let root = sim.root();
+			sim.find_sub_chip(root, 9999)
+		};
+		assert_eq!(no_such_chip, None, "the blank arena has no subchips to find");
 	}
 
 	#[test]

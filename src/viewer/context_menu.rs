@@ -312,7 +312,7 @@ mod tests {
 		let mut v =
 			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.prefs.starred_list.push(crate::StarredItem::new("SELFIE", false));
-		Saver::save_chip(&paths, "P", &v.library.get("SELFIE")).expect("chip saved");
+		Saver::save_chip(&paths, "P", v.library.get("SELFIE")).expect("chip saved");
 		register_name_in_project_for_test(&mut v, &paths, "SELFIE");
 
 		// Placing SELFIE into ROOT would recurse -- that's why it's grey.

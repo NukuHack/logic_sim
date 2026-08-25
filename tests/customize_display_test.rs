@@ -52,7 +52,6 @@ fn embedded_display_states_resolve_through_the_live_simulator() {
 	assert_eq!(lookup.is_high(4, 0), Some(true), "7-seg segment A must read high");
 	assert_eq!(lookup.is_high(5, 0), Some(true), "LED input must read high");
 
-	drop(lookup);
 	for _ in 0..4 {
 		sim.run_simulation_step(
 			&[ExternalInput { address: PinAddress::new(1, 0), state: logic_sim::pin_state::PinState::LOW }],

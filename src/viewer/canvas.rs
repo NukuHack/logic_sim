@@ -199,7 +199,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		let chip = v.library.get_mut(&root_chip_name);
 		let wire_index = chip.wires.len();
 		chip.wires.push(wire);
-		drop(chip);
+
 		v.rebuild_sim();
 		crate::viewer::undo::record_add_wire(v, v.library.get(&root_chip_name).wires[wire_index].clone(), wire_index);
 		*status = None;
@@ -229,7 +229,6 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 					let chip = v.library.get_mut(&root_chip_name);
 					let wire_index = chip.wires.len();
 					chip.wires.push(wire);
-					drop(chip);
 					v.rebuild_sim();
 					crate::viewer::undo::record_add_wire(v, v.library.get(&root_chip_name).wires[wire_index].clone(), wire_index);
 					*status = None;
@@ -546,13 +545,6 @@ pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
 	chip.output_pins.retain(|p| !ids.contains(&p.id));
 }
 
-/// Deletes subchip/dev-pin `id` plus everything [`compute_component_delete_set`]
-/// says must go with it -- the plain (undo-unaware) entry point used
-/// where no history recording is wanted.
-pub(crate) fn delete_component(v: &mut ViewerState, id: i32) {
-	crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id));
-}
-
 /// Applies a canvas click that the UI stack let fall all the way through
 /// (`UiStack::dispatch_click` returned [`crate::render::ui_stack::InputResult::Propagate`] --
 /// every visible UI layer was either missed or transparent at that point).
@@ -705,7 +697,7 @@ mod tests {
 			(origin_id, terminus_id)
 		};
 
-		delete_component(&mut v, origin_id);
+		crate::viewer::undo::delete_components_with_undo(&mut v, std::iter::once(origin_id));
 
 		let chip = v.library.get("ROOT");
 		assert!(chip.sub_chips.is_empty(), "both halves go together");

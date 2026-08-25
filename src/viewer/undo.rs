@@ -45,6 +45,13 @@ impl UndoController {
 		self.history.clear();
 		self.index = 0;
 	}
+
+	/// How many actions have ever been recorded (minus truncated redo
+	/// tails) -- test introspection for "did this gesture record anything".
+	#[cfg(test)]
+	fn history_len(&self) -> usize {
+		self.history.len()
+	}
 }
 
 /// One recorded edit. `NoOp` is never stored by [`record`]; it exists only
@@ -120,10 +127,7 @@ pub(crate) fn record_add_wire(v: &mut ViewerState, wire: WireDescription, wire_i
 pub(crate) fn delete_wire_with_undo(v: &mut ViewerState, root_chip_name: &str, wire_index: usize) {
 	let Some(wire) = v.library.get(root_chip_name).wires.get(wire_index).cloned() else { return };
 	let full_state = capture_full_wire_state(v, &[wire_index], &[]);
-	record(
-		v,
-		UndoAction::WireExistence(WireExistenceAction { wire, wire_index, is_delete: true, full_state: Some(full_state) }),
-	);
+	record(v, UndoAction::WireExistence(WireExistenceAction { wire, wire_index, is_delete: true, full_state: Some(full_state) }));
 	scene::delete_wire(v.library.get_mut(root_chip_name), wire_index);
 	v.rebuild_sim();
 }
@@ -144,8 +148,18 @@ pub(crate) fn record_add_elements(v: &mut ViewerState, subchips: Vec<SubChipDesc
 /// `RecordDeleteElements`. A single entry point for both the Delete-key
 /// batch and single-component context-menu deletes.
 pub(crate) fn delete_components_with_undo(v: &mut ViewerState, ids: impl Iterator<Item = i32>) {
+	let root_chip_name = v.root_chip_name.clone();
 	let mut all_ids: Vec<i32> = Vec::new();
 	for id in ids {
+		// Stale ids (e.g. left over in a selection something else already
+		// deleted) must not produce empty no-op history entries.
+		let exists = {
+			let chip = v.library.get(&root_chip_name);
+			chip.sub_chips.iter().any(|s| s.id == id) || chip.input_pins.iter().any(|p| p.id == id) || chip.output_pins.iter().any(|p| p.id == id)
+		};
+		if !exists {
+			continue;
+		}
 		for expanded in compute_component_delete_set(v, id) {
 			if !all_ids.contains(&expanded) {
 				all_ids.push(expanded);
@@ -158,10 +172,7 @@ pub(crate) fn delete_components_with_undo(v: &mut ViewerState, ids: impl Iterato
 
 	let (subchips, pins) = capture_elements(v, &all_ids);
 	let wire_state = capture_full_wire_state(v, &[], &all_ids);
-	record(
-		v,
-		UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true }),
-	);
+	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true }));
 	canvas::apply_component_deletion(v, &all_ids);
 	v.rebuild_sim();
 }
@@ -256,7 +267,6 @@ fn apply_move(v: &mut ViewerState, action: &MoveAction, undo: bool) {
 			present.push(id);
 		}
 	}
-	drop(chip);
 	// The moved elements end up selected, like `MoveUndoAction.Trigger`'s
 	// `Select(element, additive: true)` calls.
 	v.selected_ids = present;
@@ -348,22 +358,25 @@ fn same_endpoints(a: &WireDescription, b: &WireDescription) -> bool {
 	a.source_pin_address == b.source_pin_address && a.target_pin_address == b.target_pin_address
 }
 
-/// Rebuilds the wire list as the un-flagged subset of the snapshot, in
-/// order (`FullWireState.Restore`: `Wires[i] = loaded` for kept entries,
-/// `AddWire(.., i)` for flagged ones).
+/// Rebuilds the wire list exactly as it was at capture time
+/// (`FullWireState.Restore`): every snapshot entry comes back in order --
+/// survivors are replaced in place, and flagged (deleted-by-the-action)
+/// ones are re-created. The flags only distinguish those two insertion
+/// paths in the original; the resulting list is the full snapshot either
+/// way, so restoring is a wholesale clone of it.
 fn restore_full_wire_state(v: &mut ViewerState, state: &FullWireState) {
 	let root_chip_name = v.root_chip_name.clone();
 	let chip = v.library.get_mut(&root_chip_name);
-	chip.wires = state.wires.iter().filter(|(_, create)| !create).map(|(wire, _)| wire.clone()).collect();
+	chip.wires = state.wires.iter().map(|(wire, _)| wire.clone()).collect();
 }
 
-/// Whether every to-be-restored wire still has both endpoints to attach
-/// to -- checked BEFORE mutating anything, so a failed restore leaves the
-/// chip untouched instead of half-applied.
+/// Whether every snapshotted wire still has both endpoints to attach to --
+/// checked BEFORE mutating anything, so a failed restore leaves the chip
+/// untouched instead of half-applied.
 fn wire_state_resolvable(v: &ViewerState, state: &FullWireState) -> bool {
 	let chip = v.library.get(&v.root_chip_name);
-	state.wires.iter().filter(|(_, create)| *create).all(|(wire, _)| {
-		address_resolvable(chip, v.library, &wire.source_pin_address) && address_resolvable(chip, v.library, &wire.target_pin_address)
+	state.wires.iter().all(|(wire, _)| {
+		address_resolvable(chip, &v.library, &wire.source_pin_address) && address_resolvable(chip, &v.library, &wire.target_pin_address)
 	})
 }
 
@@ -401,7 +414,8 @@ mod tests {
 	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
 		crate::viewer::chip_interaction::start_placing(v, "NAND");
 		canvas::try_place_pending_components(v, pos, &mut None);
-		v.library.get("ROOT").sub_chips.last().expect("placed").id
+		let root = v.root_chip_name.clone();
+		v.library.get(&root).sub_chips.last().expect("placed").id
 	}
 
 	fn wire_two_outputs(v: &mut ViewerState, a: i32, b: i32) -> usize {
@@ -461,9 +475,18 @@ mod tests {
 		try_redo(&mut v);
 		assert_eq!(wire_count(&v), 0, "redo deletes it again");
 
+		// Now unwind everything, newest first: the delete, then each
+		// placement (which are recorded actions too).
 		try_undo(&mut v);
+		assert_eq!(wire_count(&v), 1, "the wire delete undid away");
+		assert_eq!(subchip_count(&v), 2);
+
 		try_undo(&mut v);
-		assert_eq!(subchip_count(&v), 0, "the second undo removes a placement");
+		assert_eq!(subchip_count(&v), 1, "the second placement undid away");
+		assert_eq!(wire_count(&v), 0, "its wiring went with it");
+
+		try_undo(&mut v);
+		assert_eq!(subchip_count(&v), 0, "the first placement undid away");
 	}
 
 	#[test]
@@ -498,11 +521,15 @@ mod tests {
 		try_redo(&mut v);
 		assert_eq!(position_of(&v, a), Vec2::new(6.0, 2.0));
 
-		// A reverted (illegal) drop records nothing: there is no move to undo.
+		// A reverted (illegal) drop records nothing: there is no move in
+		// history for it. The placement of B itself *is* recorded, so the
+		// next undo removes B entirely (A untouched), and only the undo
+		// after that would rewind A's committed move.
 		let b = place_nand(&mut v, Vec2::new(-4.0, 0.0));
-		commit_move(&mut v, b, Vec2::new(-4.0, 0.0), Vec2::ZERO); // overlaps A -> reverts
+		commit_move(&mut v, b, Vec2::new(-4.0, 0.0), Vec2::new(6.0, 2.0)); // overlaps A's current spot -> reverts
 		try_undo(&mut v);
-		assert_eq!(position_of(&v, a), Vec2::ZERO, "the reverted drag never entered history");
+		assert_eq!(subchip_count(&v), 1, "B's placement was the last recorded action -- the reverted drag added none");
+		assert_eq!(position_of(&v, a), Vec2::new(6.0, 2.0), "A's redo stands");
 	}
 
 	#[test]
@@ -536,10 +563,7 @@ mod tests {
 		try_undo(&mut v);
 		let chip = v.library.get("ROOT");
 		assert_eq!(chip.sub_chips.len(), 2, "origin AND terminus came back");
-		assert!(
-			crate::viewer::bus_wiring::bus_pair_linked(chip, &v.library, chip.sub_chips[0].id, chip.sub_chips[1].id),
-			"their link came back too"
-		);
+		assert!(crate::viewer::bus_wiring::bus_pair_linked(chip, &v.library, chip.sub_chips[0].id, chip.sub_chips[1].id), "their link came back too");
 	}
 
 	/// Boundary dev-pins participate too: adding one via the IN/OUT
@@ -567,5 +591,234 @@ mod tests {
 		try_undo(&mut v);
 		try_redo(&mut v);
 		assert_eq!(subchip_count(&v), 0);
+	}
+}
+// ---- Hardening: edge cases ----
+
+#[cfg(test)]
+mod edge_case_tests {
+	//! Extra pins around the tricky corners: cascade restorations,
+	//! identity-based redo, batch composition, and interactions with
+	//! chip switching / view mode. Same white-box justification as the
+	//! core history tests above.
+
+	use super::*;
+	use crate::description::ChipType;
+	use crate::structs::Vec2;
+	use crate::{ChipLibrary, PinAddress, WireDescription};
+
+	fn viewer_with_builtins() -> ViewerState {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
+		crate::viewer::chip_interaction::start_placing(v, "NAND");
+		canvas::try_place_pending_components(v, pos, &mut None);
+		let root = v.root_chip_name.clone();
+		v.library.get(&root).sub_chips.last().expect("placed").id
+	}
+
+	fn wire_count(v: &ViewerState) -> usize {
+		v.library.get("ROOT").wires.len()
+	}
+
+	fn endpoints(v: &ViewerState, index: usize) -> (PinAddress, PinAddress) {
+		let w = &v.library.get("ROOT").wires[index];
+		(w.source_pin_address, w.target_pin_address)
+	}
+
+	/// Deleting an anchor wire cascades away wires tapping onto it; the
+	/// recorded full-state restore must bring BOTH back (`FullWireState`
+	/// snapshots the whole list, not just the doomed wire).
+	#[test]
+	fn tapped_wires_come_back_with_their_anchor() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let b = place_nand(&mut v, Vec2::new(4.0, 0.0));
+		let c = place_nand(&mut v, Vec2::new(8.0, 0.0));
+
+		let chip = v.library.get_mut("ROOT");
+		chip.wires.push(WireDescription::new(PinAddress::new(a, 2), PinAddress::new(b, 1)));
+		chip.wires.push(WireDescription::new_tapped_target(PinAddress::new(a, 2), PinAddress::new(c, 0), 0, 0, Vec2::ZERO));
+		assert_eq!(wire_count(&v), 2);
+
+		delete_wire_with_undo(&mut v, "ROOT", 0);
+		assert_eq!(wire_count(&v), 0, "the tap died with its anchor");
+
+		try_undo(&mut v);
+		assert_eq!(wire_count(&v), 2, "anchor AND tap came back");
+		assert_eq!(endpoints(&v, 1).0, PinAddress::new(a, 2), "the tap kept its source address");
+
+		try_redo(&mut v);
+		assert_eq!(wire_count(&v), 0, "redo re-cascades");
+	}
+
+	/// Redoing a wire delete must remove the SAME wire even if the stored
+	/// index would now point elsewhere -- verified by endpoints, not
+	/// position alone.
+	#[test]
+	fn wire_delete_redo_targets_the_right_wire_by_identity() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let b = place_nand(&mut v, Vec2::new(4.0, 0.0));
+		let c = place_nand(&mut v, Vec2::new(8.0, 0.0));
+
+		{
+			let chip = v.library.get_mut("ROOT");
+			chip.wires.push(WireDescription::new(PinAddress::new(a, 2), PinAddress::new(b, 0)));
+			chip.wires.push(WireDescription::new(PinAddress::new(b, 2), PinAddress::new(c, 0)));
+		}
+		delete_wire_with_undo(&mut v, "ROOT", 0); // A -> B
+		assert_eq!(endpoints(&v, 0).0, PinAddress::new(b, 2), "the surviving wire shifted into slot 0");
+
+		try_undo(&mut v);
+		try_redo(&mut v);
+		assert_eq!(wire_count(&v), 1);
+		assert_eq!(endpoints(&v, 0).0, PinAddress::new(b, 2), "redo removed A->B again, never B->C");
+
+		try_undo(&mut v);
+		assert_eq!(endpoints(&v, 0).0, PinAddress::new(a, 2), "undo brings back exactly what that action deleted");
+	}
+
+	#[test]
+	fn multi_selection_move_restores_every_carried_position() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let b = place_nand(&mut v, Vec2::new(4.0, 0.0));
+
+		v.sim.set_key_modifiers(crate::sim::key_mods_bits::SHIFT);
+		crate::viewer::chip_interaction::begin_drag_on_component(&mut v, a, Vec2::ZERO);
+		crate::viewer::chip_interaction::begin_drag_on_component(&mut v, b, Vec2::new(4.0, 0.0));
+		v.sim.set_key_modifiers(0);
+		for id in [a, b] {
+			if let Some(sub) = v.library.get_mut("ROOT").sub_chips.iter_mut().find(|s| s.id == id) {
+				sub.position += Vec2::new(10.0, 5.0);
+			}
+		}
+		crate::viewer::chip_interaction::handle_canvas_release(&mut v, Vec2::new(10.0, 5.0));
+
+		try_undo(&mut v);
+		let pos = |v: &ViewerState, id: i32| v.library.get("ROOT").sub_chips.iter().find(|s| s.id == id).expect("exists").position;
+		assert_eq!(pos(&v, a), Vec2::ZERO, "every carried component rewinds together");
+		assert_eq!(pos(&v, b), Vec2::new(4.0, 0.0));
+		assert_eq!(v.selected_ids, vec![a, b], "the whole moved group stays selected");
+	}
+
+	#[test]
+	fn mixed_dev_pin_and_subchip_batch_delete_round_trips_as_one_action() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		crate::viewer::chip_interaction::start_placing(&mut v, "IN-4");
+		canvas::try_place_pending_components(&mut v, Vec2::new(-6.0, 0.0), &mut None);
+
+		let pin_id = v.library.get("ROOT").input_pins[0].id;
+		delete_components_with_undo(&mut v, [a, pin_id].into_iter());
+
+		let chip = v.library.get("ROOT");
+		assert!(chip.sub_chips.is_empty() && chip.input_pins.is_empty(), "the whole batch went in one go");
+
+		try_undo(&mut v);
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.sub_chips.len(), 1, "subchip and dev-pin come back together");
+		assert_eq!(chip.input_pins.len(), 1);
+		assert_eq!(chip.input_pins[0].bit_count, crate::description::PinBitCount::Bit4, "the pin keeps its description");
+	}
+
+	/// A configured Pulse keeps its custom duration across a
+	/// delete/undo/redo cycle -- descriptions clone wholesale.
+	#[test]
+	fn configured_pulse_keeps_its_duration_through_a_cycle() {
+		let mut v = viewer_with_builtins();
+		crate::viewer::chip_interaction::start_placing(&mut v, "PULSE");
+		canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
+		v.library.get_mut("ROOT").sub_chips[0].internal_data = Some(vec![77, 0, 0]);
+
+		let id = v.library.get("ROOT").sub_chips[0].id;
+		delete_components_with_undo(&mut v, std::iter::once(id));
+		try_undo(&mut v);
+
+		let sub = &v.library.get("ROOT").sub_chips[0];
+		assert_eq!(sub.id, id, "same instance id restored");
+		assert_eq!(sub.internal_data, Some(vec![77, 0, 0]), "its configuration came back with it");
+	}
+
+	/// Switching the edited root clears history (`SetNewActiveDevChip`
+	/// builds a fresh controller): undo after a switch must be a no-op on
+	/// the NEW chip, not replay actions belonging to the old one.
+	#[test]
+	fn switching_chips_clears_history_and_undo_is_a_no_op_afterwards() {
+		let root = crate::save_system::test_util::temp_dir("undo_chip_switch");
+		let paths = crate::SavePaths::new(&root);
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("FIRST", ChipType::Custom));
+		library.add(ChipDescription::new("SECOND", ChipType::Custom));
+		for name in ["FIRST", "SECOND"] {
+			crate::Saver::save_chip(&paths, "P", &library.get(name).clone()).expect("saved");
+		}
+		let mut v = ViewerState::new("P", library, "FIRST".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+
+		place_nand(&mut v, Vec2::ZERO);
+		assert_eq!(v.undo.history_len(), 1);
+
+		crate::viewer::save_flow::open_chip_by_name(&mut v, &paths, &mut None, "SECOND");
+		assert_eq!(v.undo.history_len(), 0, "the switch started a fresh history");
+
+		try_undo(&mut v);
+		assert!(v.library.get("SECOND").sub_chips.is_empty(), "undo does not reach across chips");
+
+		crate::viewer::save_flow::open_chip_by_name(&mut v, &paths, &mut None, "FIRST");
+		assert_eq!(
+			v.library.get("FIRST").sub_chips.len(),
+			0,
+			"reopening shows the on-disk chip -- the unsaved NAND was discarded by the switch, as ever"
+		);
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Replaying a structural action while a view-only chip is on screen
+	/// drops the view instead of leaving it pointing through changed
+	/// topology.
+	#[test]
+	fn structural_undo_drops_any_open_view() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		v.enter_view_mode(a);
+		assert!(!v.can_edit_viewed_chip());
+
+		try_undo(&mut v);
+		assert!(v.can_edit_viewed_chip(), "the view was dropped with the topology it pointed at");
+		assert!(v.library.get("ROOT").sub_chips.is_empty());
+	}
+
+	/// Grabbing and releasing without moving (a plain click-select)
+	/// records nothing -- history stays clean for real edits.
+	#[test]
+	fn zero_delta_click_select_records_nothing() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let history_after_place = v.undo.history_len();
+
+		crate::viewer::chip_interaction::begin_drag_on_component(&mut v, a, Vec2::ZERO);
+		crate::viewer::chip_interaction::handle_canvas_release(&mut v, Vec2::ZERO);
+
+		assert_eq!(v.undo.history_len(), history_after_place, "a click is not an edit");
+	}
+
+	/// Deleting an id that no longer exists on the chip (a stale
+	/// selection) records nothing and changes nothing.
+	#[test]
+	fn stale_delete_ids_are_silent_no_ops() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let history_before = v.undo.history_len();
+
+		delete_components_with_undo(&mut v, [a + 500].into_iter());
+		assert_eq!(v.undo.history_len(), history_before, "no history entry for a missing id");
+		assert!(v.library.get("ROOT").sub_chips.iter().any(|s| s.id == a), "the real component is untouched");
 	}
 }

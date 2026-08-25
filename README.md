@@ -33,6 +33,7 @@ Or use the all-in-one script:
 
 ```sh
 ./build.sh -y   # fmt + clippy + full test suite (+ Miri if available) + release build
+./build.sh -c   # same as -y but without Miri
 ./build.sh -q   # unit tests only, then release build
 ./build.sh -n   # just build
 ```

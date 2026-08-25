@@ -310,8 +310,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		let paused_banner_active = v.prefs.prefs_sim_paused && v.context_menu.is_none();
 		let top_y = if paused_banner_active { 34.0 } else { 0.0 };
 		let (geo, back_rect) = viewed_chips_bar_geometry(v.viewed_chips_string(), vw, top_y);
-		let mut bar_layer =
-			StackLayer::<ViewerAction>::new(LayerId::ViewedChipsBar, Capture::Rect(UiRect::new(0.0, top_y, vw, 34.0)));
+		let mut bar_layer = StackLayer::<ViewerAction>::new(LayerId::ViewedChipsBar, Capture::Rect(UiRect::new(0.0, top_y, vw, 34.0)));
 		bar_layer.geometry = pin_geometry_to_screen(geo, &v.camera, vh);
 		bar_layer.buttons.push(Button { rect: back_rect, action: ViewerAction::Editor(editor_ui::EditorAction::ExitViewedChip), enabled: true });
 		viewer_stack.push(bar_layer);

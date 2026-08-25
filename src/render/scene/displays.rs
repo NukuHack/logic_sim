@@ -780,7 +780,8 @@ mod tests {
 		let lit = theme::state_colour(LogicState::High, Color::White).map(f32::to_bits);
 		let dim = theme::state_colour(LogicState::Low, Color::White).map(f32::to_bits);
 		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits); // also the backing quad
-		let cases: [(LogicState, std::vec::Vec<[u32; 4]>, std::vec::Vec<[u32; 4]>); 3] = [
+		type LedCase = (LogicState, Vec<[u32; 4]>, Vec<[u32; 4]>);
+		let cases: [LedCase; 3] = [
 			(LogicState::High, vec![lit], vec![dim]),
 			(LogicState::Low, vec![dim], vec![lit]),
 			// The backing quad is black anyway; what matters is that the

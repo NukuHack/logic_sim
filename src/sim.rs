@@ -78,6 +78,7 @@ impl SimChip {
 
 /// External stimulus: values the "player"/host program is driving into
 /// input dev-pins on the root chip, addressed by (owner id, pin id).
+#[derive(Debug, Clone, Copy)]
 pub struct ExternalInput {
 	pub address: PinAddress,
 	pub state: PinState,
