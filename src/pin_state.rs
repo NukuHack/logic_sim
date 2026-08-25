@@ -53,20 +53,16 @@ impl LogicState {
 		!matches!(self, LogicState::Disconnected)
 	}
 
+	// output is = "is_low"
 	#[inline(always)]
-	const fn bit_value(self) -> u16 {
-		match self {
-			LogicState::High => 1,
-			LogicState::Low | LogicState::Disconnected => 0,
-		}
+	const fn bit_value(self) -> bool {
+		self.is_high()
 	}
 
+	// output is = "is_disonnected"
 	#[inline(always)]
-	const fn tristate_value(self) -> u16 {
-		match self {
-			LogicState::Disconnected => 1,
-			LogicState::Low | LogicState::High => 0,
-		}
+	const fn tristate_value(self) -> bool {
+		!self.is_connected()
 	}
 }
 
@@ -78,14 +74,24 @@ pub const LOGIC_DISCONNECTED: u8 = LogicState::Disconnected.to_int();
 /// Packed state of up to 16 pins/wires: bit values in the low 16 bits, tri-state
 /// ("disconnected") flags in the high 16 bits. This is the thing `SimPin::state`
 /// stores, and what flows along wires/buses during simulation.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PinState(u32);
+
+impl Default for PinState {
+	fn default() -> Self {
+		Self::DISCONNECTED
+	}
+}
 
 impl PinState {
 	/// A single connected LOW bit at index 0 -- the all-zero state.
-	pub const LOW: PinState = PinState(0);
+	pub const LOW: PinState = PinState::from_raw(LOGIC_LOW as u32);
 	/// A single connected HIGH bit at index 0.
-	pub const HIGH: PinState = PinState(1);
+	pub const HIGH: PinState = PinState::from_raw(LOGIC_HIGH as u32);
+	/// A single Disconnected bit at index 0 (its tristate flag set;
+	pub const OFF: PinState = PinState::from_parts(0, 1);
+	/// Every wire of the word disconnected -- e.g. a pin nothing has ever driven.
+	pub const DISCONNECTED: PinState = PinState::from_parts(0, u16::MAX);
 
 	// --- raw <-> PinState -----------------------------------------------------
 
@@ -114,19 +120,16 @@ impl PinState {
 		Self::from_bit(0, state)
 	}
 
+	#[inline(always)]
+	pub fn from_bool(single: bool) -> Self {
+		Self::single(LogicState::from_bool(single))
+	}
+
 	/// A single wire at `index` set to `state`, all other wires low/connected.
 	#[inline(always)]
 	pub fn from_bit(index: u32, state: LogicState) -> Self {
 		let mut s = Self::default();
 		s.set_bit(index, state);
-		s
-	}
-
-	/// All 16 wires disconnected (mirrors the old `set_all_disconnected`).
-	#[inline(always)]
-	pub fn disconnected() -> Self {
-		let mut s = Self::default();
-		s.set_all_disconnected();
 		s
 	}
 
@@ -157,9 +160,14 @@ impl PinState {
 		self.set(0, u16::MAX);
 	}
 
+	pub fn set_all_low(&mut self) {
+		self.set(0, 0);
+	}
+
 	// --- single-bit access (the "no manual bitshift" API) ----------------------
 
 	/// Reads the tristated value of wire `index` directly, e.g. `bus.bit(3)`.
+	#[inline(always)]
 	pub const fn bit(self, index: u32) -> LogicState {
 		let bit = (self.bit_states() >> index) & 1;
 		let tri = (self.tristate_flags() >> index) & 1;
@@ -175,8 +183,8 @@ impl PinState {
 	#[inline(always)]
 	pub fn set_bit(&mut self, index: u32, state: LogicState) {
 		let mask = 1u16 << index;
-		let bits = (self.bit_states() & !mask) | (state.bit_value() << index);
-		let tris = (self.tristate_flags() & !mask) | (state.tristate_value() << index);
+		let bits = (self.bit_states() & !mask) | ((state.bit_value() as u16) << index);
+		let tris = (self.tristate_flags() & !mask) | ((state.tristate_value() as u16) << index);
 		self.set(bits, tris);
 	}
 
@@ -201,7 +209,7 @@ impl PinState {
 	/// `set_4bit_from_8bit_source` / `set_8bit_from_16bit_source` / manual
 	/// `(x >> offset) & MASK` patterns: `byte.extract(4, 4)` is "the upper nibble",
 	/// `byte.extract(3, 1)` is "just bit 3", etc.
-	pub fn extract(self, offset: u32, width: u32) -> PinState {
+	pub const fn extract(self, offset: u32, width: u32) -> PinState {
 		let mask = width_mask(width);
 		let bits = (self.bit_states() >> offset) & mask;
 		let tris = (self.tristate_flags() >> offset) & mask;
@@ -223,18 +231,6 @@ impl PinState {
 		PinState::from_parts(bits, tris)
 	}
 
-	// --- conflict resolution (used when two sources drive the same pin) --------
-
-	#[inline(always)]
-	pub fn or(self, other: Self) -> Self {
-		Self(self.0 | other.0)
-	}
-
-	#[inline(always)]
-	pub fn and(self, other: Self) -> Self {
-		Self(self.0 & other.0)
-	}
-
 	// --- editing ------------------------------------------------------------
 
 	/// Flips wire `index`, clearing tri-state (can't be disconnected when toggling,
@@ -243,6 +239,60 @@ impl PinState {
 	pub fn toggle_bit(&mut self, index: u32) {
 		let bits = self.bit_states() ^ (1u16 << index);
 		self.set(bits, 0);
+	}
+}
+
+// --- conflict resolution (used when two sources drive the same pin) --------
+impl PinState {
+	/// Shared tri-state merge: `combined` is the already-computed bitwise result of
+	/// the boolean op (OR/AND/NAND) applied to both value words. Per bit:
+	/// - both sides driven  -> use `combined`
+	/// - only one side driven -> the driven side wins outright (floating input
+	///   doesn't get a vote)
+	/// - neither side driven -> stays disconnected
+	#[inline(always)]
+	const fn merge_driven(self, other: Self, combined: u16) -> Self {
+		let val_a = self.bit_states();
+		let val_b = other.bit_states();
+		let tri_a = self.tristate_flags();
+		let tri_b = other.tristate_flags();
+
+		let conn_a = !tri_a;
+		let conn_b = !tri_b;
+		let both_conn = conn_a & conn_b;
+		let only_a = conn_a & !conn_b;
+		let only_b = conn_b & !conn_a;
+
+		let value = (combined & both_conn) | (val_a & only_a) | (val_b & only_b);
+		let tri = tri_a & tri_b; // disconnected only if BOTH sides are disconnected
+
+		Self::from_parts(value, tri)
+	}
+
+	#[inline(always)]
+	pub const fn or(self, other: Self) -> Self {
+		let combined = self.bit_states() | other.bit_states();
+		self.merge_driven(other, combined)
+	}
+
+	#[inline(always)]
+	pub const fn and(self, other: Self) -> Self {
+		let combined = self.bit_states() & other.bit_states();
+		self.merge_driven(other, combined)
+	}
+
+	#[inline(always)]
+	pub const fn nand(self, other: Self) -> Self {
+		let combined = !(self.bit_states() & other.bit_states());
+		self.merge_driven(other, combined)
+	}
+
+	/// Unary NOT: flips every driven bit, disconnected bits stay disconnected.
+	/// (Value bits under a disconnected flag are never read by `bit()`, so we
+	/// don't need to mask them off here -- just flip the whole value word.)
+	#[inline(always)]
+	pub const fn not(self) -> Self {
+		Self::from_parts(!self.bit_states(), self.tristate_flags())
 	}
 }
 

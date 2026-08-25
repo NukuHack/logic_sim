@@ -5,7 +5,7 @@
 //! and all chips in one `Vec<SimChip>`, indexed rather than referenced, keeping the hot loop allocation-free.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
-use crate::pin_state::{LogicState, PinState};
+use crate::pin_state::PinState;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
@@ -42,7 +42,7 @@ impl SimPin {
 			id,
 			parent_chip,
 			is_input,
-			state: PinState::disconnected(),
+			state: PinState::default(),
 			connected_target_pins: Vec::new(),
 			last_updated_frame_index: 0,
 			latest_source_id: -1,
@@ -450,12 +450,12 @@ impl Simulator {
 			E::Nand => {
 				let a = in_state!(0).first_bit_high();
 				let b = in_state!(1).first_bit_high();
-				set_out!(0, PinState::single(LogicState::from_bool(!(a && b))));
+				set_out!(0, PinState::from_bool(!(a && b)));
 			}
 			E::Clock => {
 				let spct = self.steps_per_clock_transition;
 				let high = spct != 0 && ((self.simulation_frame / spct as u64) & 1) == 0;
-				set_out!(0, PinState::single(LogicState::from_bool(high)));
+				set_out!(0, PinState::from_bool(high));
 			}
 			E::Pulse => {
 				const DURATION: usize = 0;
@@ -474,12 +474,12 @@ impl Simulator {
 					}
 				}
 
-				let mut output_state = PinState::single(LogicState::Low);
+				let mut output_state = PinState::LOW;
 				if ticks_remaining > 0 {
 					self.chips[chip_idx.0].internal_state[TICKS_REMAINING] -= 1;
-					output_state = PinState::single(LogicState::High);
+					output_state = PinState::HIGH;
 				} else if input_state.tristate_flags() != 0 {
-					output_state = PinState::disconnected();
+					output_state = PinState::OFF;
 				}
 
 				set_out!(0, output_state);
@@ -528,13 +528,13 @@ impl Simulator {
 			}
 			E::TriStateBuffer => {
 				let data = in_state!(0);
-				let enable = in_state!(1);
-				set_out!(0, if enable.first_bit_high() { data } else { PinState::disconnected() });
+				let enable = in_state!(1).first_bit_high();
+				set_out!(0, if enable { data } else { PinState::DISCONNECTED });
 			}
 			E::Key => {
 				let key_char = self.chips[chip_idx.0].internal_state.first().copied().unwrap_or(0) as u8 as char;
 				let is_held = self.held_keys.contains(&key_char);
-				set_out!(0, PinState::single(LogicState::from_bool(is_held)));
+				set_out!(0, PinState::from_bool(is_held));
 			}
 			E::KeyMods => {
 				set_out!(0, PinState::from_raw(self.key_modifiers & 0xFF));
