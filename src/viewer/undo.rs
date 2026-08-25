@@ -786,8 +786,13 @@ mod edge_case_tests {
 	#[test]
 	fn structural_undo_drops_any_open_view() {
 		let mut v = viewer_with_builtins();
-		let a = place_nand(&mut v, Vec2::ZERO);
-		v.enter_view_mode(a);
+		let mut library_entry = ChipDescription::new("SUB", ChipType::Custom);
+		v.library.add(std::mem::take(&mut library_entry));
+		crate::viewer::chip_interaction::start_placing(&mut v, "SUB");
+		canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
+		let id = v.library.get("ROOT").sub_chips[0].id;
+
+		v.enter_view_mode(id);
 		assert!(!v.can_edit_viewed_chip());
 
 		try_undo(&mut v);

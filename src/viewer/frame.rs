@@ -76,26 +76,35 @@ fn paused_banner_geometry(paused_step_counter: u32, vw: f32) -> SceneGeometry {
 }
 
 /// The viewed-chips bar (`ViewedChipsBar.DrawViewedChipsBanner`): a
-/// full-width info strip showing the "Viewing: a > b" chain, with a Back
-/// button at its right edge for popping back to the parent chip. Returns
-/// the bar's geometry plus the Back button's hit rect (both plain
-/// screen-pixel space, like every other UI surface pre-pinning).
-fn viewed_chips_bar_geometry(label: String, vw: f32, top_y: f32) -> (SceneGeometry, UiRect) {
+/// full-width info strip pinned to the very top of the screen, showing the
+/// "Viewing: a > b" chain, with a Back button at its right edge for
+/// popping back to the parent chip. Returns the bar's geometry plus the
+/// Back button's hit rect (both plain screen-pixel space, like every
+/// other UI surface pre-pinning).
+fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, top_y: f32) -> (SceneGeometry, UiRect) {
 	const BAR_H: f32 = 34.0;
 	const PAD: f32 = 12.0;
 	const BACK_W: f32 = 70.0;
+	const FONT_SIZE: f32 = 15.0;
 
 	let bg = UiRect::new(0.0, top_y, vw, BAR_H);
 	let back = UiRect::new(vw - PAD - BACK_W, top_y + (BAR_H - 26.0) / 2.0, BACK_W, 26.0);
+	// The label lives in the strip between the left pad and the Back
+	// button -- and since `TextLabel::pos` is the *centre* of the text
+	// box, anchoring it anywhere else would let long chains run off the
+	// screen edge.
+	let text_left = PAD;
+	let text_right = vw - BACK_W - PAD * 2.0;
+	let max_text_width = (text_right - text_left).max(40.0);
 	let mut geo = SceneGeometry::default();
 	geo.add_rect(bg.centre(), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
 	geo.add_rect(back.centre(), Vec2::new(back.w, back.h), [0.28, 0.28, 0.34, 1.0]);
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: Vec2::new(PAD, top_y + BAR_H / 2.0),
-		text: label,
+		pos: Vec2::new((text_left + text_right) / 2.0, top_y + BAR_H / 2.0),
+		text: fit_banner_label(&v.viewed_chips_string(), max_text_width),
 		colour: [0.95, 0.95, 0.95, 1.0],
-		font_size: 15.0,
-		width: vw - BACK_W - PAD * 3.0,
+		font_size: FONT_SIZE,
+		width: max_text_width,
 	});
 	geo.labels.push(crate::render::foundation::TextLabel {
 		pos: back.centre(),
@@ -105,6 +114,27 @@ fn viewed_chips_bar_geometry(label: String, vw: f32, top_y: f32) -> (SceneGeomet
 		width: BACK_W - 8.0,
 	});
 	(geo, back)
+}
+
+const BANNER_PREFIX: &str = "Viewing: ";
+const BANNER_FONT_SIZE: f32 = 15.0;
+
+/// Trims a "Viewing: a > b > c" chain to `max_width`, dropping the
+/// oldest ancestors (the root-ward end of the list) first and marking the
+/// cut with an ellipsis, so even absurdly deep view stacks stay inside
+/// the bar instead of spilling off-screen.
+fn fit_banner_label(chain: &str, max_width: f32) -> String {
+	if crate::render::layout::estimate_text_width(chain, BANNER_FONT_SIZE) <= max_width {
+		return chain.to_string();
+	}
+	let names: Vec<&str> = chain.strip_prefix(BANNER_PREFIX).unwrap_or(chain).split(" > ").collect();
+	for keep in (0..names.len()).rev() {
+		let candidate = format!("{}{}…", BANNER_PREFIX, names[..keep].join(" > "));
+		if keep == 0 || crate::render::layout::estimate_text_width(&candidate, BANNER_FONT_SIZE) <= max_width {
+			return candidate;
+		}
+	}
+	format!("{}…", BANNER_PREFIX)
 }
 
 /// Rebuilds the menu screen's UI stack: the screen itself at the bottom,
@@ -301,15 +331,15 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		push_bottom_bar_flyout(v, &mut viewer_stack, vw, vh, mouse);
 	}
 
-	// Viewed-chips bar (`ViewedChipsBar`): shown while a chip is being
-	// viewed in view-only mode and no modal panel covers the editor,
-	// stacking just below the paused banner when both apply (the
-	// original's `topLeft += Vector2.down * InfoBarHeight`). Only its
-	// strip captures input, and only the Back button on it acts.
+	// Viewed-chips bar (`ViewedChipsBar`): pinned to the very top of the
+	// screen while a chip is being viewed in view-only mode (stacking just
+	// below the paused banner when both apply, like the original's
+	// `topLeft += Vector2.down * InfoBarHeight`). Only its strip captures
+	// input, and only the Back button on it acts.
 	if !v.view_stack.is_empty() && v.overlays.is_empty() {
 		let paused_banner_active = v.prefs.prefs_sim_paused && v.context_menu.is_none();
 		let top_y = if paused_banner_active { 34.0 } else { 0.0 };
-		let (geo, back_rect) = viewed_chips_bar_geometry(v.viewed_chips_string(), vw, top_y);
+		let (geo, back_rect) = viewed_chips_bar_geometry(v, vw, top_y);
 		let mut bar_layer = StackLayer::<ViewerAction>::new(LayerId::ViewedChipsBar, Capture::Rect(UiRect::new(0.0, top_y, vw, 34.0)));
 		bar_layer.geometry = pin_geometry_to_screen(geo, &v.camera, vh);
 		bar_layer.buttons.push(Button { rect: back_rect, action: ViewerAction::Editor(editor_ui::EditorAction::ExitViewedChip), enabled: true });
@@ -484,4 +514,68 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 /// centred on the viewport (the convention `ui_kit::to_world` builds for).
 pub(crate) fn menu_camera(vw: f32, vh: f32) -> Camera {
 	Camera { position: Vec2::new(vw / 2.0, vh / 2.0), zoom: 1.0, viewport: Vec2::new(vw, vh) }
+}
+
+#[cfg(test)]
+mod viewed_chips_bar_tests {
+	//! White-box: the banner is hand-built geometry (no `editor_ui`
+	//! builder behind it), so its screen-fitting contract -- pinned to the
+	//! top strip, text centred inside the space left of the Back button,
+	//! long chains truncated rather than overflowing -- is pinned here
+	//! directly against the pure builder.
+
+	use super::*;
+	use crate::viewer::state::ViewedChip;
+
+	fn viewer_with_chain(names: &[&str]) -> ViewerState {
+		let mut library = crate::ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		// Id paths are irrelevant to the bar's geometry; fabricate the stack.
+		v.view_stack = names.iter().map(|name| ViewedChip { name: name.to_string(), path: vec![] }).collect();
+		v
+	}
+
+	fn label_bounds(geo: &SceneGeometry) -> (f32, f32) {
+		let label = geo.labels.first().expect("the chain label exists");
+		(label.pos.x - label.width / 2.0, label.pos.x + label.width / 2.0)
+	}
+
+	#[test]
+	fn bar_spans_the_top_strip_with_the_text_left_of_back() {
+		let v = viewer_with_chain(&["INNER"]);
+		let vw = 800.0;
+		let (geo, back) = viewed_chips_bar_geometry(&v, vw, 0.0);
+
+		for v in &geo.triangles {
+			assert!((0.0..=34.0).contains(&v.pos.y), "every vertex sits in the top strip, got {}", v.pos.y);
+			assert!((0.0..=vw).contains(&v.pos.x));
+		}
+		let (left, right) = label_bounds(&geo);
+		assert!(left >= 12.0 - f32::EPSILON, "text box starts at/after the left pad");
+		assert!(right <= back.x + f32::EPSILON, "text box ends before the Back button");
+	}
+
+	#[test]
+	fn long_chains_truncate_instead_of_overflowing() {
+		let chain = format!("Viewing: {}", (0..40).map(|i| format!("CHIP{i}")).collect::<Vec<_>>().join(" > "));
+		let max_width = 300.0;
+		let fitted = fit_banner_label(&chain, max_width);
+
+		assert!(crate::render::layout::estimate_text_width(&fitted, BANNER_FONT_SIZE) <= max_width, "fitted label measures within the budget");
+		assert!(fitted.starts_with("Viewing: CHIP0"), "nearest ancestors survive the cut: {fitted}");
+		assert!(fitted.ends_with('…'), "the cut is marked");
+
+		// A short chain passes through untouched.
+		assert_eq!(fit_banner_label("Viewing: ROOT", 300.0), "Viewing: ROOT");
+	}
+
+	#[test]
+	fn even_a_narrow_window_keeps_the_label_on_screen() {
+		let v = viewer_with_chain(&["A", "B", "C"]);
+		let (geo, _) = viewed_chips_bar_geometry(&v, 320.0, 34.0);
+		let (left, right) = label_bounds(&geo);
+		assert!(left >= 0.0 && right <= 320.0, "label box stays inside a narrow viewport");
+	}
 }

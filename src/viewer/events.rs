@@ -337,7 +337,13 @@ impl App {
 				if !can_edit {
 					// View-only mode: watching deeper is allowed, editing/
 					// configuring/deleting is not (`CanEditViewedChip`).
-					items.retain(|item| matches!(item.id, ContextMenuAction::View));
+					// Only *enabled* View rows survive -- e.g. right-
+					// clicking a builtin inside the viewed chip offers
+					// nothing and opens no popup at all.
+					items.retain(|item| matches!(item.id, ContextMenuAction::View) && item.enabled);
+				}
+				if items.is_empty() {
+					return;
 				}
 				v.context_menu = Some(ContextMenuState::new(format!("component:{id}"), self.mouse_pos, items));
 				return;

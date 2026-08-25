@@ -67,11 +67,9 @@ impl ContextTarget {
 /// instance of it, so there's nothing to "open" beyond switching to it).
 pub(crate) fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> Vec<ContextMenuItem> {
 	let mut items = vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(library, chip_name))];
-	// Every placed component can be *viewed* live, builtin or not
-	// (`Project.EnterViewMode`) -- watching a RAM's contents or a clock's
-	// pulse is the whole point; only editing is restricted to custom
-	// definitions.
-	items.push(ContextMenuItem::new_enabled("View", ContextMenuAction::View, library.try_get(chip_name).is_some()));
+	// Only player-authored chips can be *viewed* -- builtins have no
+	// definition to enter (`is_custom_chip` greys both rows for them).
+	items.push(ContextMenuItem::new_enabled("View", ContextMenuAction::View, is_custom_chip(library, chip_name)));
 	items.push(ContextMenuItem::new("Label", ContextMenuAction::Label));
 	let chip_type = library.try_get(chip_name).map(|d| d.chip_type);
 	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16)) {
@@ -237,12 +235,20 @@ mod tests {
 		let nand_items = context_menu_items_for_component(&library, "NAND");
 		assert!(!nand_items.iter().any(|i| matches!(i.id, ContextMenuAction::Configure)));
 		assert!(!nand_items.first().expect("Open row").enabled, "builtins can't be opened");
+		assert!(!nand_items.iter().find(|i| matches!(i.id, ContextMenuAction::View)).expect("View row").enabled, "builtins can't be viewed either");
 
 		let pulse_items = context_menu_items_for_component(&library, "Pulse");
 		assert!(pulse_items.iter().any(|i| matches!(i.id, ContextMenuAction::Configure)));
+		assert!(!pulse_items.iter().find(|i| matches!(i.id, ContextMenuAction::View)).expect("View row").enabled, "builtins can't be viewed either");
 
 		let bus_items = context_menu_items_for_component(&library, "BUS-4");
 		assert!(bus_items.iter().any(|i| matches!(i.id, ContextMenuAction::Flip)));
+
+		// A player-authored chip gets both rows.
+		library.add(crate::ChipDescription::new("MINE", ChipType::Custom));
+		let custom_items = context_menu_items_for_component(&library, "MINE");
+		assert!(custom_items.iter().find(|i| matches!(i.id, ContextMenuAction::Open)).expect("Open row").enabled);
+		assert!(custom_items.iter().find(|i| matches!(i.id, ContextMenuAction::View)).expect("View row").enabled);
 	}
 
 	fn viewer_with_output_pin(bit_count: crate::PinBitCount, mode: crate::ValueDisplayMode) -> ViewerState {

@@ -519,17 +519,18 @@ impl ViewerState {
 	/// Enters `subchip_id`'s own definition in view-only mode, if that
 	/// component exists on the *currently displayed* chip (the edited root,
 	/// or the chip being viewed when stacking deeper -- mirroring
-	/// `EnterViewMode` looking the instance up on `ViewedChip`) and its
-	/// chip resolves in the library (builtins are viewable too -- e.g.
-	/// watching a RAM's live contents). Cancels whatever canvas state was
-	/// in flight (`controller.CancelEverything`) and re-fits the camera.
+	/// `EnterViewMode` looking the instance up on `ViewedChip`) and is a
+	/// player-authored chip (builtins have no definition to enter --
+	/// their View row is greyed out in the popup too). Cancels whatever
+	/// canvas state was in flight (`controller.CancelEverything`) and
+	/// re-fits the camera.
 	pub(crate) fn enter_view_mode(&mut self, subchip_id: i32) {
 		let displayed_name = match self.resolve_scene_target() {
 			SceneTarget::EditRoot => self.root_chip_name.clone(),
 			SceneTarget::Viewed { name, .. } => name,
 		};
 		let name = self.library.get(&displayed_name).sub_chips.iter().find(|s| s.id == subchip_id).map(|s| s.name.clone());
-		let Some(name) = name.filter(|name| self.library.try_get(name).is_some()) else { return };
+		let Some(name) = name.filter(|name| crate::viewer::library::is_custom_chip(&self.library, name)) else { return };
 
 		let mut path = self.view_stack.last().map(|top| top.path.clone()).unwrap_or_default();
 		path.push(subchip_id);
@@ -728,8 +729,11 @@ mod view_stack_tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		// Viewing is custom-only, so the viewable thing on the canvas is a
+		// player-authored chip instance, not a builtin gate.
+		library.add(ChipDescription::new("SUB", ChipType::Custom));
 		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
-		chip_interaction::start_placing(&mut v, "NAND");
+		chip_interaction::start_placing(&mut v, "SUB");
 		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
 		let id = v.library.get("ROOT").sub_chips[0].id;
 		(v, id)
@@ -747,8 +751,8 @@ mod view_stack_tests {
 		assert!(!v.can_edit_viewed_chip(), "a viewed chip is read-only");
 		assert_eq!(v.viewed_chips_string(), "Viewing: ROOT");
 		match v.resolve_scene_target() {
-			SceneTarget::Viewed { name, .. } => assert_eq!(name, "NAND"),
-			SceneTarget::EditRoot => panic!("viewing must resolve to the NAND scope"),
+			SceneTarget::Viewed { name, .. } => assert_eq!(name, "SUB"),
+			SceneTarget::EditRoot => panic!("viewing must resolve to the SUB scope"),
 		}
 
 		v.return_to_previous_viewed_chip();
@@ -756,9 +760,27 @@ mod view_stack_tests {
 		assert_eq!(v.viewed_chips_string(), "");
 	}
 
+	/// Builtins have no definition to enter: their View row is greyed out
+	/// in the popup, and calling straight through is refused too.
+	#[test]
+	fn builtins_cannot_be_entered_in_view_mode() {
+		let (mut v, _custom_id) = viewer_with_viewable_component();
+		chip_interaction::start_placing(&mut v, "NAND");
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::new(6.0, 0.0), &mut None);
+		let nand_id = v.library.get("ROOT").sub_chips.iter().find(|s| s.name == "NAND").expect("placed").id;
+
+		v.enter_view_mode(nand_id);
+		assert!(v.can_edit_viewed_chip(), "a builtin never opens the view stack");
+
+		// ...and the popup offers no usable View row for one either.
+		let items = crate::viewer::context_menu::context_menu_items_for_component(&v.library, "NAND");
+		let view_row = items.iter().find(|i| matches!(i.id, crate::render::context_menu::ContextMenuAction::View)).expect("row exists");
+		assert!(!view_row.enabled, "the View row is greyed out for builtins");
+	}
+
 	#[test]
 	fn nested_views_stack_and_the_banner_lists_ancestors_nearest_first() {
-		let (mut v, _nand_id) = viewer_with_viewable_component();
+		let (mut v, _sub_id) = viewer_with_viewable_component();
 
 		// Real two-level nesting: MID (placed in ROOT) contains an
 		// instance of LEAF in its own definition, so entering MID and then
