@@ -126,8 +126,8 @@ pub(crate) struct RomEditorState {
 /// Working state for the pin-edit popup (`Overlay::PinEdit`, mirroring
 /// `PinEditMenu`): which of the current root chip's own boundary dev-pins
 /// it's editing, plus the draft "Decimal Display" wheel selection --
-/// `display_mode_index` is an index into
-/// `editor_ui::PIN_DECIMAL_DISPLAY_OPTIONS` and only meaningful for pins
+/// `display_mode_index` is an index into `ValueDisplayMode::ALL` and only
+/// meaningful for pins
 /// wider than one bit. The name draft lives in the shared
 /// `overlay_text_input` like every other text-field popup. Both halves
 /// are written back onto the pin only on Confirm.

@@ -10,10 +10,7 @@ use crate::ChipDescription;
 // ---- World draw settings (DrawSettings.cs) ----------------------------------
 
 pub const GRID_SIZE: f32 = 0.125;
-pub const PIN_HEIGHT_1BIT: f32 = 0.185;
-pub const PIN_HEIGHT_4BIT: f32 = 0.3;
-pub const PIN_HEIGHT_8BIT: f32 = 0.43;
-pub const PIN_RADIUS: f32 = PIN_HEIGHT_1BIT / 2.0;
+pub use crate::description::PIN_RADIUS;
 pub const PIN_SEGMENTS: u32 = 20;
 
 pub const SUB_CHIP_PIN_INSET: f32 = 0.015;
@@ -26,65 +23,6 @@ pub const GRID_THICKNESS: f32 = 0.0035;
 
 /// Minimum on-screen size of a chip body that has no pins/name to size it.
 pub const MIN_CHIP_SIZE: f32 = GRID_SIZE;
-
-/// Height (in world units) of a single pin's connection stub, based on its
-/// bit width. Mirrors `SubChipHelper.PinHeightFromBitCount`.
-pub fn pin_height_from_bit_count(bit_count: PinBitCount) -> f32 {
-	match bit_count {
-		PinBitCount::Bit1 => PIN_RADIUS * 2.0,
-		PinBitCount::Bit4 => PIN_HEIGHT_4BIT,
-		PinBitCount::Bit8 => PIN_HEIGHT_8BIT,
-	}
-}
-
-/// World-space radius to draw a 1-bit pin's connection circle at
-pub fn pin_radius_for_bit_count(bit_count: PinBitCount) -> f32 {
-	match bit_count {
-		PinBitCount::Bit1 => PIN_RADIUS,
-		PinBitCount::Bit4 => PIN_RADIUS * 1.7,
-		PinBitCount::Bit8 => PIN_RADIUS * 2.5,
-	}
-}
-
-/// World-space bounding size of a pin's drawn connection shape, based on
-/// its bit width:
-///  - `Bit1`: not used for a pill -- callers draw a plain circle of
-///    radius `pin_radius_for_bit_count(Bit1)` instead (a 1-bit pin never
-///    becomes a pill, only wider pins do).
-///  - `Bit4`: a "pill" -- a square body (width == height == the pin's
-///    diameter) with a half-circle cap glued onto each of its two
-///    (left/right) ends, so the overall shape is `body(diameter) +
-///    cap(radius) + cap(radius)` wide, and just `diameter` tall.
-///  - `Bit8`: the same height (radius) as `Bit4` -- bit count growing
-///    from 4 to 8 doesn't trigger another radius doubling, since that's
-///    only a 2x jump, not the 4x that doubles radius -- but the body
-///    portion doubles in width (twice `Bit4`'s square body), with the
-///    same two half-circle caps still glued on either end.
-///
-/// Feed the result straight into `SceneGeometry::add_rounded_rect` with
-/// `radius = size.y / 2.0` and both `round_left`/`round_right = true` to
-/// get the actual pill shape (its rounded corners become true semicircle
-/// caps exactly when the radius equals half the height).
-pub fn pin_visual_shape_size(bit_count: PinBitCount) -> Vec2 {
-	let r = pin_radius_for_bit_count(bit_count);
-	let body_width = match bit_count {
-		PinBitCount::Bit1 => 0.0, // unused -- Bit1 draws a plain circle, not a pill.
-		PinBitCount::Bit4 => r * 0.6,
-		PinBitCount::Bit8 => r,
-	};
-	Vec2::new(r, body_width + r)
-}
-
-/// Grid-height (in units of `GRID_SIZE`) reserved for one pin along a
-/// chip's edge, based on its bit width. Mirrors the inline switch inside
-/// `SubChipHelper.CalculateDefaultPinLayout`.
-fn pin_grid_height(bit_count: PinBitCount) -> i32 {
-	match bit_count {
-		PinBitCount::Bit1 => 2,
-		PinBitCount::Bit4 => 3,
-		PinBitCount::Bit8 => 4,
-	}
-}
 
 /// Stacks `pins` from the top downward along one edge of a chip and returns
 /// (total chip height, per-pin grid-space y offset from the chip's
@@ -100,7 +38,7 @@ pub fn calculate_default_pin_layout(pins: &[PinBitCount]) -> (f32, Vec<f32>) {
 	let mut pin_grid_y_vals = Vec::with_capacity(pins.len());
 
 	for &bit_count in pins {
-		let pin_h = pin_grid_height(bit_count);
+		let pin_h = bit_count.pin_grid_height();
 		pin_grid_y_vals.push(grid_y as f32 - pin_h as f32 / 2.0);
 		grid_y -= pin_h;
 	}
@@ -253,35 +191,23 @@ pub const INPUT_BIT_CIRCLE_RADIUS: f32 = PIN_RADIUS * 2.0;
 pub const INPUT_BIT_CELL_SIZE: f32 = INPUT_BIT_CIRCLE_RADIUS;
 
 /// Grid arrangement (columns, rows) of per-bit clickable cells for an
-/// *input* dev-pin's body,
-/// a single 1-bit input is one circle (no grid, 1x1); 4 bits arrange
-/// as a 2x2 grid; 8 bits as 2x4 (same 2-wide column count, twice as
-/// tall). Mirrors the `1 = 1, 4 = 2x2, 8 = 2x4` layout.
-pub fn input_bit_grid_dims(bit_count: PinBitCount) -> (i32, i32) {
-	match bit_count {
-		PinBitCount::Bit1 => (1, 1),
-		PinBitCount::Bit4 => (2, 2),
-		PinBitCount::Bit8 => (2, 4),
-	}
-}
-
-/// World-space bounding size of an input dev-pin's clickable body
+/// *input* dev-pin's body comes from `PinBitCount::input_bit_grid_dims`.
 pub fn input_dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
-	let (cols, rows) = input_bit_grid_dims(bit_count);
+	let (cols, rows) = bit_count.input_bit_grid_dims();
 	Vec2::new(INPUT_BIT_CELL_SIZE * cols as f32, INPUT_BIT_CELL_SIZE * rows as f32)
 }
 
 /// World-space centre offsets
 pub fn input_bit_cell_offsets(bit_count: PinBitCount) -> Vec<Vec2> {
-	let (cols, rows) = input_bit_grid_dims(bit_count);
+	let (cols, rows) = bit_count.input_bit_grid_dims();
 	let total = input_dev_pin_body_size(bit_count);
 	let mut offsets = Vec::with_capacity((cols * rows) as usize);
 	for row in 0..rows {
 		for col in 0..cols {
 			let x = -total.x / 2.0 + INPUT_BIT_CELL_SIZE * (col as f32 + 0.5);
 			let y = total.y / 2.0 - INPUT_BIT_CELL_SIZE * (row as f32 + 0.5);
-			// X, y = position, the offset of "PIN_HEIGHT_4BIT" is to make it not instersect with the pin itself
-			let offset = Vec2::new(x - PIN_HEIGHT_4BIT, y);
+			// X, y = position, the offset of "PIN_RADIUS * 4" is to make it not instersect with the pin itself
+			let offset = Vec2::new(x - PIN_RADIUS * 4.0, y);
 			offsets.push(offset);
 		}
 	}
@@ -361,8 +287,8 @@ mod tests {
 		let pins = [PinBitCount::Bit1, PinBitCount::Bit1, PinBitCount::Bit4];
 		let (height, ys) = calculate_default_pin_layout(&pins);
 		let half = height / GRID_SIZE / 2.0;
-		let top_pin_outer_edge = ys[0] + pin_grid_height(pins[0]) as f32 / 2.0;
-		let bottom_pin_outer_edge = ys[ys.len() - 1] - pin_grid_height(*pins.last().unwrap()) as f32 / 2.0;
+		let top_pin_outer_edge = ys[0] + pins[0].pin_grid_height() as f32 / 2.0;
+		let bottom_pin_outer_edge = ys[ys.len() - 1] - pins.last().unwrap().pin_grid_height() as f32 / 2.0;
 		assert_eq!(top_pin_outer_edge, half);
 		assert_eq!(bottom_pin_outer_edge, -half);
 	}

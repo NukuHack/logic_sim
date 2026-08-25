@@ -231,12 +231,13 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 	ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 12.0), inner_w, "Customize chip", [1.0; 4], 22.0);
 	y += 34.0;
 
+	use CustomizeInteraction as Ci;
 	let hint = match ctx.interaction {
-		CustomizeInteraction::None => ["Drag a corner bracket to resize.", "Pick a display below -- click a placed one to remove it."],
-		CustomizeInteraction::Resizing { .. } => ["Click again to finish resizing", "(size snaps to the grid)."],
-		CustomizeInteraction::MovingDisplay { .. } => ["Click to drop · Delete removes", "Escape puts it back"],
-		CustomizeInteraction::ScalingDisplay { .. } => ["Move toward/away from the centre", "to scale · click confirms"],
-		CustomizeInteraction::PlacingDisplay { .. } => ["Click inside the preview to place", "Delete/Escape cancels"],
+		Ci::None => ["Drag a corner bracket to resize.", "Pick a display below -- click a placed one to remove it."],
+		Ci::Resizing { .. } => ["Click again to finish resizing", "(size snaps to the grid)."],
+		Ci::MovingDisplay { .. } => ["Click to drop · Delete removes", "Escape puts it back"],
+		Ci::ScalingDisplay { .. } => ["Move toward/away from the centre", "to scale · click confirms"],
+		Ci::PlacingDisplay { .. } => ["Click inside the preview to place", "Delete/Escape cancels"],
 	};
 	for line in hint {
 		ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 8.0), inner_w, line, [0.85, 0.65, 0.4, 1.0], 13.5);
@@ -546,9 +547,9 @@ fn draw_edge_pins(world: &mut SceneGeometry, draft: &ChipDescription, size: Vec2
 		for (i, y) in ys.iter().enumerate() {
 			let pos = layout::pin_world_position(Vec2::ZERO, size, *y, is_left);
 			match bits[i] {
-				PinBitCount::Bit1 => world.add_circle(pos, layout::pin_radius_for_bit_count(bits[i]), theme::PIN_COL, layout::PIN_SEGMENTS),
+				PinBitCount::Bit1 => world.add_circle(pos, bits[i].pin_radius(), theme::PIN_COL, layout::PIN_SEGMENTS),
 				wide => {
-					let shape = layout::pin_visual_shape_size(wide);
+					let shape = wide.pin_visual_shape_size();
 					world.add_rounded_rect(
 						pos,
 						shape,

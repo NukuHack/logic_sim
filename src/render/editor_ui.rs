@@ -4,6 +4,7 @@
 //! without a GPU. Holds no simulation or save-system logic of its own -- only builds frames to
 //! draw/hit-test for the preferences, chip library, search/naming, key-select, ROM-editor, and save-chip popups.
 
+use crate::description::ValueDisplayMode;
 use crate::json::ChipCollection;
 use crate::json::ProjectDescription;
 use crate::json::StarredItem;
@@ -172,7 +173,7 @@ pub enum EditorAction {
 	/// dev-pin and close.
 	ConfirmPinEdit,
 	/// Pin-edit popup: pick `usize` (an index into
-	/// [`PIN_DECIMAL_DISPLAY_OPTIONS`]) as the draft Decimal Display mode.
+	/// [`ValueDisplayMode::ALL`]) as the draft Decimal Display mode.
 	PinEditSetDisplayMode(usize),
 	/// Unsaved-changes popup (`UnsavedChangesPopup`): the player chose to
 	/// walk away from the current chip's unsaved edits -- run whichever
@@ -1174,12 +1175,6 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 // Pin edit popup (`PinEditMenu`)
 // ---------------------------------------------------------------------
 
-/// The pin-edit popup's "Decimal Display" options -- mirrors
-/// `PinEditMenu.PinDecimalDisplayOptions`. Index order matches
-/// `ValueDisplayMode`'s discriminants, so `(mode as usize)` /
-/// `ValueDisplayMode::from_int(index as i32)` convert directly.
-pub const PIN_DECIMAL_DISPLAY_OPTIONS: [&str; 4] = ["Off", "Unsigned", "Signed", "HEX"];
-
 /// Longest pin name the edit popup confirms, mirroring
 /// `PinEditMenu.MaxLengthPinName` (`"MY LONG PIN NAME"`) and its
 /// length-only validator.
@@ -1190,7 +1185,7 @@ pub const MAX_PIN_NAME_LENGTH: usize = 16;
 /// row of option buttons standing in for the original's wheel selector.
 /// Both halves commit together on Confirm; Cancel discards. `name` is the
 /// host's shared text buffer's current contents; `display_mode_index`
-/// indexes [`PIN_DECIMAL_DISPLAY_OPTIONS`] (ignored while
+/// indexes [`ValueDisplayMode::ALL`] (ignored while
 /// `show_display_options` is false).
 pub fn build_pin_edit_popup(name: &str, show_display_options: bool, display_mode_index: usize, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
@@ -1213,13 +1208,13 @@ pub fn build_pin_edit_popup(name: &str, show_display_options: bool, display_mode
 		add_label(&mut frame, ui, Vec2::new(cx, y + ROW_H / 2.0), panel_w - 40.0, "Decimal Display", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
 		y += ROW_H + ROW_GAP;
 		let options_x = cx - (panel_w - 60.0) / 2.0;
-		let option_w = ((panel_w - 60.0) - 8.0 * (PIN_DECIMAL_DISPLAY_OPTIONS.len() - 1) as f32) / PIN_DECIMAL_DISPLAY_OPTIONS.len() as f32;
-		for (i, option) in PIN_DECIMAL_DISPLAY_OPTIONS.iter().enumerate() {
+		let option_w = ((panel_w - 60.0) - 8.0 * (ValueDisplayMode::ALL.len() - 1) as f32) / ValueDisplayMode::ALL.len() as f32;
+		for (i, option) in ValueDisplayMode::ALL.iter().enumerate() {
 			let rect = UiRect::new(options_x + i as f32 * (option_w + 8.0), y, option_w, ROW_H);
-			if i == display_mode_index.min(PIN_DECIMAL_DISPLAY_OPTIONS.len() - 1) {
-				add_button_coloured(&mut frame, ui, rect, option, EditorAction::PinEditSetDisplayMode(i), true, [0.3, 0.42, 0.58, 1.0]);
+			if i == display_mode_index.min(ValueDisplayMode::ALL.len() - 1) {
+				add_button_coloured(&mut frame, ui, rect, option.label(), EditorAction::PinEditSetDisplayMode(i), true, [0.3, 0.42, 0.58, 1.0]);
 			} else {
-				add_button(&mut frame, ui, rect, option, EditorAction::PinEditSetDisplayMode(i), true);
+				add_button(&mut frame, ui, rect, option.label(), EditorAction::PinEditSetDisplayMode(i), true);
 			}
 		}
 		y += ROW_H + ROW_GAP;

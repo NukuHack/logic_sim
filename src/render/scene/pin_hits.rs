@@ -55,9 +55,9 @@ impl PinHit {
 /// `point_in_rounded_rect`/`point_in_circle`.
 pub(crate) fn point_in_pin_shape(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> bool {
 	match bit_count {
-		PinBitCount::Bit1 => point_in_circle(point, pos, layout::pin_radius_for_bit_count(bit_count)),
+		PinBitCount::Bit1 => point_in_circle(point, pos, bit_count.pin_radius()),
 		PinBitCount::Bit4 | PinBitCount::Bit8 => {
-			let size = layout::pin_visual_shape_size(bit_count);
+			let size = bit_count.pin_visual_shape_size();
 			point_in_rounded_rect(point, pos, size, size.y / 2.0, true, true)
 		}
 	}
@@ -214,8 +214,8 @@ mod tests {
 	#[test]
 	fn point_in_pin_shape_bit8_uses_its_own_wider_size_not_bit4s() {
 		let pos = Vec2::ZERO;
-		let size4 = layout::pin_visual_shape_size(PinBitCount::Bit4);
-		let size8 = layout::pin_visual_shape_size(PinBitCount::Bit8);
+		let size4 = PinBitCount::Bit4.pin_visual_shape_size();
+		let size8 = PinBitCount::Bit8.pin_visual_shape_size();
 		assert!(size8.x > size4.x, "sanity: 8-bit pill must be wider than 4-bit's");
 
 		let point = Vec2::new((size4.x + size8.x) / 4.0, 0.0); // strictly between the two half-widths

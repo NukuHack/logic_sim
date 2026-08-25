@@ -167,7 +167,7 @@ pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 				// take a display mode (the popup offers no wheel for them).
 				if pin.bit_count != crate::PinBitCount::Bit1 {
 					pin.value_display_mode = crate::description::ValueDisplayMode::from_int(
-						edit.display_mode_index.min(editor_ui::PIN_DECIMAL_DISPLAY_OPTIONS.len() - 1) as i32,
+						edit.display_mode_index.min(crate::description::ValueDisplayMode::ALL.len() - 1) as i32,
 					);
 				}
 			}

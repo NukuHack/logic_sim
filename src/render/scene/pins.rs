@@ -18,11 +18,12 @@ use crate::structs::Vec2;
 /// "pill" (a rectangular body with a half-circle cap on each end) for a
 /// wider pin -- so a 4/8-bit pin reads as visibly carrying more than a
 /// 1-bit pin's single wire, rather than every pin drawing at the same
-/// fixed size. See `layout::pin_radius_for_bit_count`/
+/// fixed size. See `PinBitCount::pin_radius`/
 /// `pin_visual_shape_size` for the exact sizing rule.
 ///
 /// The pill's rounded corners become true semicircle caps (not just
-/// quarter-round corners) because `pin_visual_shape_size` always returns a
+/// quarter-round corners) because `PinBitCount::pin_visual_shape_size`
+/// always returns a
 /// shape whose height already equals twice the intended cap radius, and
 /// that radius is what's passed to `add_rounded_rect` below (see
 /// `add_rounded_rect`'s own docs on how corner arcs merge into a full
@@ -30,10 +31,10 @@ use crate::structs::Vec2;
 fn draw_pin_shape(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Rgba) {
 	match bit_count {
 		PinBitCount::Bit1 => {
-			geo.add_circle(pos, layout::pin_radius_for_bit_count(bit_count), colour, layout::PIN_SEGMENTS);
+			geo.add_circle(pos, bit_count.pin_radius(), colour, layout::PIN_SEGMENTS);
 		}
 		PinBitCount::Bit4 | PinBitCount::Bit8 => {
-			let size = layout::pin_visual_shape_size(bit_count);
+			let size = bit_count.pin_visual_shape_size();
 			let radius = size.y / 2.0;
 			geo.add_rounded_rect(pos, size, colour, radius, RoundCorners::BOTH, layout::PIN_SEGMENTS / 4);
 		}
@@ -82,7 +83,7 @@ fn draw_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount,
 /// individually-clickable bit cells, its drawn
 /// footprint scales with how many bits it carries: one circle (twice a
 /// plain pin's radius) for a 1-bit input, a 2x2 grid of squares for a
-/// 4-bit input, 2x4 for 8-bit. See `layout::input_bit_grid_dims`/
+/// 4-bit input, 2x4 for 8-bit. See `PinBitCount::input_bit_grid_dims`/
 /// `input_bit_cell_offsets` for the exact grid geometry, and
 /// `hit_test_input_dev_pin_bit` for the matching per-cell hit test. Each
 /// cell is coloured by that individual bit's own live state

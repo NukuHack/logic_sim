@@ -485,17 +485,6 @@ fn build_scene_draws_input_dev_pin_as_bit_grid_for_wide_input() {
 	assert_eq!(hit_test_input_dev_pin_bit(Vec2::new(100.0, 100.0), Vec2::ZERO, PinBitCount::Bit4), None);
 }
 
-/// `pin_radius_for_bit_count`'s scaling curve: radius stays at
-/// `PIN_RADIUS` for 1-bit, doubles for the 4x jump to 4-bit, and then
-/// holds steady from 4-bit to 8-bit (only a 2x jump in bit count, not
-/// the 4x that triggers another doubling).
-#[test]
-fn pin_radius_for_bit_count_scales_slower_than_bit_count() {
-	assert_eq!(layout::pin_radius_for_bit_count(PinBitCount::Bit1), layout::PIN_RADIUS);
-	assert_ne!(layout::pin_radius_for_bit_count(PinBitCount::Bit4), layout::PIN_RADIUS * 2.0);
-	assert_ne!(layout::pin_radius_for_bit_count(PinBitCount::Bit8), layout::PIN_RADIUS * 4.0);
-}
-
 /// End-to-end through `build_scene`: a subchip with a 4-bit input pin
 /// should have that pin drawn as a pill, not a plain circle -- i.e.
 /// its drawn shape should be visibly wider than `PIN_RADIUS * 2`
@@ -577,7 +566,7 @@ fn build_scene_shows_pin_label_when_hovering_a_multibit_pins_pill_wing() {
 
 	let placed = place_sub_chips(&parent, &lib);
 	let pin_pos = layout::pin_world_position(placed[0].centre, placed[0].size, placed[0].input_pin_y[0], true);
-	let size = layout::pin_visual_shape_size(PinBitCount::Bit4);
+	let size = PinBitCount::Bit4.pin_visual_shape_size();
 	let wing_point = Vec2::new(pin_pos.x - size.x / 2.0 + 1e-3, pin_pos.y);
 
 	let scene = build_scene(&parent, &lib, &AllLow, Some(wing_point));

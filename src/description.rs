@@ -122,12 +122,27 @@ pub enum ValueDisplayMode {
 }
 
 impl ValueDisplayMode {
+	/// Every display mode, in the order the pin-edit popup's "Decimal
+	/// Display" option buttons list them (index == discriminant).
+	pub const ALL: [Self; 4] = [Self::None, Self::Decimal, Self::SignedDecimal, Self::Hex];
+
 	pub fn from_int(v: i32) -> Self {
 		Self::try_from(v).unwrap_or_default()
 	}
 
 	pub fn to_int(&self) -> i32 {
 		(*self).into()
+	}
+
+	/// Label shown on the pin-edit popup's "Decimal Display" option button
+	/// for this mode (mirrors `PinEditMenu.PinDecimalDisplayOptions`).
+	pub fn label(&self) -> &'static str {
+		match self {
+			ValueDisplayMode::None => "Off",
+			ValueDisplayMode::Decimal => "Unsigned",
+			ValueDisplayMode::SignedDecimal => "Signed",
+			ValueDisplayMode::Hex => "HEX",
+		}
 	}
 }
 
@@ -177,6 +192,16 @@ pub enum PinBitCount {
 	Bit8 = 8,
 }
 
+/// World-space height of a 1-bit pin's connection stub (its drawn circle
+/// is twice this as a radius). Base of the per-bit-width pin sizing below.
+pub const PIN_HEIGHT_1BIT: f32 = 0.185;
+/// World-space height reserved by a 4-bit pin's connection stub
+pub const PIN_HEIGHT_4BIT: f32 = PIN_HEIGHT_1BIT * 2.0;
+/// World-space height reserved by an 8-bit pin's connection stub
+pub const PIN_HEIGHT_8BIT: f32 = PIN_HEIGHT_1BIT * 3.0;
+/// World-space radius to draw a 1-bit pin's connection circle at
+pub const PIN_RADIUS: f32 = PIN_HEIGHT_1BIT / 2.0;
+
 impl PinBitCount {
 	pub fn from_int(v: i32) -> Self {
 		Self::try_from(v).unwrap_or_default()
@@ -184,6 +209,64 @@ impl PinBitCount {
 
 	pub fn to_int(&self) -> i32 {
 		(*self).into()
+	}
+
+	/// Height (in world units) of this pin's connection stub. Mirrors
+	/// `SubChipHelper.PinHeightFromBitCount`.
+	pub fn pin_height(self) -> f32 {
+		match self {
+			PinBitCount::Bit1 => PIN_HEIGHT_1BIT,
+			PinBitCount::Bit4 => PIN_HEIGHT_4BIT,
+			PinBitCount::Bit8 => PIN_HEIGHT_8BIT,
+		}
+	}
+
+	/// World-space radius to draw this pin's connection circle at
+	pub fn pin_radius(self) -> f32 {
+		match self {
+			PinBitCount::Bit1 => PIN_RADIUS,
+			PinBitCount::Bit4 => PIN_RADIUS * 1.7,
+			PinBitCount::Bit8 => PIN_RADIUS * 2.5,
+		}
+	}
+
+	/// World-space bounding size of this pin's drawn connection shape:
+	/// Feed the result straight into `SceneGeometry::add_rounded_rect` with
+	/// `radius = size.y / 2.0` and both `round_left`/`round_right = true` to
+	/// get the actual pill shape (its rounded corners become true semicircle
+	/// caps exactly when the radius equals half the height).
+	pub fn pin_visual_shape_size(self) -> Vec2 {
+		let r = self.pin_radius();
+		let body_width = match self {
+			PinBitCount::Bit1 => 0.0, // unused -- Bit1 draws a plain circle, not a pill.
+			PinBitCount::Bit4 => r * 0.6,
+			PinBitCount::Bit8 => r,
+		};
+		Vec2::new(r, body_width + r)
+	}
+
+	/// Grid-height (in grid units) reserved for one pin along a chip's
+	/// edge. Mirrors the inline switch inside
+	/// `SubChipHelper.CalculateDefaultPinLayout`.
+	pub(crate) fn pin_grid_height(self) -> i32 {
+		match self {
+			PinBitCount::Bit1 => 2,
+			PinBitCount::Bit4 => 3,
+			PinBitCount::Bit8 => 4,
+		}
+	}
+
+	/// Grid arrangement (columns, rows) of per-bit clickable cells for an
+	/// *input* dev-pin's body,
+	/// a single 1-bit input is one circle (no grid, 1x1); 4 bits arrange
+	/// as a 2x2 grid; 8 bits as 2x4 (same 2-wide column count, twice as
+	/// tall). Mirrors the `1 = 1, 4 = 2x2, 8 = 2x4` layout.
+	pub fn input_bit_grid_dims(self) -> (i32, i32) {
+		match self {
+			PinBitCount::Bit1 => (1, 1),
+			PinBitCount::Bit4 => (2, 2),
+			PinBitCount::Bit8 => (2, 4),
+		}
 	}
 }
 
