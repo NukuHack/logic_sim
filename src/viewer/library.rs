@@ -203,6 +203,25 @@ pub(crate) fn chip_delete_confirm_message(v: &ViewerState, chip_name: &str) -> S
 /// `isConfirmingChipDeletion` branch of `ChipLibraryMenu`'s DELETE
 /// button.
 pub(crate) fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
+	// Resave every parent chip with this chip's instances (and their
+	// wiring) stripped, before the file goes away -- `Project`'s
+	// UpdateAndSaveAffectedChips willDelete pass.
+	let parent_names: Vec<String> =
+		v.library.iter().filter(|d| d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(name))).map(|d| d.name.clone()).collect();
+	for parent_name in parent_names {
+		let Ok(mut pristine) = crate::viewer::save_flow::load_single_chip_from_disk(paths, &v.project_name, &parent_name) else { continue };
+		pristine.sub_chips.retain(|s| !s.name.eq_ignore_ascii_case(name));
+		pristine.wires.retain(|w| {
+			let owner_gone = |addr: crate::PinAddress| !pristine.sub_chips.iter().any(|s| s.id == addr.pin_owner_id);
+			!owner_gone(w.source_pin_address) && !owner_gone(w.target_pin_address)
+		});
+		if let Err(e) = Saver::save_chip(paths, &v.project_name, &v.library, &pristine) {
+			eprintln!("warning: failed to resave affected chip '{parent_name}': {e}");
+			continue;
+		}
+		*v.library.get_mut(&parent_name) = pristine;
+	}
+
 	if let Err(e) = Saver::delete_chip(paths, &v.project_name, name, true) {
 		*status = Some(format!("Failed to delete chip '{name}': {e}"));
 		return;

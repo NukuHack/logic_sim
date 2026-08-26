@@ -65,9 +65,10 @@ impl Loader {
 			}
 		}
 
-		// Newest first, matching `LastSaveTime` string comparison in the
-		// original (ISO-8601 timestamps sort correctly as plain strings).
-		descriptions.sort_by(|a, b| b.last_save_time.cmp(&a.last_save_time));
+		// Newest first, compared as parsed instants -- the original compares
+		// `LastSaveTime` strings, but Unity stamps local times with offsets
+		// while this port writes UTC, so raw strings mis-order mixed dirs.
+		descriptions.sort_by_key(|desc| std::cmp::Reverse(crate::save_system::timestamp::parse_to_unix_seconds(&desc.last_save_time)));
 		descriptions
 	}
 

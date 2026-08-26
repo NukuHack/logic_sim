@@ -21,6 +21,60 @@ fn format_iso8601(unix_secs: i64, millis: u32) -> String {
 	format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
 }
 
+/// Parses an ISO-8601-ish timestamp (`yyyy-MM-ddTHH:mm:ss.fff` with an
+/// optional `Z`, `+HH:mm`/`-HH:mm`/`±HHMM` offset suffix) into comparable
+/// unix seconds. Files written by the Unity build carry *local* times with
+/// offsets while this port writes UTC, so raw string comparison mis-orders
+/// a mixed directory; the project list sorts by this key instead.
+/// Unparseable text sorts as `i64::MIN` (oldest).
+pub fn parse_to_unix_seconds(text: &str) -> i64 {
+	let bytes = text.as_bytes();
+	if bytes.len() < 19 {
+		return i64::MIN;
+	}
+	let num = |range: std::ops::Range<usize>| text.get(range).and_then(|s| s.parse::<i64>().ok());
+	let (Some(y), Some(mo), Some(d), Some(h), Some(mi), Some(s)) = (num(0..4), num(5..7), num(8..10), num(11..13), num(14..16), num(17..19)) else {
+		return i64::MIN;
+	};
+	if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
+		return i64::MIN;
+	}
+
+	// Days since epoch via the same civil algorithm run in reverse.
+	let y_adj = if mo <= 2 { y - 1 } else { y };
+	let era = if y_adj >= 0 { y_adj } else { y_adj - 399 } / 400;
+	let yoe = y_adj - era * 400;
+	let mp = (mo + 9) % 12;
+	let doy = (153 * mp + 2) / 5 + d - 1;
+	let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	let days = era * 146_097 + doe - 719_468;
+
+	let secs = days * 86_400 + h * 3600 + mi * 60 + s;
+
+	// Apply any explicit offset so all stamps compare on the same clock.
+	// No/!-quite-parseable offset is treated as UTC -- only garbage stamps
+	// (rejected above) sort as oldest.
+	let mut offset_secs = 0i64;
+	let tail = &text[19.min(text.len())..];
+	if let Some(sign_at) = tail.find(['Z', '+', '-']) {
+		let (sign, digits): (i64, String) = {
+			let rest = &tail[sign_at..];
+			match rest.chars().next() {
+				Some('Z') => (1, String::new()),
+				Some('+') => (1, rest.chars().skip(1).filter(|c| c.is_ascii_digit()).collect()),
+				Some('-') => (-1, rest.chars().skip(1).filter(|c| c.is_ascii_digit()).collect()),
+				_ => (1, String::new()),
+			}
+		};
+		if !digits.is_empty() && digits.len() >= 4 {
+			let oh: i64 = digits[..2].parse().unwrap_or(0);
+			let om: i64 = digits[2..4].parse().unwrap_or(0);
+			offset_secs = sign * (oh * 3600 + om * 60);
+		}
+	}
+	secs - offset_secs
+}
+
 /// Howard Hinnant's `civil_from_days` algorithm: converts a day count
 /// (days since 1970-01-01) into a proleptic-Gregorian (year, month, day).
 /// Public-domain algorithm, see http://howardhinnant.github.io/date_algorithms.html
@@ -71,5 +125,21 @@ mod tests {
 		assert_eq!(s.as_bytes()[16], b':');
 		assert_eq!(s.as_bytes()[19], b'.');
 		assert!(s.ends_with('Z'));
+	}
+
+	#[test]
+	fn parse_respects_explicit_offsets_so_mixed_stamps_order_correctly() {
+		// Same instant written as UTC and as +02:00 local must compare equal.
+		assert_eq!(parse_to_unix_seconds("2024-01-01T12:00:00.000Z"), parse_to_unix_seconds("2024-01-01T14:00:00.000+02:00"));
+		assert_eq!(parse_to_unix_seconds("2024-01-01T12:00:00.000Z"), parse_to_unix_seconds("2024-01-01T09:00:00.000-0300"));
+		// Plain (offset-less) stamps are treated as UTC.
+		assert_eq!(parse_to_unix_seconds("2024-01-01T12:00:00.000"), 1_704_110_400);
+	}
+
+	#[test]
+	fn parse_rejects_garbage_as_oldest() {
+		assert_eq!(parse_to_unix_seconds("nonsense"), i64::MIN);
+		assert_eq!(parse_to_unix_seconds(""), i64::MIN);
+		assert_eq!(parse_to_unix_seconds("9999-99-99T99:99:99.999Z"), i64::MIN, "out-of-range fields are rejected");
 	}
 }

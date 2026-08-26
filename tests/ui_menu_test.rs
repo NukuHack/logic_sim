@@ -130,7 +130,10 @@ fn open_selected_returns_none_for_an_incompatible_project() {
 	let paths = SavePaths::new(&root);
 	let mut project = create_project(&paths, "Future Project").unwrap();
 	project.description.dls_version_earliest_compatible = "99.0.0".to_string();
-	logic_sim::Saver::save_project_description(&paths, &mut project.description).unwrap();
+	// Write directly (not via `Saver`, which re-stamps the compatible
+	// version on every save, mirroring `Saver.SaveProjectDescription`).
+	std::fs::write(paths.project_description_path("Future Project"), logic_sim::json::serialize_project_description(&project.description).unwrap())
+		.unwrap();
 
 	menu.choose_open_project();
 	menu.select_project(0);
@@ -146,7 +149,8 @@ fn request_rename_and_duplicate_are_ignored_for_incompatible_projects() {
 	let paths = SavePaths::new(&root);
 	let mut project = create_project(&paths, "Future Project").unwrap();
 	project.description.dls_version_earliest_compatible = "99.0.0".to_string();
-	logic_sim::Saver::save_project_description(&paths, &mut project.description).unwrap();
+	std::fs::write(paths.project_description_path("Future Project"), logic_sim::json::serialize_project_description(&project.description).unwrap())
+		.unwrap();
 
 	menu.choose_open_project();
 	menu.select_project(0);

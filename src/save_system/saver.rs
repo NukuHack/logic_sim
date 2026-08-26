@@ -22,15 +22,14 @@ impl Saver {
 		write_to_file(&data, &paths.app_settings_path())
 	}
 
-	/// Mirrors `Saver.SaveProjectDescription`: stamps `LastSaveTime` and the
-	/// current version onto `description` before writing it out. Note that
-	/// `DLSVersion_EarliestCompatible` is intentionally left untouched --
-	/// mirroring the original, which only ever sets it when *creating* a
-	/// project (see `create_project`), so re-saving an old project doesn't
-	/// silently raise the version required to open it again.
+	/// Mirrors `Saver.SaveProjectDescription`: stamps `LastSaveTime`,
+	/// `DLSVersion_LastSaved`, and `DLSVersion_EarliestCompatible` onto
+	/// `description` before writing it out -- all three, every save,
+	/// exactly like the original.
 	pub fn save_project_description(paths: &SavePaths, description: &mut ProjectDescription) -> io::Result<()> {
 		description.last_save_time = now_iso8601();
 		description.dls_version_last_saved = DLS_VERSION.to_string();
+		description.dls_version_earliest_compatible = crate::save_system::version::DLS_VERSION_EARLIEST_COMPATIBLE.to_string();
 
 		let data = crate::json::serialize_project_description(description).map_err(json_err)?;
 		write_to_file(&data, &paths.project_description_path(&description.project_name))

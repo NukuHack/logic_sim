@@ -29,19 +29,30 @@ pub(crate) fn save_chip_mode(v: &ViewerState, typed: &str) -> SaveChipMode {
 }
 
 /// Adds `add_name` to the project's `all_custom_chip_names`/`chip_collections`
-/// bookkeeping if it isn't already there (and removes `remove_name` from
-/// both, if given), then persists the updated `ProjectDescription`.
-/// Mirrors what the sidebar/search actually list -- without this, a
-/// freshly Saved-As/Renamed chip would only be reachable if you already
-/// remembered its exact name to type into search.
+/// bookkeeping if it isn't already there (and, when `remove_name` is given,
+/// *renames* the old entry in place -- preserving which collection holds it
+/// and where, mirroring `EnsureChipRenamedInCollections` -- rather than
+/// moving it to OTHER), then persists the updated `ProjectDescription`.
+/// Without this, a freshly Saved-As/Renamed chip would only be reachable if
+/// you already remembered its exact name to type into search.
 fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_name: Option<&str>, add_name: &str) {
 	if let Some(old) = remove_name {
 		v.prefs.all_custom_chip_names.retain(|n| n != old);
-		for c in v.prefs.chip_collections.iter_mut() {
-			c.chips.retain(|n| n != old);
+		// Rename within whichever collection already holds the chip,
+		// keeping its position (and its membership of any other list) intact.
+		let renamed = v
+			.prefs
+			.chip_collections
+			.iter_mut()
+			.find_map(|c| c.chips.iter_mut().find(|n| n.eq_ignore_ascii_case(old)).map(|slot| *slot = add_name.to_string()))
+			.is_some();
+		if !renamed {
+			for c in v.prefs.chip_collections.iter_mut() {
+				c.chips.retain(|n| !n.eq_ignore_ascii_case(old));
+			}
 		}
 	}
-	if !v.prefs.all_custom_chip_names.iter().any(|n| n == add_name) {
+	if !v.prefs.all_custom_chip_names.iter().any(|n| n.eq_ignore_ascii_case(add_name)) {
 		v.prefs.all_custom_chip_names.push(add_name.to_string());
 	}
 	if !v.prefs.chip_collections.iter().any(|c| c.chips.iter().any(|n| n == add_name)) {
@@ -60,15 +71,146 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 	}
 }
 
+/// Renames a starred entry pointing at `old_name` (`Project.RenameStarred`):
+/// a starred shortcut must survive the chip it points at being renamed.
+fn rename_starred_chip(v: &mut ViewerState, paths: &SavePaths, old_name: &str, new_name: &str) {
+	let mut modified = false;
+	for item in &mut v.prefs.starred_list {
+		if !item.is_collection && item.name.eq_ignore_ascii_case(old_name) {
+			item.name = new_name.to_string();
+			modified = true;
+			break;
+		}
+	}
+	if modified {
+		let mut desc = v.prefs.clone();
+		match Saver::save_project_description(paths, &mut desc) {
+			Ok(()) => v.prefs = desc,
+			Err(e) => eprintln!("warning: failed to update project description: {e}"),
+		}
+	}
+}
+
+/// Stamps a never-saved chip's on-disk identity defaults
+/// (`DescriptionCreator.CreateChipDescription`'s `hasSavedDesc == false`
+/// branch): body size at least the pin/name-derived minimum, and a random
+/// HSV body colour. Chips that have been saved before keep whatever they had.
+fn stamp_first_save_defaults(v: &mut ViewerState, name: &str) {
+	if !v.unsaved_drafts.contains(&name.to_ascii_lowercase()) {
+		return;
+	}
+	use crate::render::{layout, theme};
+	let input_bits: Vec<crate::PinBitCount> = v.library.get(name).input_pins.iter().map(|p| p.bit_count).collect();
+	let output_bits: Vec<crate::PinBitCount> = v.library.get(name).output_pins.iter().map(|p| p.bit_count).collect();
+	let chip = v.library.get_mut(name);
+	chip.size = layout::calculate_min_chip_size(&input_bits, &output_bits, chip, theme::FONT_SIZE_CHIP_NAME).max(chip.size);
+	if chip.colour[3] == 0.0 {
+		chip.colour = random_initial_chip_colour();
+	}
+}
+
+/// `DescriptionCreator.RandomInitialChipColour`: random hue, saturation and
+/// value each lerped 0.2..1 (value/saturation only), so fresh chips are
+/// varied but never near-black/near-grey.
+fn random_initial_chip_colour() -> [f32; 4] {
+	fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 4] {
+		let i = (h * 6.0).floor() as i32;
+		let f = h * 6.0 - i as f32;
+		let p = v * (1.0 - s);
+		let q = v * (1.0 - f * s);
+		let t = v * (1.0 - (1.0 - f) * s);
+		let (r, g, b) = match (i % 6 + 6) % 6 {
+			0 => (v, t, p),
+			1 => (q, v, p),
+			2 => (p, v, t),
+			3 => (p, q, v),
+			4 => (t, p, v),
+			_ => (v, p, q),
+		};
+		[r, g, b, 1.0]
+	}
+	let mut rng = rand::thread_rng();
+	use rand::Rng;
+	hsv_to_rgb(rng.gen::<f32>(), rng.gen_range(0.2..=1.0), rng.gen_range(0.2..=1.0))
+}
+
+/// The save-time parent cascade (`Project.UpdateAndSaveAffectedChips`):
+/// every chip whose subchips include `target_name` is re-derived from its
+/// saved description with this chip's change folded in, and resaved.
+///
+/// - `removed_pin_ids`: dev-pin ids present in the *previous* saved
+///   version but gone from the new one -- wires attached to those pins of
+///   the affected chips' instances are deleted;
+/// - `renamed_to`: the chip was (also) renamed -- matching subchip
+///   instances are re-pointed at the new name.
+///
+/// Parents are loaded from disk (pristine), patched, updated in the live
+/// library, and resaved through the same project-aware serializer.
+fn resave_affected_parent_chips(v: &mut ViewerState, paths: &SavePaths, target_name: &str, removed_pin_ids: &[i32], renamed_to: Option<&str>) {
+	let parent_names: Vec<String> =
+		v.library.iter().filter(|d| d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(target_name))).map(|d| d.name.clone()).collect();
+
+	for parent_name in parent_names {
+		let Ok(mut pristine) = load_single_chip_from_disk(paths, &v.project_name, &parent_name) else { continue };
+		pristine.wires.retain(|w| {
+			let attaches_to_removed = |addr: crate::PinAddress| {
+				pristine
+					.sub_chips
+					.iter()
+					.find(|s| s.id == addr.pin_owner_id)
+					.is_some_and(|s| s.name.eq_ignore_ascii_case(target_name) && removed_pin_ids.contains(&addr.pin_id))
+			};
+			!attaches_to_removed(w.source_pin_address) && !attaches_to_removed(w.target_pin_address)
+		});
+		if let Some(new_name) = renamed_to {
+			for sub in &mut pristine.sub_chips {
+				if sub.name.eq_ignore_ascii_case(target_name) {
+					sub.name = new_name.to_string();
+				}
+			}
+		}
+		if let Err(e) = Saver::save_chip(paths, &v.project_name, &v.library, &pristine) {
+			eprintln!("warning: failed to resave affected chip '{parent_name}': {e}");
+			continue;
+		}
+		*v.library.get_mut(&parent_name) = pristine;
+	}
+}
+
+/// Ids of boundary dev-pins the previously-saved version had that `desc`
+/// no longer does -- what `UpdateAndSaveAffectedChips` diffs before
+/// scrubbing dangling wires out of parent chips.
+fn removed_boundary_pin_ids(v: &ViewerState, paths: &SavePaths, name: &str, desc: &ChipDescription) -> Vec<i32> {
+	let Ok(previous) = load_single_chip_from_disk(paths, &v.project_name, name) else { return Vec::new() };
+	let still_present = |id: i32| desc.input_pins.iter().chain(desc.output_pins.iter()).any(|p| p.id == id);
+	previous.input_pins.iter().chain(previous.output_pins.iter()).filter(|p| !still_present(p.id)).map(|p| p.id).collect()
+}
+
 /// Plain overwrite/create (`SaveChipMode::Save`): writes the current
 /// in-memory chip back to its own file under its own (unchanged) name.
-/// No other chip or file is touched.
+/// A never-saved draft gets its identity stamped first and is auto-starred
+/// (`Project.SaveFromDescription`'s new-chip path); a previously-saved chip
+/// whose boundary pins shrank resaves its parent chips without the orphaned
+/// wires.
 fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	let name = v.root_chip_name.clone();
+	let was_draft = v.unsaved_drafts.contains(&name.to_ascii_lowercase());
+	let removed_pins = if was_draft { Vec::new() } else { removed_boundary_pin_ids(v, paths, &name, v.library.get(&name)) };
+	if was_draft {
+		stamp_first_save_defaults(v, &name);
+	}
 	let desc = v.library.get(&name).clone();
 	match Saver::save_chip(paths, &v.project_name, &v.library, &desc) {
 		Ok(()) => {
 			v.mark_saved(&name);
+			if !removed_pins.is_empty() {
+				resave_affected_parent_chips(v, paths, &name, &removed_pins, None);
+			}
+			if was_draft {
+				// New chips are automatically starred (`Project.SaveFromDescription`).
+				v.prefs.set_starred(&name, true, false);
+				register_chip_name_in_project(v, paths, None, &name);
+			}
 			*status = Some(format!("Saved '{name}'"));
 		}
 		Err(e) => *status = Some(format!("Failed to save '{name}': {e}")),
@@ -94,6 +236,10 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 		Ok(()) => {
 			v.library.add(new_desc);
 			v.mark_saved(new_name);
+			// A Save-As is a new chip as far as starring goes
+			// (`isNewChip = ... || saveMode is SaveMode.SaveAs`); the single
+			// project-description write below persists both bookkeepings.
+			v.prefs.set_starred(new_name, true, false);
 			register_chip_name_in_project(v, paths, None, new_name);
 
 			if !old_name.eq_ignore_ascii_case(new_name) {
@@ -136,10 +282,13 @@ fn replace_chip_with_current(v: &mut ViewerState, paths: &SavePaths, status: &mu
 /// Actually renames the chip (`SaveChipMode::SaveAsOrRename`, "Rename"
 /// button): moves its on-disk file to `new_name` -- no copy left under
 /// the old name, the old file is deleted outright (no backup, since this
-/// is a rename rather than a delete) -- and updates the project's
-/// chip-name bookkeeping to match.
+/// is a rename rather than a delete) -- updates the project's
+/// chip-name bookkeeping to match, re-points parents' subchip instances
+/// (`UpdateAndSaveAffectedChips`' willRename pass), and carries any
+/// starred shortcut over to the new name.
 fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
 	let old_name = v.root_chip_name.clone();
+	let removed_pins = removed_boundary_pin_ids(v, paths, &old_name, v.library.get(&old_name));
 	let mut new_desc = v.library.get(&old_name).clone();
 	new_desc.name = new_name.to_string();
 
@@ -152,7 +301,9 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			v.library.add(new_desc);
 			v.mark_saved(new_name);
 			v.mark_saved(&old_name);
+			resave_affected_parent_chips(v, paths, &old_name, &removed_pins, Some(new_name));
 			register_chip_name_in_project(v, paths, Some(&old_name), new_name);
+			rename_starred_chip(v, paths, &old_name, new_name);
 			v.undo.clear();
 			v.exit_view_mode();
 			v.root_chip_name = new_name.to_string();
@@ -225,7 +376,7 @@ pub(crate) fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, s
 /// in-memory entry back to "whatever's actually saved" (e.g. the chip
 /// left behind, untouched, by a Save-As/Replace under a new name; see
 /// `save_chip_as`), as opposed to blindly reloading the whole project.
-fn load_single_chip_from_disk(paths: &SavePaths, project_name: &str, chip_name: &str) -> std::io::Result<ChipDescription> {
+pub(crate) fn load_single_chip_from_disk(paths: &SavePaths, project_name: &str, chip_name: &str) -> std::io::Result<ChipDescription> {
 	let path = paths.chips_path(project_name).join(format!("{chip_name}.json"));
 	let json = std::fs::read_to_string(path)?;
 	crate::json::parse_chip_description(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
@@ -612,6 +763,132 @@ mod tests {
 			Saver::save_chip(paths, "P", &v.library, &v.library.get(name).clone()).expect("chip written");
 		}
 		v
+	}
+
+	/// First save of a draft stamps its identity (`RandomInitialChipColour`
+	/// + minimum size), stars it, and persists both bookkeepings.
+	#[test]
+	fn first_save_stamps_identity_and_stars_the_chip() {
+		let root = crate::save_system::test_util::temp_dir("first_save_stamp");
+		let paths = SavePaths::new(&root);
+		let mut v = {
+			let mut library = ChipLibrary::new();
+			crate::register_all_builtins(&mut library);
+			library.add(ChipDescription::new("ROOT", ChipType::Custom));
+			let mut v =
+				ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+			v.prefs = crate::create_project(&paths, "P").expect("project").description;
+			v
+		};
+
+		start_new_chip(&mut v, &paths, &mut None);
+		let name = v.root_chip_name.clone();
+		// Give it pins so the min-size stamp has something to compute from.
+		let mut pin = crate::PinDescription::new("IN", 1, crate::PinBitCount::Bit1);
+		pin.position = crate::structs::Vec2::ZERO;
+		v.library.get_mut(&name).input_pins.push(pin);
+
+		open_save_chip(&mut v);
+		confirm_save_chip_popup(&mut v, &paths, &mut None);
+
+		let saved = v.library.get(&name);
+		assert!(saved.size.x > 0.0 && saved.size.y > 0.0, "min size stamped: {:?}", saved.size);
+		assert_eq!(saved.colour[3], 1.0, "opaque random body colour");
+		assert!(saved.colour.iter().take(3).any(|&c| c > 0.0), "not black: {:?}", saved.colour);
+		assert!(v.prefs.is_starred(&name, false), "freshly saved chips are auto-starred");
+
+		let text = std::fs::read_to_string(paths.project_description_path("P")).unwrap();
+		assert!(text.contains(&name), "starred entry persisted to disk");
+
+		// Saving again must NOT re-roll the colour.
+		let colour_before = saved.colour;
+		open_save_chip(&mut v);
+		confirm_save_chip_popup(&mut v, &paths, &mut None);
+		assert_eq!(v.library.get(&name).colour, colour_before, "already-saved identity is kept");
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Renaming keeps the chip in its collection (in place, position kept)
+	/// and carries any starred shortcut over -- plus re-points parents'
+	/// subchip instances on disk.
+	#[test]
+	fn rename_preserves_collections_starred_and_parents() {
+		let root = crate::save_system::test_util::temp_dir("rename_bookkeeping");
+		let paths = SavePaths::new(&root);
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		for name in ["ROOT", "OLD NAME"] {
+			library.add(ChipDescription::new(name, ChipType::Custom));
+		}
+		let mut v =
+			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		v.prefs = crate::create_project(&paths, "P").expect("project").description;
+		Saver::save_chip(&paths, "P", &v.library, &v.library.get("OLD NAME").clone()).expect("saved");
+
+		// File it into a named collection and star it.
+		v.prefs.chip_collections.push(crate::json::ChipCollection::new("MYCOLL", vec!["OLD NAME".to_string()]));
+		v.prefs.set_starred("OLD NAME", false, false);
+		v.prefs.set_starred("OLD NAME", true, false);
+
+		open_chip_by_name(&mut v, &paths, &mut None, "OLD NAME");
+		v.overlay_text_input = "NEW NAME".to_string();
+		rename_current_chip(&mut v, &paths, &mut None, "NEW NAME");
+
+		let coll = v.prefs.chip_collections.iter().find(|c| c.name == "MYCOLL").expect("collection survives");
+		assert_eq!(coll.chips, vec!["NEW NAME".to_string()], "renamed in place within its collection");
+		assert!(v.prefs.is_starred("NEW NAME", false), "the starred shortcut follows the rename");
+		assert!(!v.prefs.is_starred("OLD NAME", false));
+
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Saving a chip whose boundary pins shrank scrubs dangling wires out
+	/// of parent chips (`UpdateAndSaveAffectedChips`).
+	#[test]
+	fn saving_removed_pins_cascades_to_parent_chips() {
+		use crate::{PinAddress, PinDescription, SubChipDescription, WireDescription};
+		let root = crate::save_system::test_util::temp_dir("pin_removal_cascade");
+		let paths = SavePaths::new(&root);
+
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		let mut child = ChipDescription::new("CHILD", ChipType::Custom);
+		let mut pin = PinDescription::new("OUT", 1, crate::PinBitCount::Bit1);
+		pin.position = crate::structs::Vec2::ZERO;
+		child.output_pins.push(pin);
+		library.add(child.clone());
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		let mut v =
+			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		v.prefs = crate::create_project(&paths, "P").expect("project").description;
+		Saver::save_chip(&paths, "P", &v.library, &v.library.get("CHILD").clone()).expect("child saved");
+
+		// Parent uses CHILD and wires its OUT pin somewhere.
+		let parent = v.library.get_mut("ROOT");
+		parent.sub_chips.push(SubChipDescription {
+			name: "CHILD".into(),
+			id: 9,
+			internal_data: None,
+			position: crate::structs::Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		parent.wires.push(WireDescription::new(PinAddress::new(9, 1), PinAddress::new(0, 5)));
+		Saver::save_chip(&paths, "P", &v.library, &v.library.get("ROOT").clone()).expect("parent saved");
+
+		// Remove the pin from CHILD and save.
+		v.library.get_mut("CHILD").output_pins.clear();
+		open_chip_by_name(&mut v, &paths, &mut None, "CHILD");
+		open_save_chip(&mut v);
+		confirm_save_chip_popup(&mut v, &paths, &mut None);
+
+		let parent_json = std::fs::read_to_string(paths.chips_path("P").join("ROOT.json")).unwrap();
+		let parent_desc = crate::json::parse_chip_description(&parent_json).unwrap();
+		assert!(parent_desc.wires.is_empty(), "dangling wire scrubbed from parent: {parent_json}");
+		assert_eq!(parent_desc.sub_chips.len(), 1, "the CHILD instance itself stays");
+
+		let _ = std::fs::remove_dir_all(&root);
 	}
 
 	fn place_a_nand(v: &mut ViewerState) {
