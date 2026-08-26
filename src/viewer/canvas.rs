@@ -441,18 +441,19 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 	}
 
 	v.rebuild_sim();
-	crate::viewer::undo::record_add_elements(v, placed_subchips, placed_pins);
 	if !attached_wires.is_empty() {
 		let first_new_wire = v.library.get(&v.root_chip_name).wires.len();
 		let chip = v.library.get_mut(&v.root_chip_name);
 		chip.wires.extend(attached_wires);
 		v.rebuild_sim();
-		// Each carried wire gets its own add-wire undo entry, so undo
-		// peels them back off one by one.
-		for index in first_new_wire..v.library.get(&v.root_chip_name).wires.len() {
-			let wire = v.library.get(&v.root_chip_name).wires[index].clone();
-			crate::viewer::undo::record_add_wire(v, wire, index);
-		}
+		// Bundle elements + wires into one atomic undo entry so a
+		// single Ctrl+Z reverts the entire duplication.
+		let wire_entries: Vec<_> = (first_new_wire..v.library.get(&v.root_chip_name).wires.len())
+			.map(|index| (v.library.get(&v.root_chip_name).wires[index].clone(), index))
+			.collect();
+		crate::viewer::undo::record_add_elements_with_wires(v, placed_subchips, placed_pins, wire_entries);
+	} else {
+		crate::viewer::undo::record_add_elements(v, placed_subchips, placed_pins);
 	}
 }
 

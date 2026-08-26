@@ -92,6 +92,9 @@ struct ElementExistenceAction {
 	pins: Vec<(PinDescription, bool)>,
 	wire_state: Option<FullWireState>,
 	is_delete: bool,
+	/// Wires added alongside elements (duplication). Stored for atomic
+	/// undo: the entire element+wire group is one undo entry.
+	wires: Vec<(WireDescription, usize)>,
 }
 
 struct WireExistenceAction {
@@ -193,7 +196,22 @@ pub(crate) fn record_add_elements(v: &mut ViewerState, subchips: Vec<SubChipDesc
 	if subchips.is_empty() && pins.is_empty() {
 		return;
 	}
-	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false }));
+	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false, wires: Vec::new() }));
+}
+
+/// Records a combined element + wire addition (duplication drop) as a
+/// single undo entry. `wires` are `(wire_description, insertion_index)`
+/// pairs matching the order they were pushed onto the chip.
+pub(crate) fn record_add_elements_with_wires(
+	v: &mut ViewerState,
+	subchips: Vec<SubChipDescription>,
+	pins: Vec<(PinDescription, bool)>,
+	wires: Vec<(WireDescription, usize)>,
+) {
+	if subchips.is_empty() && pins.is_empty() && wires.is_empty() {
+		return;
+	}
+	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false, wires }));
 }
 
 /// Deletes every id produced by `ids` from the current root chip,
@@ -226,7 +244,7 @@ pub(crate) fn delete_components_with_undo(v: &mut ViewerState, ids: impl Iterato
 
 	let (subchips, pins) = capture_elements(v, &all_ids);
 	let wire_state = capture_full_wire_state(v, &[], &all_ids);
-	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true }));
+	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true, wires: Vec::new() }));
 	canvas::apply_component_deletion(v, &all_ids);
 	v.rebuild_sim();
 }
@@ -347,6 +365,17 @@ fn apply_element_existence(v: &mut ViewerState, action: &ElementExistenceAction,
 			let list = if *is_input { &mut chip.input_pins } else { &mut chip.output_pins };
 			if !list.iter().any(|existing| existing.id == pin.id) {
 				list.push(pin.clone());
+			}
+		}
+		// Redo of an addition: re-insert bundled wires (duplication)
+		// at the indices they occupied when originally placed.
+		if !action.wires.is_empty() {
+			let chip = v.library.get_mut(&root_chip_name);
+			for (wire, index) in &action.wires {
+				let idx = (*index).min(chip.wires.len());
+				if !chip.wires.iter().any(|existing| existing.source_pin_address == wire.source_pin_address && existing.target_pin_address == wire.target_pin_address) {
+					chip.wires.insert(idx, wire.clone());
+				}
 			}
 		}
 		let restored_ids: Vec<i32> = action.subchips.iter().map(|s| s.id).chain(action.pins.iter().map(|(p, _)| p.id)).collect();
