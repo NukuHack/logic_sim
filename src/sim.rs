@@ -806,7 +806,65 @@ impl Simulator {
 			self.restore_internal_states_at(sub, &key, map);
 		}
 	}
+
+	/// Snapshots every pin's live state (`SimPin::state`) keyed by its
+	/// owner-chip id-path + pin id + is_input flag. Paired with
+	/// [`restore_pin_states`] to carry signal levels across a rebuild so
+	/// the renderer doesn't see a frame of DISCONNECTED defaults.
+	pub fn capture_pin_states(&self) -> PinStateMap {
+		let mut map = PinStateMap::default();
+		self.capture_pin_states_at(self.root, &[], &mut map);
+		map
+	}
+
+	fn capture_pin_states_at(&self, idx: ChipIdx, path: &[i32], map: &mut PinStateMap) {
+		let chip = &self.chips[idx.0];
+		let mut key = Vec::with_capacity(path.len() + 1);
+		key.extend_from_slice(path);
+		key.push(chip.id);
+		for &p in chip.input_pins.iter().chain(chip.output_pins.iter()) {
+			let pin = &self.pins[p.0];
+			let mut pin_key = key.clone();
+			pin_key.push(pin.id);
+			pin_key.push(pin.is_input as i32);
+			map.insert(pin_key, pin.state);
+		}
+		for &sub in &chip.sub_chips {
+			self.capture_pin_states_at(sub, &key, map);
+		}
+	}
+
+	/// Restores previously captured pin states onto the matching pins of
+	/// this simulator. Unmatched pins keep their freshly-built defaults.
+	pub fn restore_pin_states(&mut self, map: &PinStateMap) {
+		self.restore_pin_states_at(self.root, &[], map);
+	}
+
+	fn restore_pin_states_at(&mut self, idx: ChipIdx, path: &[i32], map: &PinStateMap) {
+		let chip = &self.chips[idx.0];
+		let mut key = Vec::with_capacity(path.len() + 1);
+		key.extend_from_slice(path);
+		key.push(chip.id);
+		for &p in chip.input_pins.iter().chain(chip.output_pins.iter()) {
+			let pin = &self.pins[p.0];
+			let mut pin_key = key.clone();
+			pin_key.push(pin.id);
+			pin_key.push(pin.is_input as i32);
+			if let Some(&saved) = map.get(&pin_key) {
+				self.pins[p.0].state = saved;
+			}
+		}
+		let sub_chips = self.chips[idx.0].sub_chips.clone();
+		for sub in sub_chips {
+			self.restore_pin_states_at(sub, &key, map);
+		}
+	}
 }
+
+/// Pin state snapshot keyed by (owner-chip id-path, pin id, is_input).
+/// Used by `rebuild_sim` to carry live wire/signal states across rebuilds
+/// so the renderer doesn't see a frame of DISCONNECTED defaults.
+pub type PinStateMap = std::collections::HashMap<Vec<i32>, PinState>;
 
 /// Recursively build the flat pin/chip arenas from a ChipDescription tree.
 fn build_recursive(

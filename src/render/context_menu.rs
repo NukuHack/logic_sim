@@ -16,6 +16,9 @@ pub enum ContextMenuAction {
 	/// Enter wire edit mode on the target wire (`EnterWireEditMode`).
 	Edit,
 	Delete,
+	/// Remove just the wire segment without cascading to dependents
+	/// ("Delete Part" in the wire context menu).
+	DeletePart,
 	Label,
 	Flip,
 	Open,

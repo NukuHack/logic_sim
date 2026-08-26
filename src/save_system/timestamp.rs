@@ -21,6 +21,40 @@ fn format_iso8601(unix_secs: i64, millis: u32) -> String {
 	format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{millis:03}Z")
 }
 
+/// Formats an ISO-8601-ish timestamp into a human-readable relative string
+/// like "5 minutes ago", "3 hours ago", "2 days ago".
+/// Returns the raw string if parsing fails.
+pub fn to_relative_time(timestamp: &str) -> String {
+	let saved_secs = parse_to_unix_seconds(timestamp);
+	if saved_secs == i64::MIN {
+		return timestamp.to_string();
+	}
+	let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+	let now_secs = now.as_secs() as i64;
+	let diff = now_secs - saved_secs;
+	if diff < 0 {
+		return "just now".to_string();
+	}
+	let mins = diff / 60;
+	let hours = diff / 3600;
+	let days = diff / 86_400;
+	let months = days / 30;
+	let years = days / 365;
+	if years > 0 {
+		format!("{} year{}", years, if years == 1 { "" } else { "s" })
+	} else if months > 0 {
+		format!("{} month{}", months, if months == 1 { "" } else { "s" })
+	} else if days > 0 {
+		format!("{} day{}", days, if days == 1 { "" } else { "s" })
+	} else if hours > 0 {
+		format!("{} hour{}", hours, if hours == 1 { "" } else { "s" })
+	} else if mins > 0 {
+		format!("{} minute{}", mins, if mins == 1 { "" } else { "s" })
+	} else {
+		"just now".to_string()
+	}
+}
+
 /// Parses an ISO-8601-ish timestamp (`yyyy-MM-ddTHH:mm:ss.fff` with an
 /// optional `Z`, `+HH:mm`/`-HH:mm`/`±HHMM` offset suffix) into comparable
 /// unix seconds. Files written by the Unity build carry *local* times with

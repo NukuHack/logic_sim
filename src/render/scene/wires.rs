@@ -196,6 +196,20 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 	removed_count
 }
 
+/// Removes just the single wire at `index` without detaching or
+/// cascading to dependent wires -- the "Delete Part" context-menu
+/// action. Dependent wires that tapped into this one will become
+/// electrically stale until the user manually re-wires or deletes
+/// them. Returns 1 on success, 0 if out of range.
+pub fn delete_wire_segment(chip: &mut ChipDescription, index: usize) -> usize {
+	if index >= chip.wires.len() {
+		return 0;
+	}
+	chip.wires.remove(index);
+	shift_connected_indices_after_removal(chip, &[index]);
+	1
+}
+
 /// Rewires wire `d` to no longer depend on its (about-to-be-removed)
 /// anchor `anchor` whose world polyline was `anchor_world`
 /// (`RemoveConnectionDependency`, generalized to both attachment sides):

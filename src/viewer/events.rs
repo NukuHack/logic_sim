@@ -25,12 +25,6 @@ use crate::viewer::frame::{build_menu_stack, build_viewer_stack};
 use crate::viewer::input::{encode_modifiers, handle_viewer_key};
 use crate::viewer::library::is_custom_chip;
 
-/// Modifier keys that suppress Key-chip input while held (Ctrl/Shift/Alt --
-/// the same set `SimKeyboardHelper.RefreshInputState` early-outs on).
-const KEY_CHIP_BLOCKING_MODS: winit::keyboard::ModifiersState = winit::keyboard::ModifiersState::from_bits_truncate(
-	winit::keyboard::ModifiersState::SHIFT.bits() | winit::keyboard::ModifiersState::CONTROL.bits() | winit::keyboard::ModifiersState::ALT.bits(),
-);
-
 impl ApplicationHandler for App {
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
 		if self.state.is_some() {
@@ -75,12 +69,6 @@ impl ApplicationHandler for App {
 				self.modifiers = mods.state();
 				if let Screen::Viewer(v) = &mut self.screen {
 					v.sim.set_key_modifiers(encode_modifiers(self.modifiers));
-					// Mirror SimKeyboardHelper.RefreshInputState's early-out: with
-					// Ctrl/Shift/Alt held, *no* key chip input registers at all --
-					// keys already held when the modifier went down release too.
-					if self.modifiers.intersects(KEY_CHIP_BLOCKING_MODS) {
-						v.sim.clear_held_keys();
-					}
 				}
 			}
 
@@ -111,10 +99,9 @@ impl ApplicationHandler for App {
 				let cursor = Vec2::new(position.x as f32, position.y as f32);
 				self.mouse_pos = cursor;
 				if let Screen::Viewer(v) = &mut self.screen {
-					// A selection being carried follows the cursor in world
-					// space (its components' positions update live; see
-					// `chip_interaction::update_move_to_cursor`).
-					if matches!(v.canvas_interaction, CanvasInteraction::MovingSelection { .. }) {
+					// A selection being carried or a wire bend being dragged
+					// follows the cursor in world space.
+					if matches!(v.canvas_interaction, CanvasInteraction::MovingSelection { .. } | CanvasInteraction::WireBendDrag { .. }) {
 						let world_pos = v.camera.screen_to_world(cursor);
 						chip_interaction::update_move_to_cursor(v, world_pos);
 					}
@@ -222,11 +209,15 @@ impl App {
 				ElementState::Released => {
 					let world_pos = v.camera.screen_to_world(self.mouse_pos);
 					chip_interaction::handle_canvas_release(v, world_pos);
-					// An in-progress wire also tries to complete on
-					// release (`HandleLeftMouseUp`'s TryFinishPlacingWire):
-					// press-empty then release-over-pin finishes the wire,
-					// matching the original's two chances to land.
-					if v.pending_wire.is_some() && matches!(v.stack.top_id(), None | Some(LayerId::Canvas)) {
+					// Finish resizing on mouse release instead of requiring
+					// a second click.
+					if v.stack.top_id() == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_resizing()) {
+						crate::viewer::customize::handle_preview_click(v);
+					} else if v.pending_wire.is_some() && matches!(v.stack.top_id(), None | Some(LayerId::Canvas)) {
+						// An in-progress wire also tries to complete on
+						// release (`HandleLeftMouseUp`'s TryFinishPlacingWire):
+						// press-empty then release-over-pin finishes the wire,
+						// matching the original's two chances to land.
 						let mut status_before = self.status.clone();
 						try_finish_pending_wire(v, world_pos, &mut status_before);
 						self.note_status_maybe_changed(&status_before);
@@ -289,6 +280,18 @@ impl App {
 			// in the original): falling through would also delete a wire or
 			// open a context menu under the cursor on this very click.
 			return;
+		}
+
+		// In wire edit mode, right-clicking on a bend removes it directly
+		// (same as Delete on a selected bend). This mirrors the original's
+		// `DeleteWirePoint` triggered by a right-click during wire editing.
+		if v.wire_edit.is_some() {
+			let world_pos = v.camera.screen_to_world(self.mouse_pos);
+			if let Some(bend) = crate::viewer::wire_edit::bend_hit(v, world_pos) {
+				v.wire_edit.as_mut().unwrap().selected_bend = Some(bend);
+				crate::viewer::wire_edit::delete_selected_bend(v);
+				return;
+			}
 		}
 
 		sync_stack_with_state(v);
@@ -400,7 +403,11 @@ impl App {
 				hit_test_wire(root_desc, &v.library, world_pos, max_dist)
 			};
 			if let Some(wire_idx) = hit {
-				let items = vec![ContextMenuItem::new("Edit", ContextMenuAction::Edit), ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
+				let items = vec![
+					ContextMenuItem::new("Edit", ContextMenuAction::Edit),
+					ContextMenuItem::new("Delete Part", ContextMenuAction::DeletePart),
+					ContextMenuItem::new("Delete", ContextMenuAction::Delete),
+				];
 				v.context_menu = Some(ContextMenuState::new(format!("wire:{wire_idx}"), self.mouse_pos, items));
 			}
 		}
@@ -495,12 +502,7 @@ impl App {
 				if !press_swallowed_by_ui {
 					if let Some(c) = s.chars().next() {
 						let c = c.to_ascii_uppercase();
-						// SimKeyboardHelper only ever registers A-Z / 0-9, and
-						// nothing while a modifier is held -- so e.g. Ctrl+C or
-						// Shift+A must never light a Key chip. Releases always
-						// pass through so a key can't get stuck "on".
-						let registers = c.is_ascii_alphanumeric()
-							&& (event.state == ElementState::Released || !self.modifiers.intersects(KEY_CHIP_BLOCKING_MODS));
+						let registers = c.is_ascii_alphanumeric();
 						if registers {
 							match event.state {
 								ElementState::Pressed => v.sim.held_key_press(c),

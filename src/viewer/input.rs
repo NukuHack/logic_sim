@@ -329,9 +329,6 @@ pub(crate) fn handle_viewer_key(
 		// flight, so a text field's or a pending action's Delete stays its
 		// own gesture ----
 		Key::Named(NamedKey::Delete) if can_delete_selection(v) => delete_selected(v),
-		// Delete with nothing selected removes the wire under the mouse
-		// (`DeleteSelected`'s ElementUnderMouse branch).
-		Key::Named(NamedKey::Delete) if can_delete_hovered_wire(v) => delete_hovered_wire(v),
 		// ---- Wire edit mode: Enter leaves it (`ConfirmShortcutTriggered`
 		// -> `ExitWireEditMode`); Delete removes the selected bend
 		// (`DeleteSelected`'s wireToEdit branch) ----
@@ -383,28 +380,6 @@ fn toggle_grid(v: &mut ViewerState, paths: &SavePaths) {
 /// winit's `KeyEvent` can't be constructed outside winit itself.
 pub(crate) fn can_delete_selection(v: &ViewerState) -> bool {
 	v.stack.keyboard_target().is_none() && v.pending_wire.is_none() && v.pending_place.is_empty() && !v.selected_ids.is_empty()
-}
-
-/// The hovered-wire variant of Delete (nothing selected, cursor over a
-/// wire). Also false while editing a wire -- its own Delete semantics
-/// (bend removal) claim the key first.
-pub(crate) fn can_delete_hovered_wire(v: &ViewerState) -> bool {
-	if v.stack.keyboard_target().is_some() || v.pending_wire.is_some() || !v.pending_place.is_empty() || v.wire_edit.is_some() {
-		return false;
-	}
-	let world = v.camera.screen_to_world(v.last_cursor);
-	let max_dist = crate::viewer::canvas::wire_click_tolerance(&v.camera);
-	crate::render::scene::hit_test_wire(v.library.get(&v.root_chip_name), &v.library, world, max_dist).is_some()
-}
-
-fn delete_hovered_wire(v: &mut ViewerState) {
-	let world = v.camera.screen_to_world(v.last_cursor);
-	let max_dist = crate::viewer::canvas::wire_click_tolerance(&v.camera);
-	let hit = crate::render::scene::hit_test_wire(v.library.get(&v.root_chip_name), &v.library, world, max_dist);
-	if let Some(index) = hit {
-		let root = v.root_chip_name.clone();
-		crate::viewer::undo::delete_wire_with_undo(v, &root, index);
-	}
 }
 
 /// Deletes every selected component in one recorded (undoable) action;

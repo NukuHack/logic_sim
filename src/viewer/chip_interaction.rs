@@ -158,29 +158,30 @@ pub(crate) fn begin_selection_box(v: &mut ViewerState, press_world_pos: Vec2) {
 /// snapping each independently would make them jiggle against one another
 /// (same reasoning as the original's relative-snap branch).
 pub(crate) fn update_move_to_cursor(v: &mut ViewerState, cursor_world: Vec2) {
-	let CanvasInteraction::MovingSelection { anchor, originals } = &v.canvas_interaction else { return };
-	let anchor = *anchor;
-	let originals = originals.clone();
+	match &v.canvas_interaction {
+		CanvasInteraction::MovingSelection { anchor, originals } => {
+			let anchor = *anchor;
+			let originals = originals.clone();
 
-	let mut delta = cursor_world - anchor;
-	if let Some((_, first_original)) = originals.first() {
-		if v.should_snap_to_grid() {
-			delta = snap_to_grid_centred(*first_original + delta) - *first_original;
+			let mut delta = cursor_world - anchor;
+			if let Some((_, first_original)) = originals.first() {
+				if v.should_snap_to_grid() {
+					delta = snap_to_grid_centred(*first_original + delta) - *first_original;
+				}
+			}
+
+			let root_chip_name = v.root_chip_name.clone();
+			let chip = v.library.get_mut(&root_chip_name);
+			for (id, original) in &originals {
+				if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == *id) {
+					sub.position = *original + delta;
+				}
+			}
 		}
-	}
-
-	let root_chip_name = v.root_chip_name.clone();
-	let chip = v.library.get_mut(&root_chip_name);
-	for (id, original) in &originals {
-		if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == *id) {
-			sub.position = *original + delta;
+		CanvasInteraction::WireBendDrag { .. } => {
+			crate::viewer::wire_edit::update_drag(v, cursor_world);
 		}
-	}
-
-	// A carried wire-edit bend follows the cursor too (its own
-	// snap/straighten rules live in `wire_edit::update_drag`).
-	if let CanvasInteraction::WireBendDrag { .. } = v.canvas_interaction {
-		crate::viewer::wire_edit::update_drag(v, cursor_world);
+		_ => {}
 	}
 }
 

@@ -66,6 +66,9 @@ pub const SELECTION_BOX_INVALID_COL: Rgba = [243.0 / 255.0, 81.0 / 255.0, 75.0 /
 pub const BACKGROUND_COL: Rgba = rgb(66.0 / 255.0, 66.0 / 255.0, 69.0 / 255.0);
 pub const GRID_COL: Rgba = rgb(49.0 / 255.0, 49.0 / 255.0, 51.0 / 255.0);
 
+/// Red button tint for destructive/cancel actions (Discard, Cancel, Delete).
+pub const DANGEROUS_ACTION_COL: Rgba = [0.62, 0.18, 0.18, 1.0];
+
 pub const CHIP_BODY_COL: Rgba = rgb(0.55, 0.55, 0.58);
 pub const CHIP_OUTLINE_COL: Rgba = rgb(0.15, 0.15, 0.16);
 

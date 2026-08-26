@@ -482,9 +482,16 @@ pub(crate) fn build_pending_place_scene(
 ) -> SceneGeometry {
 	let mut ghost = ChipDescription::new("__pending_placement_ghost__", ChipType::Custom);
 
+	// Build the ghost subchips and collect their world-space positions.
+	// We need these to compute the selection centroid for translating the
+	// duplicated wire bend points (stored centroid-relative by
+	// `duplicate_selection`).
+	let mut ghost_positions: Vec<Vec2> = Vec::new();
+
 	for (index, (offset, component)) in pending.iter().enumerate() {
 		let position =
 			if snap_to_grid { crate::render::layout::snap_to_grid_centred(cursor_world_pos + *offset) } else { cursor_world_pos + *offset };
+		ghost_positions.push(position);
 		let Some(chip_type) = library.try_get(&component.name).map(|d| d.chip_type) else { continue };
 
 		if let Some((is_input, template)) = builtins::io_pin_template(chip_type) {
@@ -510,6 +517,27 @@ pub(crate) fn build_pending_place_scene(
 				pin_colour_info: Vec::new(),
 			});
 		}
+	}
+
+	// Ghost positions = cursor + (original_pos - centroid), so the
+	// average ghost position equals the original selection centroid.
+	let centroid = if ghost_positions.is_empty() {
+		cursor_world_pos
+	} else {
+		let sum = ghost_positions.iter().fold(Vec2::ZERO, |acc, p| acc + *p);
+		sum / ghost_positions.len() as f32
+	};
+
+	// Include duplicated wires in the ghost so they render at the same
+	// translucent alpha as the carried components.  Bend points are
+	// centroid-relative in `attached_wires` but the ghost subchips live
+	// in world space, so we translate each point into world space.
+	for wire in pending.first().map(|(_, c)| c.attached_wires.as_slice()).unwrap_or(&[]) {
+		let mut w = (*wire).clone();
+		w.points = w.points.iter().map(|p| *p + centroid).collect();
+		w.cached_source_point += centroid;
+		w.cached_target_point += centroid;
+		ghost.wires.push(w);
 	}
 
 	let mut geo = scene::build_scene(&ghost, library, &scene::AllLow, None);

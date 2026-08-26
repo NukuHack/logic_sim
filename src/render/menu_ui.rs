@@ -188,7 +188,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 
 		let text_colour = if compatible { theme::text_colour_for_background(bg) } else { [0.9, 0.35, 0.35, 1.0] };
 		let label = if compatible {
-			format!("{}   (saved {})", project.project_name, project.last_save_time)
+			format!("{}   (saved {} ago)", project.project_name, crate::save_system::to_relative_time(&project.last_save_time))
 		} else {
 			format!("{}   (incompatible project version)", project.project_name)
 		};
@@ -295,7 +295,7 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 	let confirm_enabled =
 		!is_name_popup || (menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input)) && !text_input.trim().is_empty();
 	add_button(frame, ui, confirm_rect, "Confirm", UiAction::PopupConfirm, confirm_enabled);
-	add_button(frame, ui, cancel_rect, "Cancel", UiAction::PopupCancel, true);
+	ui_kit::add_button(frame, ui, cancel_rect, "Cancel", UiAction::PopupCancel, true, Some(crate::render::theme::DANGEROUS_ACTION_COL));
 }
 
 /// A status/error line the host app can overlay near the bottom of the

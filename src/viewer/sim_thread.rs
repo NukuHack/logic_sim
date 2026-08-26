@@ -192,6 +192,12 @@ impl SimHandle {
 		self.lock().capture_internal_states()
 	}
 
+	/// Snapshots every pin's live signal state so a rebuild can carry it
+	/// into the new arena -- see [`Simulator::capture_pin_states`].
+	pub(crate) fn capture_pin_states(&self) -> crate::sim::PinStateMap {
+		self.lock().capture_pin_states()
+	}
+
 	// ---- Prefs-derived control plumbing ----
 
 	pub(crate) fn set_steps_per_clock_transition(&self, steps: u32) {
@@ -285,9 +291,11 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 			// (`UpdateInPausedState`) so a sounding buzzer fades away
 			// rather than hanging. Same lock order as every other
 			// two-lock scope here (arena before audio).
-			let mut sim_guard = lock_sim(&sim);
-			let mut audio_guard = lock_audio(&audio);
-			sim_guard.update_in_paused_state(&mut audio_guard.sim_audio);
+			{
+				let mut sim_guard = lock_sim(&sim);
+				let mut audio_guard = lock_audio(&audio);
+				sim_guard.update_in_paused_state(&mut audio_guard.sim_audio);
+			}
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
 			pacing.was_paused = true;

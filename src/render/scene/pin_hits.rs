@@ -178,21 +178,14 @@ pub fn hit_test_any_pin(chip: &ChipDescription, placed: &[PlacedSubChip], world_
 	}
 	for pin in &chip.input_pins {
 		if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, true) {
-			return Some(PinHit {
-				owner_id: pin.id,
-				pin_id: pin.id,
-				is_input: true,
-				is_boundary: true,
-				position: pin.position,
-				bit_count: pin.bit_count,
-			});
+			return Some(PinHit { owner_id: pin.id, pin_id: 0, is_input: true, is_boundary: true, position: pin.position, bit_count: pin.bit_count });
 		}
 	}
 	for pin in &chip.output_pins {
 		if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, false) {
 			return Some(PinHit {
 				owner_id: pin.id,
-				pin_id: pin.id,
+				pin_id: 0,
 				is_input: false,
 				is_boundary: true,
 				position: pin.position,

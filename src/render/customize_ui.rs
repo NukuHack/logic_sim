@@ -63,6 +63,10 @@ impl CustomizeInteraction {
 	pub(crate) fn is_active(self) -> bool {
 		self != Self::None
 	}
+	/// Whether a body resize drag is in progress.
+	pub(crate) fn is_resizing(self) -> bool {
+		matches!(self, Self::Resizing { .. })
+	}
 }
 
 /// One row of the customize workspace's DISPLAYS list: a subchip of the
@@ -234,7 +238,7 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 	use CustomizeInteraction as Ci;
 	let hint = match ctx.interaction {
 		Ci::None => ["Drag a corner bracket to resize.", "Pick a display below -- click a placed one to remove it."],
-		Ci::Resizing { .. } => ["Click again to finish resizing", "(size snaps to the grid)."],
+		Ci::Resizing { .. } => ["Release to finish resizing", "(size snaps to the grid)."],
 		Ci::MovingDisplay { .. } => ["Click to drop · Delete removes", "Escape puts it back"],
 		Ci::ScalingDisplay { .. } => ["Move toward/away from the centre", "to scale · click confirms"],
 		Ci::PlacingDisplay { .. } => ["Click inside the preview to place", "Delete/Escape cancels"],
@@ -247,7 +251,15 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 
 	// Cancel / Confirm
 	let half_w = (inner_w - GAP) / 2.0;
-	ui_kit::add_button(frame, ui, UiRect::new(inner_x, y, half_w, BTN_H), "Cancel", EditorAction::CustomizeCancel, true, None);
+	ui_kit::add_button(
+		frame,
+		ui,
+		UiRect::new(inner_x, y, half_w, BTN_H),
+		"Cancel",
+		EditorAction::CustomizeCancel,
+		true,
+		Some(crate::render::theme::DANGEROUS_ACTION_COL),
+	);
 	ui_kit::add_button(frame, ui, UiRect::new(inner_x + half_w + GAP, y, half_w, BTN_H), "Confirm", EditorAction::CustomizeConfirm, true, None);
 	y += BTN_H + GAP;
 

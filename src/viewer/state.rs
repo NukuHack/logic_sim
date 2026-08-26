@@ -472,11 +472,16 @@ impl ViewerState {
 		// circuit's runtime state. `restart_sim_fresh` is the explicit
 		// opt-out for rebuilds that *mean* a fresh run.
 		let internal_states = self.sim.capture_internal_states();
+		// Carry live pin states (wire signal levels) so the renderer
+		// doesn't see a frame of DISCONNECTED defaults between the rebuild
+		// and the sim thread's first re-propagation tick.
+		let pin_states = self.sim.capture_pin_states();
 		let mut sim = Simulator::build(&root_desc, &self.library);
 		sim.held_keys = held_keys;
 		sim.key_modifiers = key_modifiers;
 		sim.driven_inputs = driven_inputs;
 		sim.restore_internal_states(&internal_states);
+		sim.restore_pin_states(&pin_states);
 		self.sim.replace(sim);
 		self.sync_sim_clock_pref();
 	}
@@ -504,9 +509,11 @@ impl ViewerState {
 		self.prefs.prefs_grid_display_mode == 1
 	}
 
-	/// Mirrors `Project.targetTicksPerSecond`'s `Max(1, ..)` clamp.
+	/// Mirrors `Project.targetTicksPerSecond`'s `Max(1, ..)` clamp,
+	/// capped at 100 000 so absurdly high values can't starve the
+	/// render loop.
 	pub(crate) fn target_ticks_per_second(&self) -> i32 {
-		self.prefs.prefs_sim_target_steps_per_second.max(1)
+		self.prefs.prefs_sim_target_steps_per_second.clamp(1, 100_000)
 	}
 
 	/// Ctrl-hold forces snapping regardless of prefs; "If Grid Shown"

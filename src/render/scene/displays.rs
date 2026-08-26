@@ -414,7 +414,7 @@ pub(crate) fn draw_led(geo: &mut SceneGeometry, clip: ClipRect, centre: Vec2, sc
 	clip.add_rect(geo, centre, Vec2::splat(scale), theme::STATE_DISCONNECTED_COL);
 
 	let logic = pin_state.logic_state(owner_id, 0).unwrap_or_default();
-	let colour_index = pin_state.internal_state(owner_id).and_then(|s| s.first().copied()).unwrap_or(Color::White.to_int() as u32);
+	let colour_index = pin_state.internal_state(owner_id).and_then(|s| s.first().copied()).unwrap_or(Color::Red.to_int() as u32);
 	let palette = Color::from_int(colour_index as i32);
 	let fill = theme::state_colour(logic, palette);
 
@@ -777,8 +777,8 @@ mod tests {
 			}
 		}
 
-		let lit = theme::state_colour(LogicState::High, Color::White).map(f32::to_bits);
-		let dim = theme::state_colour(LogicState::Low, Color::White).map(f32::to_bits);
+		let lit = theme::state_colour(LogicState::High, Color::Red).map(f32::to_bits);
+		let dim = theme::state_colour(LogicState::Low, Color::Red).map(f32::to_bits);
 		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits); // also the backing quad
 		type LedCase = (LogicState, Vec<[u32; 4]>, Vec<[u32; 4]>);
 		let cases: [LedCase; 3] = [

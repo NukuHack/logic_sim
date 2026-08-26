@@ -441,7 +441,7 @@ fn hit_test_any_pin_resolves_the_chips_own_boundary_dev_pins() {
 
 	let hit = hit_test_any_pin(&chip, &[], Vec2::new(-5.0, 0.0)).expect("should land on the boundary input dev-pin");
 	assert_eq!(hit.owner_id, 10);
-	assert_eq!(hit.pin_id, 10);
+	assert_eq!(hit.pin_id, 0, "dev-pin PinID is always 0 for Unity save compatibility");
 	assert!(hit.is_input);
 	assert!(hit.is_boundary);
 	// A chip's own *input* dev-pin is the thing driving wires from inside the
