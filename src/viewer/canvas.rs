@@ -279,7 +279,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 /// interchangeably (see `sim::Simulator::find_pin`) -- so every id handed
 /// out here must stay unique across all three lists, not just within
 /// whichever one the caller is about to push into.
-fn next_component_id(chip: &ChipDescription) -> i32 {
+pub(crate) fn next_component_id(chip: &ChipDescription) -> i32 {
 	chip.sub_chips.iter().map(|s| s.id).chain(chip.input_pins.iter().map(|p| p.id)).chain(chip.output_pins.iter().map(|p| p.id)).max().unwrap_or(0)
 		+ 1
 }
@@ -390,22 +390,70 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			continue;
 		}
 
-		let internal_data = match component.linked_bus_partner {
-			Some(partner_index) => Some(vec![(first_id + partner_index as i32) as u32]),
-			None => default_internal_data(chip_types[index]),
+		let subchip = if let Some(mut duplicate) = component.duplicate_of.clone() {
+			// A duplicated entry keeps its source's internal data (bound
+			// key, pulse length, ROM contents, bus flip flag...), label,
+			// and per-instance pin colours verbatim; only id and position
+			// are fresh. A carried link partner re-points through the
+			// same first_id+index scheme the pair-placement path uses.
+			if let Some(partner_index) = component.linked_bus_partner {
+				if let Some(data) = duplicate.internal_data.as_mut() {
+					data.resize(2, 0);
+					data[0] = (first_id + partner_index as i32) as u32;
+				}
+			}
+			duplicate.id = id;
+			duplicate.position = place_pos;
+			duplicate
+		} else {
+			let internal_data = match component.linked_bus_partner {
+				Some(partner_index) => Some(vec![(first_id + partner_index as i32) as u32]),
+				None => default_internal_data(chip_types[index]),
+			};
+			SubChipDescription { name: component.name.clone(), id, internal_data, position: place_pos, label: None, pin_colour_info: Vec::new() }
 		};
-		chip.sub_chips.push(SubChipDescription {
-			name: component.name.clone(),
-			id,
-			internal_data,
-			position: place_pos,
-			label: None,
-			pin_colour_info: Vec::new(),
-		});
+		chip.sub_chips.push(subchip);
 		placed_subchips.push(chip.sub_chips.last().expect("just pushed").clone());
 	}
+
+	// Duplicated wires internal to a dropped group come along, translated
+	// from their centroid-relative storage to wherever the group actually
+	// landed (`DuplicateElements`'s ApplyMoveOffset equivalent).
+	let drop_centroid = {
+		let mut acc = Vec2::ZERO;
+		for (offset, _) in &carry {
+			acc += world_pos + *offset;
+		}
+		if carry.is_empty() {
+			acc
+		} else {
+			acc / carry.len() as f32
+		}
+	};
+	let mut attached_wires: Vec<WireDescription> = Vec::new();
+	for (_, component) in &carry {
+		for mut wire in component.attached_wires.iter().cloned() {
+			wire.points = wire.points.iter().map(|p| *p + drop_centroid).collect();
+			wire.cached_source_point += drop_centroid;
+			wire.cached_target_point += drop_centroid;
+			attached_wires.push(wire);
+		}
+	}
+
 	v.rebuild_sim();
 	crate::viewer::undo::record_add_elements(v, placed_subchips, placed_pins);
+	if !attached_wires.is_empty() {
+		let first_new_wire = v.library.get(&v.root_chip_name).wires.len();
+		let chip = v.library.get_mut(&v.root_chip_name);
+		chip.wires.extend(attached_wires);
+		v.rebuild_sim();
+		// Each carried wire gets its own add-wire undo entry, so undo
+		// peels them back off one by one.
+		for index in first_new_wire..v.library.get(&v.root_chip_name).wires.len() {
+			let wire = v.library.get(&v.root_chip_name).wires[index].clone();
+			crate::viewer::undo::record_add_wire(v, wire, index);
+		}
+	}
 }
 
 /// Builds the translucent "ghost" preview of everything currently carried
@@ -447,6 +495,11 @@ pub(crate) fn build_pending_place_scene(
 			} else {
 				ghost.output_pins.push(new_pin);
 			}
+		} else if let Some(duplicate) = &component.duplicate_of {
+			let mut ghost_desc = duplicate.clone();
+			ghost_desc.id = index as i32;
+			ghost_desc.position = position;
+			ghost.sub_chips.push(ghost_desc);
 		} else {
 			ghost.sub_chips.push(SubChipDescription {
 				name: component.name.clone(),
@@ -560,6 +613,25 @@ pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
 /// Applies a canvas click that the UI stack let fall all the way through
 /// (`UiStack::dispatch_click` returned [`crate::render::ui_stack::InputResult::Propagate`] --
 /// every visible UI layer was either missed or transparent at that point).
+/// The release half of wire placement (`HandleLeftMouseUp`'s
+/// `TryFinishPlacingWire`): tries to *complete* an in-progress wire at
+/// `world_pos` -- over an opposite-role pin, or into an existing wire --
+/// but never adds bends. Returns whether it completed.
+pub(crate) fn try_finish_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) -> bool {
+	if v.pending_wire.is_none() {
+		return false;
+	}
+	let root_desc = v.library.get(&v.root_chip_name);
+	let placed = scene::place_sub_chips(root_desc, &v.library);
+	let on_pin = scene::hit_test_any_pin(root_desc, &placed, world_pos).is_some();
+	let on_wire = !on_pin && scene::closest_wire_hit(root_desc, &v.library, world_pos, wire_click_tolerance(&v.camera)).is_some();
+	if on_pin || on_wire {
+		handle_canvas_click(v, world_pos, status);
+		return v.pending_wire.is_none();
+	}
+	false
+}
+
 pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
 	// A view-only chip is on screen (`Project.CanEditViewedChip`): the
 	// canvas shows its live simulation but takes no editing input.
@@ -993,8 +1065,12 @@ mod tests {
 			crate::register_all_builtins(&mut lib);
 			lib
 		};
-		let single = vec![(Vec2::ZERO, PendingComponent { name: "NAND".into(), linked_bus_partner: None })];
-		let doubled = vec![single[0].clone(), (Vec2::new(4.0, 0.0), PendingComponent { name: "NAND".into(), linked_bus_partner: None })];
+		let single =
+			vec![(Vec2::ZERO, PendingComponent { name: "NAND".into(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() })];
+		let doubled = vec![
+			single[0].clone(),
+			(Vec2::new(4.0, 0.0), PendingComponent { name: "NAND".into(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() }),
+		];
 
 		let one = build_pending_place_scene(&library, &single, Vec2::ZERO, false);
 		let two = build_pending_place_scene(&library, &doubled, Vec2::ZERO, false);

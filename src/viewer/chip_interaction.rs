@@ -21,6 +21,8 @@ use crate::render::theme;
 use crate::sim::key_mods_bits;
 use crate::structs::Vec2;
 use crate::viewer::state::ViewerState;
+use crate::{PinAddress, SubChipDescription, WireConnectionType, WireDescription};
+use std::collections::HashMap;
 
 /// One component picked up for placement: which library chip to
 /// instantiate. The `Vec2` half of its `pending_place` entry carries its
@@ -35,6 +37,16 @@ pub(crate) struct PendingComponent {
 	/// to each side's `SubChipDescription::internal_data[0]` (see
 	/// `viewer::bus_wiring` for what that link guarantees downstream).
 	pub(crate) linked_bus_partner: Option<usize>,
+	/// Full description override for *duplicated* entries (`DuplicateElements`
+	/// copies the original's internal data, label, and per-instance pin
+	/// colours verbatim rather than starting from library defaults);
+	/// `None` for ordinary library pickups.
+	pub(crate) duplicate_of: Option<SubChipDescription>,
+	/// Wires internal to the duplicated group (`DuplicateElements`'s
+	/// duplicated-wire pass), carried once -- on the first entry -- and
+	/// pushed onto the chip when the carry drops. Bend points are stored
+	/// relative to the group's centroid so they land where the group lands.
+	pub(crate) attached_wires: Vec<WireDescription>,
 }
 
 /// What a press-drag over the canvas is currently doing. `None` whenever
@@ -81,13 +93,19 @@ pub(crate) fn start_placing(v: &mut ViewerState, chip_name: &str) {
 	v.pending_wire = None;
 
 	let chip_type = v.library.try_get(chip_name).map(|d| d.chip_type);
-	let mut carry = vec![(Vec2::ZERO, PendingComponent { name: chip_name.to_string(), linked_bus_partner: None })];
+	let mut carry = vec![(
+		Vec2::ZERO,
+		PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() },
+	)];
 
 	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus()) {
 		if let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type) {
 			let terminus_name = desc.name.clone();
 			carry[0].0 = Vec2::new(-BUS_PAIR_SPACING / 2.0, 0.0);
-			carry.push((Vec2::new(BUS_PAIR_SPACING / 2.0, 0.0), PendingComponent { name: terminus_name, linked_bus_partner: Some(0) }));
+			carry.push((
+				Vec2::new(BUS_PAIR_SPACING / 2.0, 0.0),
+				PendingComponent { name: terminus_name, linked_bus_partner: Some(0), duplicate_of: None, attached_wires: Vec::new() },
+			));
 			carry[0].1.linked_bus_partner = Some(1);
 		}
 	}
@@ -264,7 +282,9 @@ fn boxes_overlap(a_centre: Vec2, a_size: Vec2, b_centre: Vec2, b_size: Vec2) -> 
 }
 
 fn multi_mode_held(v: &ViewerState) -> bool {
-	v.sim.key_modifiers() & key_mods_bits::SHIFT != 0
+	// `KeyboardShortcuts.MultiModeHeld`: Alt *or* Shift.
+	let mods = v.sim.key_modifiers();
+	mods & (key_mods_bits::SHIFT | key_mods_bits::ALT) != 0
 }
 
 /// Whether the carried selection currently overlaps anything it may not
@@ -631,5 +651,211 @@ mod tests {
 		let canvas_geo = &stack.layers()[0].geometry;
 		assert!(has_alpha_near(canvas_geo, theme::SELECTION_BOX_COL[3]), "rubber band visible while dragging the mouse");
 		assert!(!has_alpha_near(canvas_geo, PENDING_PLACEMENT_ALPHA), "no ghost alpha during box select");
+	}
+}
+
+/// Picks up a duplicate of the current selection (`DuplicateSelectedElements`,
+/// on the MultiMode+D shortcut): every selected subchip -- plus any bus
+/// partner hanging outside the selection -- is copied with fresh ids,
+/// links pointing inside the group are re-mapped to their duplicates
+/// (`LinkDuplicatedBuses`; links to anything outside are cleared), wires
+/// internal to the group come along (bends re-anchored to the group's
+/// centroid), and the whole group lands in the placement carry for
+/// dropping like any pickup. Returns whether anything was picked up.
+pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
+	// Only over the bare editor (`!IsPlacingOrMovingElementOrCreatingWire`).
+	if !v.pending_place.is_empty() || v.pending_wire.is_some() || !matches!(v.canvas_interaction, CanvasInteraction::None) || v.wire_edit.is_some() {
+		return false;
+	}
+	if v.selected_ids.is_empty() {
+		return false;
+	}
+
+	let root_chip_name = v.root_chip_name.clone();
+
+	// Expand through bus partners so a carried half always brings its pair.
+	let mut ids: Vec<i32> = Vec::new();
+	for &id in &v.selected_ids {
+		for expanded in crate::viewer::canvas::compute_component_delete_set(v, id) {
+			if !ids.contains(&expanded) {
+				ids.push(expanded);
+			}
+		}
+	}
+
+	let originals: Vec<SubChipDescription> = { v.library.get(&root_chip_name).sub_chips.iter().filter(|s| ids.contains(&s.id)).cloned().collect() };
+	if originals.is_empty() {
+		return false;
+	}
+
+	let centroid = {
+		let mut acc = Vec2::ZERO;
+		for s in &originals {
+			acc += s.position;
+		}
+		acc / originals.len() as f32
+	};
+
+	// Fresh ids across all three id spaces (subchips + dev-pins share one).
+	let mut next_id = crate::viewer::canvas::next_component_id(v.library.get(&root_chip_name));
+	let mut id_map: HashMap<i32, i32> = HashMap::new();
+	for source in &originals {
+		next_id += 1;
+		id_map.insert(source.id, next_id - 1);
+	}
+
+	// Copies with re-mapped links: a partner duplicated alongside points
+	// at its fresh id; one left behind clears to "no partner" so no
+	// dangling link survives into delete cascades.
+	let linked_partner = |s: &SubChipDescription| s.internal_data.as_ref().and_then(|d| d.first()).map(|&v| v as i32).unwrap_or(0);
+	let mut carry: Vec<(Vec2, PendingComponent)> = Vec::with_capacity(originals.len());
+	for source in &originals {
+		let mut copy = source.clone();
+		copy.id = id_map[&source.id];
+		let new_link = id_map.get(&linked_partner(source)).copied().unwrap_or(0);
+		let mut data = copy.internal_data.clone().unwrap_or_default();
+		data.resize(2, 0);
+		data[0] = new_link as u32;
+		copy.internal_data = Some(data);
+
+		carry.push((
+			source.position - centroid,
+			PendingComponent { name: copy.name.clone(), linked_bus_partner: None, duplicate_of: Some(copy), attached_wires: Vec::new() },
+		));
+	}
+
+	// Wires whose BOTH ends sit inside the group duplicate too; taps onto
+	// wires outside the group degrade to plain pin connections. Bend
+	// points re-anchor relative to the centroid.
+	let old_wires = v.library.get(&root_chip_name).wires.clone();
+	let existing_len = old_wires.len();
+	let mut attached_wires: Vec<WireDescription> = Vec::new();
+	let mut wire_index_map: HashMap<usize, usize> = HashMap::new(); // old wire idx -> new wire idx
+	for (old_idx, wire) in old_wires.iter().enumerate() {
+		let (Some(src_new), Some(dst_new)) = (id_map.get(&wire.source_pin_address.pin_owner_id), id_map.get(&wire.target_pin_address.pin_owner_id))
+		else {
+			continue;
+		};
+		let mut copy = wire.clone();
+		copy.source_pin_address = PinAddress::new(*src_new, wire.source_pin_address.pin_id);
+		copy.target_pin_address = PinAddress::new(*dst_new, wire.target_pin_address.pin_id);
+		copy.points = wire.points.iter().map(|p| *p - centroid).collect();
+		copy.cached_source_point = copy.cached_source_point - centroid;
+		copy.cached_target_point = copy.cached_target_point - centroid;
+
+		if copy.connection_type != WireConnectionType::ToPins {
+			match wire_index_map.get(&(copy.connected_wire_index.max(0) as usize)) {
+				Some(&new_idx) => copy.connected_wire_index = new_idx as i32,
+				None => {
+					copy.connection_type = WireConnectionType::ToPins;
+					copy.connected_wire_index = 0;
+					copy.connected_wire_segment_index = 0;
+				}
+			}
+		}
+		wire_index_map.insert(old_idx, existing_len + attached_wires.len());
+		attached_wires.push(copy);
+	}
+
+	if !attached_wires.is_empty() {
+		carry[0].1.attached_wires = attached_wires;
+	}
+
+	v.pending_place = carry;
+	true
+}
+
+// ---- Duplicate selection (MultiMode+D) ----
+#[cfg(test)]
+mod duplicate_tests {
+	use super::*;
+	use crate::ChipLibrary;
+
+	fn viewer_with_builtins() -> ViewerState {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
+		start_placing(v, "NAND");
+		let mut status = None;
+		crate::viewer::canvas::try_place_pending_components(v, pos, &mut status);
+		assert!(status.is_none(), "drop on free canvas space must succeed");
+		v.library.get("ROOT").sub_chips.last().expect("placement succeeded").id
+	}
+
+	#[test]
+	fn duplicating_two_wired_components_carries_the_wire_between_them() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let b = place_nand(&mut v, Vec2::new(8.0, 0.0));
+		{
+			let chip = v.library.get_mut("ROOT");
+			chip.wires.push(WireDescription::new(PinAddress::new(a, 2), PinAddress::new(b, 1)));
+		}
+
+		v.selected_ids = vec![a, b];
+		assert!(duplicate_selection(&mut v));
+
+		assert_eq!(v.pending_place.len(), 2, "both selected components are carried");
+		// The internal wire rides on the first entry.
+		let wires = &v.pending_place[0].1.attached_wires;
+		assert_eq!(wires.len(), 1, "the wire between the two duplicates comes along");
+		assert_ne!(wires[0].source_pin_address.pin_owner_id, a, "endpoints re-point at fresh ids");
+		assert_ne!(wires[0].target_pin_address.pin_owner_id, b);
+
+		// Drop: fresh ids across the shared id space, wire translated to the
+		// drop site and pushed onto the chip.
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::new(40.0, 40.0), &mut None);
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.sub_chips.len(), 4);
+		assert_eq!(chip.wires.len(), 2, "original plus duplicated wire");
+		let new_wire = &chip.wires[1];
+		assert_eq!(new_wire.source_pin_address.pin_owner_id, chip.sub_chips[2].id);
+		assert_eq!(new_wire.target_pin_address.pin_owner_id, chip.sub_chips[3].id);
+	}
+
+	#[test]
+	fn duplicating_one_half_of_a_bus_pair_brings_and_relinks_the_partner() {
+		let mut v = viewer_with_builtins();
+		start_placing(&mut v, "BUS-4");
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
+		let ids: Vec<i32> = v.library.get("ROOT").sub_chips.iter().map(|s| s.id).collect();
+		let (origin, terminus) = (ids[0], ids[1]);
+
+		v.selected_ids = vec![origin];
+		assert!(duplicate_selection(&mut v));
+
+		// The terminus partner was pulled into the carry...
+		assert_eq!(v.pending_place.len(), 2, "origin + its outside partner");
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::new(20.0, 20.0), &mut None);
+
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.sub_chips.len(), 4, "pair duplicated as a pair");
+		let data = |id: i32| chip.sub_chips.iter().find(|s| s.id == id).expect("exists").internal_data.clone().unwrap_or_default()[0] as i32;
+		// The duplicated pair links to each other, not to the originals.
+		assert_ne!(data(chip.sub_chips[2].id), terminus, "duplicate origin doesn't point at the original terminus");
+		assert_eq!(data(chip.sub_chips[2].id), chip.sub_chips[3].id, "duplicate origin points at the duplicate terminus");
+		assert_eq!(data(chip.sub_chips[3].id), chip.sub_chips[2].id, "and vice versa");
+	}
+
+	#[test]
+	fn duplicate_is_refused_while_something_else_is_in_flight() {
+		let mut v = viewer_with_builtins();
+		place_nand(&mut v, Vec2::ZERO);
+		v.selected_ids.push(v.library.get("ROOT").sub_chips[0].id);
+
+		start_placing(&mut v, "NAND");
+		assert!(!duplicate_selection(&mut v), "a placement carry blocks duplicating");
+		v.pending_place.clear();
+
+		v.pending_wire = Some(crate::viewer::wire_draft::PendingWire {
+			start: crate::viewer::wire_draft::PendingWireEnd::Pin { owner_id: 1, pin_id: 2, is_source: true, position: Vec2::ZERO },
+			bend_points: Vec::new(),
+			bit_count: crate::PinBitCount::Bit1,
+		});
+		assert!(!duplicate_selection(&mut v), "a pending wire blocks duplicating");
 	}
 }

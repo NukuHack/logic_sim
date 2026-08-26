@@ -359,7 +359,7 @@ impl PinDescription {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SubChipDescription {
 	pub name: String,
 	/// Unique within parent chip. ID > 0
@@ -440,7 +440,7 @@ impl WireConnectionType {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct WireDescription {
 	pub source_pin_address: PinAddress,
 	pub target_pin_address: PinAddress,

@@ -18,7 +18,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::WindowId;
 
 use crate::viewer::actions::apply_editor_action;
-use crate::viewer::canvas::{handle_canvas_click, wire_click_tolerance};
+use crate::viewer::canvas::{handle_canvas_click, try_finish_pending_wire, wire_click_tolerance};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::context_menu::{apply_context_menu_action, context_menu_items_for_component};
 use crate::viewer::frame::{build_menu_stack, build_viewer_stack};
@@ -222,6 +222,15 @@ impl App {
 				ElementState::Released => {
 					let world_pos = v.camera.screen_to_world(self.mouse_pos);
 					chip_interaction::handle_canvas_release(v, world_pos);
+					// An in-progress wire also tries to complete on
+					// release (`HandleLeftMouseUp`'s TryFinishPlacingWire):
+					// press-empty then release-over-pin finishes the wire,
+					// matching the original's two chances to land.
+					if v.pending_wire.is_some() && matches!(v.stack.top_id(), None | Some(LayerId::Canvas)) {
+						let mut status_before = self.status.clone();
+						try_finish_pending_wire(v, world_pos, &mut status_before);
+						self.note_status_maybe_changed(&status_before);
+					}
 				}
 			},
 		}
