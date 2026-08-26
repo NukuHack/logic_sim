@@ -547,7 +547,11 @@ impl App {
 			}
 			Screen::Viewer(v) => {
 				sync_stack_with_state(v);
+				let old_name = v.root_chip_name.clone();
 				handle_viewer_key(v, &self.paths, &mut self.status, &event, self.modifiers);
+				if v.root_chip_name != old_name {
+					self.set_window_title();
+				}
 			}
 		}
 		self.check_viewer_exit_request();
@@ -569,6 +573,11 @@ impl App {
 		// loop keeps ticking even with no input, so no interaction is
 		// ever needed for this.
 		self.expire_status_toast();
+
+		// Keep the window title in sync with the current chip name --
+		// cheap to call and avoids tracking dirty flags across every
+		// code path that mutates `root_chip_name`.
+		self.set_window_title();
 
 		let (vw, vh) = self.viewport.to_tuple();
 

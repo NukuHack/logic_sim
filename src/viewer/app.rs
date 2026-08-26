@@ -118,7 +118,7 @@ impl App {
 		}
 	}
 
-	fn set_window_title(&self) {
+	pub(crate) fn set_window_title(&self) {
 		if let Some(state) = &self.state {
 			state.window.set_title(&self.window_title());
 		}
