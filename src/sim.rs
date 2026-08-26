@@ -847,6 +847,14 @@ impl Simulator {
 		key.push(chip.id);
 		for &p in chip.input_pins.iter().chain(chip.output_pins.iter()) {
 			let pin = &self.pins[p.0];
+			// Only restore an input pin's state if it still has at least one
+			// wire connection in the rebuilt simulation.  A wire deletion
+			// removes the connection but the old state was captured before the
+			// rebuild; blindly restoring it would leave the pin showing a
+			// stale value instead of DISCONNECTED.
+			if pin.is_input && pin.num_input_connections == 0 {
+				continue;
+			}
 			let mut pin_key = key.clone();
 			pin_key.push(pin.id);
 			pin_key.push(pin.is_input as i32);
