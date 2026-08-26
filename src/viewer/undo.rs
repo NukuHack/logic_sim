@@ -694,11 +694,8 @@ mod edge_case_tests {
 		(w.source_pin_address, w.target_pin_address)
 	}
 
-	/// Deleting an anchor wire detaches wires tapping onto it
-	/// (`RemoveConnectionDependency`) rather than killing them; the
-	/// recorded full-state restore must bring the *anchor* back exactly,
-	/// and redo must detach again (`FullWireState` snapshots the whole
-	/// list, so both sides of that swap are exact).
+	/// Deleting an anchor wire recursively removes dependent wires
+	/// that tap onto it; the full-state undo record brings everything back.
 	#[test]
 	fn tapped_wires_survive_their_anchor_and_undo_restores_both() {
 		let mut v = viewer_with_builtins();
@@ -712,15 +709,14 @@ mod edge_case_tests {
 		assert_eq!(wire_count(&v), 2);
 
 		delete_wire_with_undo(&mut v, "ROOT", 0);
-		assert_eq!(wire_count(&v), 1, "the tap is detached, not killed");
-		assert_eq!(endpoints(&v, 0).1, PinAddress::new(c, 0), "the survivor keeps its own electrical target");
+		assert_eq!(wire_count(&v), 0, "both anchor and tap are deleted recursively");
 
 		try_undo(&mut v);
 		assert_eq!(wire_count(&v), 2, "anchor AND tap came back");
 		assert_eq!(endpoints(&v, 1).0, PinAddress::new(a, 2), "the tap kept its source address");
 
 		try_redo(&mut v);
-		assert_eq!(wire_count(&v), 1, "redo re-detaches");
+		assert_eq!(wire_count(&v), 0, "redo re-deletes both");
 	}
 
 	/// Redoing a wire delete must remove the SAME wire even if the stored

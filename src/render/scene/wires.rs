@@ -118,41 +118,31 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 
 	let is_bus = crate::viewer::bus_wiring::is_bus_wire(chip, library, &chip.wires[index]);
 
-	// World-space polyline of the doomed wire (endpoints resolved exactly
-	// the way drawing resolves them), needed to re-route detached tappers.
-	let anchor_world = if is_bus {
-		Vec::new()
-	} else {
-		let chip_snapshot = chip.clone();
-		let placed = place_sub_chips(&chip_snapshot, library);
-		let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
-		let mut cache: WirePointCache = HashMap::new();
-		let ctx = WireCtx { chip: &chip_snapshot, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip_snapshot.wires };
-		let src = ctx.endpoint(index, false, &mut cache, 0);
-		let dst = ctx.endpoint(index, true, &mut cache, 0);
-		let mut world = Vec::with_capacity(chip.wires[index].points.len() + 2);
-		world.push(src.or(Some(chip.wires[index].cached_source_point)).expect("endpoint fallback"));
-		world.extend_from_slice(&chip.wires[index].points);
-		world.push(dst.unwrap_or(chip.wires[index].cached_target_point));
-		world
-	};
-
 	if !is_bus {
-		let anchor = chip.wires[index].clone();
-		let dependents: Vec<usize> = chip
-			.wires
-			.iter()
-			.enumerate()
-			.filter(|(i, w)| *i != index && w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == index)
-			.map(|(i, _)| i)
-			.collect();
-		for d in dependents {
-			detach_dependent(chip, d, &anchor, &anchor_world);
+		// Recursively find all dependent wires (those tapping into this wire)
+		// and remove them along with the anchor wire.
+		let mut to_remove = vec![index];
+		let mut i = 0;
+		while i < to_remove.len() {
+			let current = to_remove[i];
+			for (j, w) in chip.wires.iter().enumerate() {
+				if !to_remove.contains(&j)
+					&& w.connection_type != WireConnectionType::ToPins
+					&& w.connected_wire_index as usize == current
+				{
+					to_remove.push(j);
+				}
+			}
+			i += 1;
 		}
+		to_remove.sort_unstable();
 
-		chip.wires.remove(index);
-		shift_connected_indices_after_removal(chip, &[index]);
-		return 1;
+		let removed_count = to_remove.len();
+		for &ri in to_remove.iter().rev() {
+			chip.wires.remove(ri);
+		}
+		shift_connected_indices_after_removal(chip, &to_remove);
+		return removed_count;
 	}
 
 	// Bus-wire cascade: seed with `index` and everything attached to the
@@ -418,18 +408,10 @@ mod tests {
 
 		delete_wire(&mut chip, 0, &library);
 
-		// Normal-wire deletion detaches rather than cascades: both tappers
-		// survive, re-anchored onto the deleted wire's own endpoints.
-		assert_eq!(chip.wires.len(), 3, "anchor gone, both re-anchored survivors + the independent wire remain");
-
-		let survivor_source_tap = chip.wires.iter().find(|w| w.target_pin_address == PinAddress::new(3, 1)).expect("source tap survives");
-		assert_eq!(survivor_source_tap.source_pin_address, PinAddress::new(1, 0), "inherits the anchor's source pin");
-		assert_eq!(survivor_source_tap.connection_type, WireConnectionType::ToPins, "plain pin connection after detach");
-		assert!(!survivor_source_tap.points.is_empty(), "the anchor's route is folded into the bends");
-
-		let survivor_target_tap = chip.wires.iter().find(|w| w.source_pin_address == PinAddress::new(3, 0)).expect("target tap survives");
-		assert_eq!(survivor_target_tap.target_pin_address, PinAddress::new(2, 1), "inherits the anchor's target pin");
-		assert_eq!(survivor_target_tap.connection_type, WireConnectionType::ToPins);
+		// Normal-wire deletion now recursively removes dependent wires:
+		// both tappers die with the anchor.
+		assert_eq!(chip.wires.len(), 1, "anchor and both tappers gone, only the independent wire remains");
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(3, 0));
 	}
 
 	/// Deleting one half of a linked bus pair takes the whole origin net
