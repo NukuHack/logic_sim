@@ -39,5 +39,6 @@ pub mod sim_timing;
 pub mod state;
 pub mod undo;
 pub mod wire_draft;
+pub mod wire_edit;
 
 pub use app::run;

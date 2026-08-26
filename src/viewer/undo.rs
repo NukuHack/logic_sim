@@ -49,7 +49,7 @@ impl UndoController {
 	/// How many actions have ever been recorded (minus truncated redo
 	/// tails) -- test introspection for "did this gesture record anything".
 	#[cfg(test)]
-	fn history_len(&self) -> usize {
+	pub(crate) fn history_len(&self) -> usize {
 		self.history.len()
 	}
 }
@@ -62,6 +62,15 @@ enum UndoAction {
 	Move(MoveAction),
 	ElementExistence(ElementExistenceAction),
 	WireExistence(WireExistenceAction),
+	/// A wire-geometry edit (wire-edit-mode bend insert/move/delete):
+	/// whole-list before/after snapshots, so dependent wires' shifted
+	/// attachment indices restore exactly.
+	WireListEdit(Box<WireListEditAction>),
+}
+
+struct WireListEditAction {
+	before: FullWireState,
+	after: FullWireState,
 }
 
 struct MoveAction {
@@ -74,8 +83,8 @@ struct MoveAction {
 /// exactly the un-flagged subset, in order -- which also resurrects any
 /// wires that were only lost as side effects (e.g. taps cascading away
 /// with their anchor).
-struct FullWireState {
-	wires: Vec<(WireDescription, bool)>,
+pub(crate) struct FullWireState {
+	pub(crate) wires: Vec<(WireDescription, bool)>,
 }
 
 struct ElementExistenceAction {
@@ -121,6 +130,40 @@ pub(crate) fn record_add_wire(v: &mut ViewerState, wire: WireDescription, wire_i
 	record(v, UndoAction::WireExistence(WireExistenceAction { wire, wire_index, is_delete: false, full_state: None }));
 }
 
+/// Records a wire-geometry edit that has *just finished*: snapshots the
+/// (already mutated) wire list as the "after" half, with the "before"
+/// half supplied by the caller's earlier capture. Equal snapshots (a
+/// click that grabbed a handle but never moved it) record nothing.
+pub(crate) fn record_wire_list_edit(v: &mut ViewerState, before: FullWireState) {
+	let after = capture_full_wire_state(v, &[], &[]);
+	if before.wires.len() == after.wires.len() && before.wires.iter().zip(&after.wires).all(|(a, b)| wire_entries_equal(a, b)) {
+		return;
+	}
+	record(v, UndoAction::WireListEdit(Box::new(WireListEditAction { before, after })));
+}
+
+/// Captures a "before" snapshot for a wire-geometry edit. Pair with
+/// [`record_wire_list_edit`] after mutating.
+pub(crate) fn capture_wire_list(v: &mut ViewerState) -> FullWireState {
+	capture_full_wire_state(v, &[], &[])
+}
+
+/// Runs `edit` between two automatic snapshots -- the one-shot form for
+/// edits that don't need to interleave other work between capture and
+/// mutation.
+pub(crate) fn record_wire_list_snapshot_pair_before(v: &mut ViewerState, edit: impl FnOnce(&mut ViewerState)) {
+	let before = capture_full_wire_state(v, &[], &[]);
+	edit(v);
+	let after = capture_full_wire_state(v, &[], &[]);
+	if before.wires.len() != after.wires.len() || before.wires.iter().zip(&after.wires).any(|(a, b)| !wire_entries_equal(a, b)) {
+		record(v, UndoAction::WireListEdit(Box::new(WireListEditAction { before, after })));
+	}
+}
+
+fn wire_entries_equal(a: &(WireDescription, bool), b: &(WireDescription, bool)) -> bool {
+	a.1 == b.1 && a.0.source_pin_address == b.0.source_pin_address && a.0.target_pin_address == b.0.target_pin_address && a.0.points == b.0.points
+}
+
 /// Records the deletion of the wire at `wire_index`, snapshotting the
 /// whole wire list first so undo can bring back everything that died with
 /// it (`RecordDeleteWire`'s full-state backup).
@@ -128,7 +171,8 @@ pub(crate) fn delete_wire_with_undo(v: &mut ViewerState, root_chip_name: &str, w
 	let Some(wire) = v.library.get(root_chip_name).wires.get(wire_index).cloned() else { return };
 	let full_state = capture_full_wire_state(v, &[wire_index], &[]);
 	record(v, UndoAction::WireExistence(WireExistenceAction { wire, wire_index, is_delete: true, full_state: Some(full_state) }));
-	scene::delete_wire(v.library.get_mut(root_chip_name), wire_index);
+	let library = v.library.clone();
+	scene::delete_wire(v.library.get_mut(root_chip_name), wire_index, &library);
 	v.rebuild_sim();
 }
 
@@ -254,6 +298,12 @@ fn apply_action(v: &mut ViewerState, action: &mut UndoAction, undo: bool) {
 		UndoAction::Move(move_action) => apply_move(v, move_action, undo),
 		UndoAction::ElementExistence(element_action) => apply_element_existence(v, element_action, undo),
 		UndoAction::WireExistence(wire_action) => apply_wire_existence(v, wire_action, undo),
+		UndoAction::WireListEdit(edit_action) => {
+			let state = if undo { &edit_action.before } else { &edit_action.after };
+			restore_full_wire_state(v, state);
+			v.exit_view_mode();
+			v.rebuild_sim();
+		}
 	}
 }
 
@@ -336,16 +386,20 @@ fn apply_wire_existence(v: &mut ViewerState, action: &WireExistenceAction, undo:
 			}
 		}
 	} else {
-		let chip = v.library.get_mut(&root_chip_name);
 		// The replay is strictly linear so `wire_index` should line up;
 		// verify defensively and fall back to identity-by-addresses
 		// before removing anything.
-		let index = match chip.wires.get(action.wire_index) {
-			Some(existing) if same_endpoints(existing, &action.wire) => Some(action.wire_index),
-			_ => chip.wires.iter().position(|existing| same_endpoints(existing, &action.wire)),
+		let index = {
+			let chip = v.library.get(&root_chip_name);
+			match chip.wires.get(action.wire_index) {
+				Some(existing) if same_endpoints(existing, &action.wire) => Some(action.wire_index),
+				_ => chip.wires.iter().position(|existing| same_endpoints(existing, &action.wire)),
+			}
 		};
 		if let Some(index) = index {
-			scene::delete_wire(chip, index);
+			let library = v.library.clone();
+			let chip = v.library.get_mut(&root_chip_name);
+			scene::delete_wire(chip, index, &library);
 		}
 	}
 
@@ -630,11 +684,13 @@ mod edge_case_tests {
 		(w.source_pin_address, w.target_pin_address)
 	}
 
-	/// Deleting an anchor wire cascades away wires tapping onto it; the
-	/// recorded full-state restore must bring BOTH back (`FullWireState`
-	/// snapshots the whole list, not just the doomed wire).
+	/// Deleting an anchor wire detaches wires tapping onto it
+	/// (`RemoveConnectionDependency`) rather than killing them; the
+	/// recorded full-state restore must bring the *anchor* back exactly,
+	/// and redo must detach again (`FullWireState` snapshots the whole
+	/// list, so both sides of that swap are exact).
 	#[test]
-	fn tapped_wires_come_back_with_their_anchor() {
+	fn tapped_wires_survive_their_anchor_and_undo_restores_both() {
 		let mut v = viewer_with_builtins();
 		let a = place_nand(&mut v, Vec2::ZERO);
 		let b = place_nand(&mut v, Vec2::new(4.0, 0.0));
@@ -646,14 +702,15 @@ mod edge_case_tests {
 		assert_eq!(wire_count(&v), 2);
 
 		delete_wire_with_undo(&mut v, "ROOT", 0);
-		assert_eq!(wire_count(&v), 0, "the tap died with its anchor");
+		assert_eq!(wire_count(&v), 1, "the tap is detached, not killed");
+		assert_eq!(endpoints(&v, 0).1, PinAddress::new(c, 0), "the survivor keeps its own electrical target");
 
 		try_undo(&mut v);
 		assert_eq!(wire_count(&v), 2, "anchor AND tap came back");
 		assert_eq!(endpoints(&v, 1).0, PinAddress::new(a, 2), "the tap kept its source address");
 
 		try_redo(&mut v);
-		assert_eq!(wire_count(&v), 0, "redo re-cascades");
+		assert_eq!(wire_count(&v), 1, "redo re-detaches");
 	}
 
 	/// Redoing a wire delete must remove the SAME wire even if the stored

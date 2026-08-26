@@ -7,6 +7,7 @@ use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
 use crate::viewer::state::{open_overlay, KeySelectPurpose, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState};
+use crate::viewer::undo::delete_wire_with_undo;
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 
 /// One right-clickable "thing" a context menu can be attached to, parsed
@@ -21,6 +22,8 @@ pub(crate) enum ContextTarget {
 	/// One of the *current root chip's own* boundary dev-pins -- never a
 	/// subchip's pin (the brief is explicit about that distinction).
 	DevPin { is_input: bool, id: i32 },
+	/// A wire on the canvas, by its index in the root chip's wire list.
+	Wire(usize),
 	/// A row in the chip library sidebar, by chip name.
 	LibChip(String),
 	/// A plain chip's own button directly in the starred bottom bar (not
@@ -44,6 +47,8 @@ impl ContextTarget {
 	pub(crate) fn parse(target: &str) -> Option<Self> {
 		if let Some(rest) = target.strip_prefix("component:") {
 			rest.parse().ok().map(ContextTarget::Component)
+		} else if let Some(rest) = target.strip_prefix("wire:") {
+			rest.parse().ok().map(ContextTarget::Wire)
 		} else if let Some(rest) = target.strip_prefix("devpin:in:") {
 			rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: true, id })
 		} else if let Some(rest) = target.strip_prefix("devpin:out:") {
@@ -116,6 +121,12 @@ pub(crate) fn apply_context_menu_action(
 	let root_chip_name = v.root_chip_name.clone();
 
 	match (action_id, parsed) {
+		(ContextMenuAction::Edit, ContextTarget::Wire(index)) => crate::viewer::wire_edit::enter(v, index),
+		(ContextMenuAction::Delete, ContextTarget::Wire(index)) => {
+			crate::viewer::wire_edit::exit(v);
+			delete_wire_with_undo(v, &root_chip_name, index);
+			let _ = status;
+		}
 		(ContextMenuAction::Open, ContextTarget::Component(id)) => {
 			let name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
 			if let Some(name) = name {

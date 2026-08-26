@@ -534,19 +534,24 @@ pub(crate) fn compute_component_delete_set(v: &ViewerState, id: i32) -> Vec<i32>
 pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
 	let root_chip_name = v.root_chip_name.clone();
 
-	let chip = v.library.get_mut(&root_chip_name);
 	for &id in ids {
 		loop {
-			let next = chip.wires.iter().position(|w| w.source_pin_address.pin_owner_id == id || w.target_pin_address.pin_owner_id == id);
+			let next = {
+				let chip = v.library.get(&root_chip_name);
+				chip.wires.iter().position(|w| w.source_pin_address.pin_owner_id == id || w.target_pin_address.pin_owner_id == id)
+			};
 			match next {
 				Some(idx) => {
-					scene::delete_wire(chip, idx);
+					let library = v.library.clone();
+					let chip = v.library.get_mut(&root_chip_name);
+					scene::delete_wire(chip, idx, &library);
 				}
 				None => break,
 			}
 		}
 	}
 
+	let chip = v.library.get_mut(&root_chip_name);
 	chip.sub_chips.retain(|s| !ids.contains(&s.id));
 	chip.input_pins.retain(|p| !ids.contains(&p.id));
 	chip.output_pins.retain(|p| !ids.contains(&p.id));
@@ -578,6 +583,42 @@ pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: 
 		try_continue_pending_wire(v, world_pos, status);
 		return;
 	}
+
+	// Wire edit mode claims its own clicks next (`HandleLeftMouseDown`'s
+	// wireToEdit branches): grabbing a bend handle starts dragging it,
+	// clicking the edited wire's line inserts + grabs a new bend there,
+	// and any other click leaves edit mode and falls through to the
+	// normal handling below.
+	if v.wire_edit.is_some() {
+		let edit_index = v.wire_edit.map(|e| e.wire_index).expect("checked above");
+		if let Some(bend) = crate::viewer::wire_edit::bend_hit(v, world_pos) {
+			let original = {
+				let chip = v.library.get(&v.root_chip_name);
+				chip.wires[edit_index].points[bend]
+			};
+			crate::viewer::wire_edit::begin_drag(v, bend);
+			v.canvas_interaction = chip_interaction::CanvasInteraction::WireBendDrag { wire_index: edit_index, bend_index: bend, original };
+			return;
+		}
+		let on_edited_wire = {
+			let root_desc = v.library.get(&v.root_chip_name);
+			let max_dist = wire_click_tolerance(&v.camera);
+			scene::closest_wire_hit(root_desc, &v.library, world_pos, max_dist).is_some_and(|tap| tap.wire_index == edit_index)
+		};
+		if on_edited_wire {
+			if crate::viewer::wire_edit::insert_point_at_click(v, world_pos).is_some() {
+				let (edit_index, Some(bend)) = (edit_index, v.wire_edit.and_then(|e| e.selected_bend)) else { return };
+				let original = {
+					let chip = v.library.get(&v.root_chip_name);
+					chip.wires[edit_index].points[bend]
+				};
+				v.canvas_interaction = chip_interaction::CanvasInteraction::WireBendDrag { wire_index: edit_index, bend_index: bend, original };
+			}
+			return;
+		}
+		crate::viewer::wire_edit::exit(v);
+	}
+
 	if try_start_pending_wire(v, world_pos) {
 		return;
 	}

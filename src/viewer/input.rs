@@ -307,6 +307,23 @@ pub(crate) fn handle_viewer_key(
 		// flight, so a text field's or a pending action's Delete stays its
 		// own gesture ----
 		Key::Named(NamedKey::Delete) if can_delete_selection(v) => delete_selected(v),
+		// ---- Wire edit mode: Enter leaves it (`ConfirmShortcutTriggered`
+		// -> `ExitWireEditMode`); Delete removes the selected bend
+		// (`DeleteSelected`'s wireToEdit branch) ----
+		Key::Named(NamedKey::Enter) if v.wire_edit.is_some() => crate::viewer::wire_edit::exit(v),
+		Key::Named(NamedKey::Delete) if v.stack.keyboard_target().is_none() && v.wire_edit.is_some_and(|e| e.selected_bend.is_some()) => {
+			crate::viewer::wire_edit::delete_selected_bend(v);
+		}
+		// ---- Pending wire placement: Backspace/Delete removes the last
+		// placed bend, cancelling only when none remain
+		// (`WireInstance.RemoveLastPoint`) ----
+		Key::Named(NamedKey::Backspace | NamedKey::Delete)
+			if v.pending_wire.is_some() && v.pending_wire.as_ref().is_some_and(|p| !p.bend_points.is_empty()) =>
+		{
+			if let Some(pending) = v.pending_wire.as_mut() {
+				pending.bend_points.pop();
+			}
+		}
 		// ---- Escape cascade, top-most thing first: popup state > whole
 		// overlay > pending wire/chip/selection-drag > bottom-bar flyout >
 		// leave the editor (gated by the unsaved-changes prompt while the

@@ -379,8 +379,9 @@ impl App {
 			}
 		}
 
-		// 4) A wire -- deleted immediately, no popup (see this method's
-		// doc comment). Edited-chip territory only.
+		// 4) A wire -- EDIT/DELETE popup (`ContextMenu`'s entries_wire);
+		// "Edit" enters wire edit mode (draggable bends), "Delete" removes
+		// the wire. Edited-chip territory only.
 		if can_edit {
 			// Fixed screen-pixel tolerance converted to world units, so the click target stays the
 			// same apparent size regardless of current zoom.
@@ -390,7 +391,8 @@ impl App {
 				hit_test_wire(root_desc, &v.library, world_pos, max_dist)
 			};
 			if let Some(wire_idx) = hit {
-				crate::viewer::undo::delete_wire_with_undo(v, &root_chip_name, wire_idx);
+				let items = vec![ContextMenuItem::new("Edit", ContextMenuAction::Edit), ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
+				v.context_menu = Some(ContextMenuState::new(format!("wire:{wire_idx}"), self.mouse_pos, items));
 			}
 		}
 	}

@@ -392,6 +392,7 @@ fn reset_canvas_interaction(v: &mut ViewerState) {
 	v.pending_wire = None;
 	v.pending_place.clear();
 	crate::viewer::chip_interaction::cancel_all(v);
+	crate::viewer::wire_edit::exit(v);
 }
 
 /// Discards whatever unsaved edits this session made to whichever chip

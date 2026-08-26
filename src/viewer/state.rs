@@ -151,6 +151,16 @@ pub(crate) struct PinEditState {
 	pub(crate) colour: crate::description::Color,
 }
 
+/// Working state for wire edit mode (see [`viewer::wire_edit`]): which of
+/// the current root chip's wires is being edited, plus which of its bend
+/// points (an index into `WireDescription::points`) is selected for
+/// dragging/deletion. `None` = not in edit mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WireEditState {
+	pub(crate) wire_index: usize,
+	pub(crate) selected_bend: Option<usize>,
+}
+
 /// What [`Overlay::UnsavedChanges`]'s Continue button should do once the
 /// player confirms walking away from the current chip's unsaved edits --
 /// this port's stand-in for `UnsavedChangesPopup`'s stored
@@ -348,6 +358,12 @@ pub(crate) struct ViewerState {
 	/// [`chip_interaction::CanvasInteraction`].
 	pub(crate) canvas_interaction: chip_interaction::CanvasInteraction,
 
+	/// Wire currently being edited in wire edit mode (bends draggable),
+	/// if any -- see [`viewer::wire_edit`] and [`WireEditState`]. Cleared
+	/// wherever the root chip changes, like every other index-bearing
+	/// draft.
+	pub(crate) wire_edit: Option<WireEditState>,
+
 	/// Chips being viewed in view-only mode, stacked above the edited
 	/// chip (`Project.chipViewStack`; empty = editing normally). See
 	/// [`ViewedChip`] and [`ViewerState::can_edit_viewed_chip`].
@@ -414,6 +430,7 @@ impl ViewerState {
 			pending_place: Vec::new(),
 			selected_ids: Vec::new(),
 			canvas_interaction: Default::default(),
+			wire_edit: None,
 			view_stack: Vec::new(),
 			undo: Default::default(),
 		};

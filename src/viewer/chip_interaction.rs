@@ -52,6 +52,10 @@ pub(crate) enum CanvasInteraction {
 	MovingSelection { anchor: Vec2, originals: Vec<(i32, Vec2)> },
 	/// Rubber-band selecting from a fixed world-space corner to the cursor.
 	SelectionBox { start: Vec2 },
+	/// Dragging one of the edited wire's bend points (wire edit mode's
+	/// `isMovingWireEditPoint`): the bend follows the cursor live; commit
+	/// records a wire-list undo entry, cancel restores `original`.
+	WireBendDrag { wire_index: usize, bend_index: usize, original: Vec2 },
 }
 
 /// How much bigger than its component the faint selection rectangle is
@@ -154,6 +158,12 @@ pub(crate) fn update_move_to_cursor(v: &mut ViewerState, cursor_world: Vec2) {
 			sub.position = *original + delta;
 		}
 	}
+
+	// A carried wire-edit bend follows the cursor too (its own
+	// snap/straighten rules live in `wire_edit::update_drag`).
+	if let CanvasInteraction::WireBendDrag { .. } = v.canvas_interaction {
+		crate::viewer::wire_edit::update_drag(v, cursor_world);
+	}
 }
 
 /// Finishes whatever the current left-press drag became: commits (or
@@ -183,6 +193,12 @@ pub(crate) fn handle_canvas_release(v: &mut ViewerState, cursor_world: Vec2) {
 			// clears it), mirroring `FinishMovingElements`.
 		}
 		CanvasInteraction::SelectionBox { start } => finish_selection_box(v, start, cursor_world),
+		CanvasInteraction::WireBendDrag { wire_index, bend_index, original } => {
+			// A real drag commits as one wire-list undo entry; a plain
+			// click on a handle snapshots equal lists and records nothing
+			// (see `record_wire_list_edit_with`).
+			crate::viewer::wire_edit::commit_drag(v, wire_index, bend_index, original);
+		}
 		CanvasInteraction::None => {}
 	}
 	v.canvas_interaction = CanvasInteraction::None;
@@ -192,6 +208,16 @@ pub(crate) fn handle_canvas_release(v: &mut ViewerState, cursor_world: Vec2) {
 /// state entirely -- the shared "Escape / right-click / new pickup" reset.
 pub(crate) fn cancel_all(v: &mut ViewerState) {
 	revert_move(v);
+	// A carried wire-edit bend goes back to where it was grabbed; edit
+	// mode itself stays on (`CancelEverything` doesn't exit it either).
+	if let CanvasInteraction::WireBendDrag { wire_index, bend_index, original } = v.canvas_interaction {
+		let root_chip_name = v.root_chip_name.clone();
+		if let Some(wire) = v.library.get_mut(&root_chip_name).wires.get_mut(wire_index) {
+			if let Some(point) = wire.points.get_mut(bend_index) {
+				*point = original;
+			}
+		}
+	}
 	v.canvas_interaction = CanvasInteraction::None;
 	v.selected_ids.clear();
 }

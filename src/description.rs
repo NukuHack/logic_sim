@@ -606,7 +606,7 @@ impl ChipDescription {
 
 /// Lookup table of all known chip descriptions (builtin + custom), keyed by
 /// case-insensitive name. Mirrors DLS.Game.ChipLibrary, minus editor concerns.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ChipLibrary {
 	by_name: std::collections::HashMap<String, ChipDescription>,
 }

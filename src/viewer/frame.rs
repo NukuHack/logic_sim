@@ -12,7 +12,7 @@
 use crate::render::camera::Camera;
 use crate::render::context_menu;
 use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
-use crate::render::layout::{force_straight_line, snap_to_grid_centred};
+use crate::render::layout::{self, force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
 use crate::render::scene::{bounding_box, build_grid, build_scene, build_scene_with_spans, fade_component, AllLow, SceneGeometry, SimulatorPinState};
 use crate::render::theme;
@@ -266,6 +266,16 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 			end = force_straight_line(prev_point, end);
 		}
 		draw_pending_wire_preview(&mut scene_geo, pending, end);
+	}
+	// Wire edit mode: the edited wire glows in the pin-highlight colour
+	// and each of its bends gets a handle circle (the selected one white).
+	if let Some((_, verts)) = crate::viewer::wire_edit::edited_wire_vertices(v) {
+		scene_geo.add_polyline(&verts, layout::WIRE_THICKNESS * 2.0, theme::PIN_HIGHLIGHT_COL);
+		let selected = v.wire_edit.and_then(|e| e.selected_bend);
+		for (i, point) in verts.iter().enumerate().skip(1).take(verts.len().saturating_sub(2)) {
+			let colour = if selected.is_some_and(|b| b + 1 == i) { [1.0; 4] } else { theme::PIN_HIGHLIGHT_COL };
+			scene_geo.add_circle(*point, layout::WIRE_THICKNESS * 1.8, colour, 12);
+		}
 	}
 	if !v.pending_place.is_empty() {
 		let ghost = build_pending_place_scene(&v.library, &v.pending_place, hover_world_pos, v.should_snap_to_grid());

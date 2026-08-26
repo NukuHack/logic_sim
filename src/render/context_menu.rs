@@ -13,6 +13,8 @@ pub use crate::render::menu_ui::to_world;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextMenuAction {
 	Configure,
+	/// Enter wire edit mode on the target wire (`EnterWireEditMode`).
+	Edit,
 	Delete,
 	Label,
 	Flip,

@@ -3,12 +3,12 @@
 //! drawn centrelines (for tapping new wires on) and deleting one wire
 //! without orphaning anything that taps onto it.
 
-use crate::description::{ChipDescription, Color, WireConnectionType};
+use crate::description::{ChipDescription, ChipLibrary, Color, WireConnectionType, WireDescription};
 use crate::render::foundation::{offset_polyline, SceneGeometry};
 use crate::render::layout;
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_colour};
-use crate::render::scene::placed::PlacedSubChip;
+use crate::render::scene::placed::{place_sub_chips, PlacedSubChip};
 use crate::render::scene::wire_endpoints::{WireCtx, WirePointCache};
 use crate::render::theme;
 use crate::structs::Vec2;
@@ -98,26 +98,74 @@ pub(crate) fn draw_wires(
 	}
 }
 
-/// Removes wire `index` from `chip.wires` -- deliberately just that one
-/// entry (the "shortest possible section": a single `WireDescription`,
-/// which may be only one tap/branch of a larger fan-out or tap-chain),
-/// not e.g. every wire sharing its source pin. Any *other* wire that was
-/// tapping onto the removed one (`connection_type != ToPins` and
-/// `connected_wire_index == index`) would otherwise be left pointing at
-/// a dangling/wrong index, so those are removed too (recursively, since
-/// a wire can itself be tapped by further wires) -- there's no sensible
-/// position left to resolve them to once their anchor is gone. Every
-/// remaining wire's `connected_wire_index` is then shifted down to
-/// account for removed indices, so the rest of the tap graph stays
-/// intact. Returns the number of wires actually removed (1 + however
-/// many dependent taps cascaded).
-pub fn delete_wire(chip: &mut ChipDescription, index: usize) -> usize {
+/// Removes wire `index` from `chip.wires`, mirroring
+/// `DevChipInstance.DeleteWire`'s two very different cases:
+///
+/// - **bus wire**: everything hanging off the bus origin's pins dies with
+///   it -- the wire itself, every wire tapping onto it (transitively),
+///   and every wire wired into either of the origin's pins;
+/// - **normal wire**: wires tapping onto it are *detached, not deleted*
+///   (`WireInstance.RemoveConnectionDependency`) -- each inherits the
+///   removed wire's route up to their attachment point plus its electrical
+///   connection, so fan-outs survive the loss of their anchor.
+///
+/// Every remaining wire's `connected_wire_index` is shifted so the rest of
+/// the tap graph stays intact. Returns the number of wires removed.
+pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibrary) -> usize {
 	if index >= chip.wires.len() {
 		return 0;
 	}
 
-	// Collect every index that must go: `index` itself, plus (transitively)
-	// any wire tapping onto one already marked for removal.
+	let is_bus = crate::viewer::bus_wiring::is_bus_wire(chip, library, &chip.wires[index]);
+
+	// World-space polyline of the doomed wire (endpoints resolved exactly
+	// the way drawing resolves them), needed to re-route detached tappers.
+	let anchor_world = if is_bus {
+		Vec::new()
+	} else {
+		let chip_snapshot = chip.clone();
+		let placed = place_sub_chips(&chip_snapshot, library);
+		let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+		let mut cache: WirePointCache = HashMap::new();
+		let ctx = WireCtx { chip: &chip_snapshot, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip_snapshot.wires };
+		let src = ctx.endpoint(index, false, &mut cache, 0);
+		let dst = ctx.endpoint(index, true, &mut cache, 0);
+		let mut world = Vec::with_capacity(chip.wires[index].points.len() + 2);
+		world.push(src.or(Some(chip.wires[index].cached_source_point)).expect("endpoint fallback"));
+		world.extend_from_slice(&chip.wires[index].points);
+		world.push(dst.unwrap_or(chip.wires[index].cached_target_point));
+		world
+	};
+
+	if !is_bus {
+		let anchor = chip.wires[index].clone();
+		let dependents: Vec<usize> = chip
+			.wires
+			.iter()
+			.enumerate()
+			.filter(|(i, w)| *i != index && w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == index)
+			.map(|(i, _)| i)
+			.collect();
+		for d in dependents {
+			detach_dependent(chip, d, &anchor, &anchor_world);
+		}
+
+		chip.wires.remove(index);
+		shift_connected_indices_after_removal(chip, &[index]);
+		return 1;
+	}
+
+	// Bus-wire cascade: seed with `index` and everything attached to the
+	// origin's pins, then grow through transitive taps.
+	let origin_owner = chip.wires[index].source_pin_address.pin_owner_id;
+	let origin_pin_ids: Vec<i32> = chip
+		.sub_chips
+		.iter()
+		.find(|s| s.id == origin_owner)
+		.and_then(|s| library.try_get(&s.name))
+		.map(|d| d.input_pins.iter().chain(d.output_pins.iter()).map(|p| p.id).collect())
+		.unwrap_or_default();
+
 	let mut to_remove = vec![index];
 	loop {
 		let mut added = false;
@@ -125,7 +173,10 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize) -> usize {
 			if to_remove.contains(&i) {
 				continue;
 			}
-			if w.connection_type != WireConnectionType::ToPins && to_remove.contains(&(w.connected_wire_index as usize)) {
+			let touches_origin_pins =
+				[w.source_pin_address, w.target_pin_address].iter().any(|a| a.pin_owner_id == origin_owner && origin_pin_ids.contains(&a.pin_id));
+			let taps_removed = w.connection_type != WireConnectionType::ToPins && to_remove.contains(&(w.connected_wire_index as usize));
+			if touches_origin_pins || taps_removed {
 				to_remove.push(i);
 				added = true;
 			}
@@ -137,23 +188,77 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize) -> usize {
 	to_remove.sort_unstable();
 
 	let removed_count = to_remove.len();
-	// Remove back-to-front so earlier indices in `to_remove` stay valid.
 	for &i in to_remove.iter().rev() {
 		chip.wires.remove(i);
 	}
+	shift_connected_indices_after_removal(chip, &to_remove);
 
-	// Shift every surviving wire's `connected_wire_index` down by however
-	// many removed indices sat before it, so taps still point at the
-	// right (now-renumbered) wire.
+	removed_count
+}
+
+/// Rewires wire `d` to no longer depend on its (about-to-be-removed)
+/// anchor `anchor` whose world polyline was `anchor_world`
+/// (`RemoveConnectionDependency`, generalized to both attachment sides):
+/// the anchor's route up to/past the attachment point is folded into the
+/// dependent's own bend list, and its attached-side connection info is
+/// inherited from the anchor's corresponding side.
+fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescription, anchor_world: &[Vec2]) {
+	let seg = chip.wires[d].connected_wire_segment_index;
+
+	match chip.wires[d].connection_type {
+		WireConnectionType::ToWireSource => {
+			// Dependent's *source* sits ON the anchor -- its drawn start
+			// was the projection onto the anchor's segment while its
+			// electrical source already is the anchor's source pin. Fold
+			// the anchor's route up to the attachment into the bends
+			// (vertices 1..=seg; vertex 0 is the pin itself) so the drawn
+			// shape survives, then fall back to a plain pin connection --
+			// or, when the anchor was itself a tap, inherit its whole
+			// source-side attachment (`SourceConnectionInfo` hand-over).
+			let mut points: Vec<Vec2> = anchor_world.iter().take((seg as usize + 1).min(anchor_world.len())).skip(1).copied().collect();
+			points.push(chip.wires[d].cached_source_point);
+			points.extend_from_slice(&chip.wires[d].points);
+			let dep = &mut chip.wires[d];
+			dep.points = points;
+			if anchor.connection_type == WireConnectionType::ToWireSource {
+				dep.connected_wire_index = anchor.connected_wire_index;
+				dep.connected_wire_segment_index = anchor.connected_wire_segment_index;
+				dep.cached_source_point = anchor.cached_source_point;
+			} else {
+				dep.connection_type = WireConnectionType::ToPins;
+				dep.connected_wire_index = 0;
+				dep.connected_wire_segment_index = 0;
+				dep.cached_source_point = Vec2::ZERO;
+			}
+		}
+		WireConnectionType::ToWireTarget => {
+			// Dependent's *target* sits ON the anchor -- purely a drawing
+			// attachment (its electrical endpoints are fully its own).
+			// Freeze the attachment point as an ordinary bend and draw
+			// straight to the real target pin from now on.
+			let mut points = chip.wires[d].points.clone();
+			points.push(chip.wires[d].cached_target_point);
+			let dep = &mut chip.wires[d];
+			dep.points = points;
+			dep.connection_type = WireConnectionType::ToPins;
+			dep.connected_wire_index = 0;
+			dep.connected_wire_segment_index = 0;
+			dep.cached_target_point = Vec2::ZERO;
+		}
+		WireConnectionType::ToPins => {}
+	}
+}
+
+/// Adjusts every surviving wire's `connected_wire_index` down by however
+/// many `removed` indices sat below it.
+fn shift_connected_indices_after_removal(chip: &mut ChipDescription, removed: &[usize]) {
 	for w in chip.wires.iter_mut() {
 		if w.connection_type == WireConnectionType::ToPins {
 			continue;
 		}
-		let shift = to_remove.iter().filter(|&&removed| (removed as i32) < w.connected_wire_index).count() as i32;
+		let shift = removed.iter().filter(|&&r| (r as i32) < w.connected_wire_index).count() as i32;
 		w.connected_wire_index -= shift;
 	}
-
-	removed_count
 }
 
 #[cfg(test)]
@@ -288,14 +393,81 @@ mod tests {
 		source_tap.points = vec![Vec2::new(1.0, 1.0)];
 		chip.wires.push(source_tap);
 		// wire 2: taps onto wire 0 from its TARGET side
-		chip.wires.push(WireDescription::new_tapped_target(PinAddress::new(3, 0), PinAddress::new(2, 1), 0, 0, Vec2::ZERO));
+		let mut target_tap = WireDescription::new_tapped_target(PinAddress::new(3, 0), PinAddress::new(2, 1), 0, 0, Vec2::ZERO);
+		target_tap.points = vec![Vec2::new(-1.0, -1.0)];
+		chip.wires.push(target_tap);
 		// wire 3: independent pin-to-pin wire
 		chip.wires.push(WireDescription::new(PinAddress::new(3, 0), PinAddress::new(3, 1)));
 
-		delete_wire(&mut chip, 0);
+		let mut library = ChipLibrary::new();
+		library.add(nand_desc());
 
-		assert_eq!(chip.wires.len(), 1, "both tappers go with their anchor");
-		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(3, 0), "the independent survivor stays");
-		assert_eq!(chip.wires[0].connection_type, WireConnectionType::ToPins);
+		delete_wire(&mut chip, 0, &library);
+
+		// Normal-wire deletion detaches rather than cascades: both tappers
+		// survive, re-anchored onto the deleted wire's own endpoints.
+		assert_eq!(chip.wires.len(), 3, "anchor gone, both re-anchored survivors + the independent wire remain");
+
+		let survivor_source_tap = chip.wires.iter().find(|w| w.target_pin_address == PinAddress::new(3, 1)).expect("source tap survives");
+		assert_eq!(survivor_source_tap.source_pin_address, PinAddress::new(1, 0), "inherits the anchor's source pin");
+		assert_eq!(survivor_source_tap.connection_type, WireConnectionType::ToPins, "plain pin connection after detach");
+		assert!(!survivor_source_tap.points.is_empty(), "the anchor's route is folded into the bends");
+
+		let survivor_target_tap = chip.wires.iter().find(|w| w.source_pin_address == PinAddress::new(3, 0)).expect("target tap survives");
+		assert_eq!(survivor_target_tap.target_pin_address, PinAddress::new(2, 1), "inherits the anchor's target pin");
+		assert_eq!(survivor_target_tap.connection_type, WireConnectionType::ToPins);
+	}
+
+	/// Deleting one half of a linked bus pair takes the whole origin net
+	/// with it: wires touching the origin's pins die together.
+	#[test]
+	fn delete_bus_wire_cascades_across_the_origin_net() {
+		use crate::viewer::bus_wiring;
+
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+
+		let mut chip = ChipDescription::new("BUS_NET", ChipType::Custom);
+		for id in [10, 11] {
+			chip.sub_chips.push(SubChipDescription {
+				name: "NAND".into(),
+				id,
+				internal_data: None,
+				position: Vec2::ZERO,
+				label: None,
+				pin_colour_info: vec![],
+			});
+		}
+		// Linked bus pair at ids 20 (origin) / 21 (terminus).
+		chip.sub_chips.push(SubChipDescription {
+			name: "BUS-4".into(),
+			id: 20,
+			internal_data: Some(vec![21]),
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		chip.sub_chips.push(SubChipDescription {
+			name: "BUS-TERMINUS-4".into(),
+			id: 21,
+			internal_data: Some(vec![20]),
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+
+		// The bus wire itself (origin OUT pin 1 -> terminus IN pin 0)...
+		let bus_wire = WireDescription::new(PinAddress::new(20, 1), PinAddress::new(21, 0));
+		chip.wires.push(bus_wire.clone());
+		// ...a NAND output wired INTO the origin (merge-at-origin input)...
+		chip.wires.push(WireDescription::new(PinAddress::new(10, 2), PinAddress::new(20, 0)));
+		// ...and an unrelated wire.
+		chip.wires.push(WireDescription::new(PinAddress::new(11, 2), PinAddress::new(10, 0)));
+
+		assert!(bus_wiring::is_bus_wire(&chip, &library, &bus_wire));
+		delete_wire(&mut chip, 0, &library);
+
+		assert_eq!(chip.wires.len(), 1, "everything on the origin net goes; only the unrelated wire stays");
+		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(11, 2));
 	}
 }
