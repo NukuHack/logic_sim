@@ -121,7 +121,10 @@ pub fn calculate_min_chip_size(inputs: &[PinBitCount], outputs: &[PinBitCount], 
 		return pins_size;
 	}
 	let name_width = estimate_text_width(name, font_size);
-	Vec2::new(pins_size.x.max(name_width), pins_size.y)
+	// Half a character of padding on each side of the name label, so the
+	// text doesn't butt against the body edges.
+	let padding = font_size * AVG_CHAR_WIDTH_RATIO;
+	Vec2::new(pins_size.x.max(name_width + padding), pins_size.y)
 }
 
 /// World-space footprint enforced as a floor for `SevenSegmentDisplay`/`DisplayRgb`/`DisplayDot`

@@ -1105,7 +1105,7 @@ mod tests {
 
 		assert!(!one.triangles.is_empty());
 		assert_eq!(two.triangles.len(), one.triangles.len() * 2, "each carried entry contributes its own ghost geometry");
-		assert!(one.triangles.iter().all(|v| v.pos.x < 0.4), "the single ghost hugs the cursor");
-		assert!(two.triangles.iter().any(|v| v.pos.x > 3.7), "the second entry's ghost sits at cursor + its own offset");
+		assert!(one.triangles.iter().all(|v| v.pos.x < 0.5), "the single ghost hugs the cursor");
+		assert!(two.triangles.iter().any(|v| v.pos.x > 3.5), "the second entry's ghost sits at cursor + its own offset");
 	}
 }
