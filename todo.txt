@@ -1,0 +1,58 @@
+TODO LIST:
+
+if i connect a wire from the "output" to a wire it will connect the wire visually from the source wire's input - to the wire (where i clicked) so it's insainly wrong
+
+if i "delete-part" of the wire that has wires that go out from it then tey will connect to random other wires instead of being deleted
+
+make the number key work for the Key component (rn only works for a-z)
+
+- Popups buttons overflow: some popups (example: NewProject) have buttons
+  that are unaligned (some do even flow out from the container).
+
+- LED color picker config: LEDs should have a colour picker similar to
+  inputs (pre-defined palette). Currently the LED's `Configure` row may
+  not expose a colour swatch.
+
+- Duplicate wire alpha during placement: while dragging duplicated
+  components, wires connecting them should be visible at the same alpha
+  as the component ghosts.
+
+- Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
+	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it it should be constant on (no need for also hover it)
+
+make everything inside costumize a dragging stuff, so the displays and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
+
+
+FUTURE PLANS (can be ignored now) :
+
+if i create e new chip (ctrl n) and i use save on it (ctrl s) it show us as the "save as | rename" not as "save" making it not starred if i do rename - sine i obv. don't want to save my custom chip as "New Chip <n>"
+
+make sure opening a new chip (ctrl+n) always opens "New Chip" if it is not in the library already
+
+going into edit mode should make the entire wire network in edit mode, so everything that the wire is connected to
+
+separate the rendering from logic (rn lagging logic laggs the ui too)
+
+- CanCompleteWireConnection conditional on prefs: the wire-completion
+  check should only gate on a user-facing pref (default yes). Currently
+  the logic is always-on and not exposed in the preferences UI.
+
+- Ctrl+right-click drag delete: shift+rightclick should delete
+  components while dragging, recording all deletions as a single undo
+  entry. Currently right-click only acts on the single point under the
+  cursor. Requires: tracking a "delete-drag" interaction, hit-testing
+  components along the drag path, batching undo records.
+
+
+speedup : 
+add a checkbox into the customization menu (default off) like "make lut"
+add an optional lut in every circuit (only in memory), and in simulation just do an "is_some() then use lookup" - important use key, and values as more compressed variables
+	rn even one bit of value is 16 bit (so it's a really big lut uselessly)
+add a pattern maching or something like that to the customization menu, that would make it so some pre-defined lookup tables mach the lut generated lut by the circuit
+	so it would use real math in the code instead of lut : like 8 bit adder would be 2x8+1 bit in, 8+1 bit out so a lot, but addition with pure math is insainly fast
+
+add components or some form of input that can run rust code (like toggling a setting with your own circuits)
+
+nicer documentation : in game features, keybinds, maybe some educational stuff like how to use x-y, or maybe to help make complex circuits (or atleast links to real help)
+
+maybe a custom "View" for a nand with transistors, grounding and such (just 4 fun)

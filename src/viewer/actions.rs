@@ -211,6 +211,8 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		}
 		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
 		EditorAction::ExitViewedChip => v.return_to_previous_viewed_chip(),
+		EditorAction::LedColourConfirm => todo!(),
+		EditorAction::LedColourSetColour(_) => todo!(),
 	}
 }
 

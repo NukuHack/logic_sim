@@ -179,6 +179,12 @@ pub enum EditorAction {
 	/// (an index into `theme::COLORS`, matching `description::Color`'s
 	/// discriminants).
 	PinEditSetColour(usize),
+	/// LED colour picker: confirm the chosen colour and write it onto the
+	/// LED component's `internal_data[0]`.
+	LedColourConfirm,
+	/// LED colour picker: set the draft colour to palette swatch `usize`
+	/// (an index into `theme::COLORS`).
+	LedColourSetColour(usize),
 	/// Unsaved-changes popup (`UnsavedChangesPopup`): the player chose to
 	/// walk away from the current chip's unsaved edits -- run whichever
 	/// action originally opened the popup (see
@@ -1296,6 +1302,50 @@ pub fn build_pin_edit_popup(
 	let name_len = name.trim().chars().count();
 	let confirm_enabled = name_len > 0 && name_len <= MAX_PIN_NAME_LENGTH;
 	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0).clamp_to(panel_rect), "Confirm", EditorAction::ConfirmPinEdit, confirm_enabled);
+	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
+
+	finish(frame, ui)
+}
+
+// ---------------------------------------------------------------------
+// LED colour picker (`LedColourState`)
+// ---------------------------------------------------------------------
+
+pub const LED_COLOUR_SWATCH_H: f32 = 26.0;
+
+/// Builds the LED colour picker popup: palette swatches to pick the
+/// LED's tint colour, plus Confirm/Cancel. Mirrors the colour-swatch
+/// row of `build_pin_edit_popup` but without the name field or display
+/// mode options.
+pub fn build_led_colour_popup(colour_index: usize, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+	let ui = UiCtx::new(vw, vh, mouse);
+	let mut frame = EditorFrame::default();
+	let panel_w = 340.0;
+	let panel_h = 160.0;
+	let cx = vw / 2.0;
+	let cy = vh / 2.0;
+
+	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
+	panel_bg(&mut frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+
+	add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 26.0), panel_w - 40.0, "LED Colour", [1.0, 1.0, 1.0, 1.0], 20.0);
+
+	let mut y = panel_rect.y + 56.0;
+	add_label(&mut frame, ui, Vec2::new(cx, y + LED_COLOUR_SWATCH_H / 2.0), panel_w - 40.0, "Colour", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
+	y += LED_COLOUR_SWATCH_H + ROW_GAP;
+
+	let swatch_x = cx - (panel_w - 60.0) / 2.0;
+	let swatch_w = ((panel_w - 60.0) - 8.0 * (theme::COLORS.len() - 1) as f32) / theme::COLORS.len() as f32;
+	for (i, colour) in theme::COLORS.iter().enumerate() {
+		let rect = UiRect::new(swatch_x + i as f32 * (swatch_w + 8.0), y, swatch_w, LED_COLOUR_SWATCH_H);
+		add_button_coloured(&mut frame, ui, rect, "", EditorAction::LedColourSetColour(i), true, *colour);
+		if i == colour_index.min(theme::COLORS.len() - 1) {
+			frame.geometry.add_rect(ui_kit::to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
+		}
+	}
+
+	y += LED_COLOUR_SWATCH_H + ROW_GAP * 2.0;
+	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0).clamp_to(panel_rect), "Confirm", EditorAction::LedColourConfirm, true);
 	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)

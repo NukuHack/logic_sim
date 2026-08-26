@@ -1,28 +1,18 @@
-# logic_sim
+# Logic Sim
 
-A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.com/SebastianLague/Digital-Logic-Sim) — an interactive digital logic circuit simulator. Instead of Unity, this version renders with [wgpu](https://github.com/gfx-rs/wgpu)/[winit](https://github.com/rust-windowing/winit) and keeps the simulation core, save format, and on-disk layout compatible with the original game.
+A native Rust port of [Sebastian Lague's **Digital Logic Sim**](https://github.com/SebastianLague/Digital-Logic-Sim) — an interactive digital logic circuit simulator. Rendering runs on [wgpu](https://github.com/gfx-rs/wgpu)/[winit](https://github.com/rust-windowing/winit) instead of Unity, but the simulation core, save format, and on-disk project layout stay fully compatible with the original game.
 
 ## Features
 
-- **Project picker → chip viewer** in a single window: open an existing project or create a new one, then edit its chips.
-- **Built-in components**: NAND gates, clocks, pulses, tri-state buffers, RAM/ROM, bit merge/split converters, 7-segment / RGB / dot / LED displays, buses, buzzers, and keyboard-driven input chips (`KEY`, `MOD KEYS`).
-- **Buses**: placing a `BUS` chip places its linked terminus partner with it; the pair wires together like a wire passing through, other wires can tap off anywhere along a bus, and any number of inputs (and outputs) can be wired into it -- everything merges at the origin.
-- **Selection & movement**: click a component to select it (faint highlight), drag to move it (translucent while carried, snapping like placement), drag on empty canvas for a rubber-band that selects everything even partially inside it, and `Delete` removes the selection.
-- **Buzzer audio**: buzzers drive a 256-slot frequency table through a smoothed square-wave mix played on the real audio device (silently skipped when none is available).
-- **Custom chips**: save any circuit as a chip and nest it inside other circuits, just like the original.
-- **View-only chip watching** ("View" on a placed *custom* chip's right-click menu): enter its definition to watch the live simulation, with a `Viewing: a > b` bar pinned to the top of the screen and Back/Esc to pop out; builtins can't be entered, and editing stays bound to the chip you opened.
-- **Undo/redo**: placements, deletions (bus pairs included), wiring, and committed moves replay via `Ctrl+Z` / `Ctrl+Shift+Z`.
-- **Background simulation**: the circuit runs on its own thread at the project's target ticks/second, so heavy circuits no longer hitch the editor.
-- **Chip customization** (save popup → *Customize*): name placement (middle/top/hidden), body colour (palette + hex field), corner-drag resizing previewed live with the chip's own edge pins for scale, and embedded display surfaces you place, move, scale and remove right on the chip body — content clips at the chip edge, and any display that doesn't fully fit is flagged in red. Everything round-trips through the original's standard `Displays` save field.
-- **Compatible saves**: reads and writes the *same* `Projects/` folder layout as the original Unity build (see below), so projects made in either program work in both. Sample projects (GOL, Snake, ZHT90, ...) load out of the box.
-- **Editor UI stack**: library panel (`Tab`), search overlay, preferences, ROM editor, key binding, right-click context menus, wire/chip deletion, camera fit-to-view, grid toggle.
+It is the same as the original with my tweaks, and extensions  
+i made sure anything that you save in this version is compatible with the original  
 
 ## Requirements
 
 - [Rust](https://rustup.rs) (stable toolchain)
-- A GPU with Vulkan/Metal/DX12/GL support — there is no software-fallback headless mode for the app
+- A GPU with Vulkan, Metal, DX12, or GL support — there's no software-fallback or headless mode for the app itself
 
-## Building & Running
+## Building & running
 
 ```sh
 cargo run                # build and launch the app
@@ -31,32 +21,33 @@ cargo build --release    # binary lands at target/release/app
 
 Or use the all-in-one script:
 
-```sh
-./build.sh -y   # fmt + clippy + full test suite (+ Miri if available) + release build
-./build.sh -c   # same as -y but without Miri
-./build.sh -q   # unit tests only, then release build
-./build.sh -n   # just build
-```
+| Command | Runs |
+| --- | --- |
+| `./build.sh -y` | fmt + clippy + full test suite (+ Miri if available) + release build |
+| `./build.sh -c` | same as `-y`, without Miri |
+| `./build.sh -q` | unit tests only, then release build |
+| `./build.sh -n` | just build |
+| `./build.sh -r` | everything, but will run it too |
 
 ## Controls
 
 | Key | Action |
 | --- | --- |
-| `Tab` | Open/close the chip library |
+| `Ctrl+L` | Open/close the chip library |
 | `Ctrl+F` | Search |
 | `Ctrl+S` | Save current chip |
 | `Ctrl+N` | New chip |
-| `P` / `Ctrl+P` | Preferences |
-| `R` | Rebuild/restart the simulation |
-| `F` | Toggle fit-to-view camera |
-| `G` / `Ctrl+G` | Toggle grid |
+| `Ctrl+P` | Preferences |
+| `Ctrl+R` | Rebuild/restart the simulation |
+| `Ctrl+F` | Toggle fit-to-view camera |
+| `Ctrl+G` | Toggle grid |
 | `Ctrl+Space` | Pause/resume the simulation |
 | `Space` (while paused) | Advance the simulation one step |
 | `Esc` | Cancel pending action / close topmost overlay / leave viewed chip / leave editor |
-| `Delete` | Remove the display being carried in Customize |
-| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo the current chip's edit history |
+| `Delete` | Remove/Delete current selected |
+| `Ctrl+Z` / `Ctrl+Y` | Undo / redo the current chip's edit history |
 
-Mouse: middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select/drag it, drag empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress).
+**Mouse:** middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select or drag it, drag on empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress).
 
 ## Where data lives
 
@@ -76,37 +67,14 @@ Projects/<name>/Chips/*.json              # saved custom chip descriptions
 AppSettings.json                          # window/editor preferences
 ```
 
-Saved projects stamped `DLSVersion >= 2.0.0` can be opened; chips last saved by versions at or before 2.1.4 are migrated automatically on load (the pre-2.1.5 ORANGE palette-index shift and default LED colour data), and every save is re-stamped with the current version, `2.1.6`.
-
-## Project structure
-
-```
-src/
-├── sim.rs              # event-driven logic simulation over a built chip tree
-├── description.rs      # ChipDescription / PinDescription / ChipLibrary types
-├── builtins.rs         # pin layouts for every non-custom chip type
-├── json.rs             # serde models + load/save of project & chip JSON
-├── structs.rs          # shared math/utility types
-├── settings.rs         # AppSettings
-├── bin/app.rs          # thin entry point (picker → viewer)
-├── render/             # wgpu renderer, WGSL shader, camera, theme
-│   ├── foundation/     # shared geometry primitives + point-in-shape hit tests
-│   ├── scene/          # chip descriptions -> triangles (wires/pins/components/displays/grid)
-│   ├── customize_ui.rs # chip-customization workspace (save popup -> Customize)
-│   └── ...             # ui_kit, editor/menu UI, context menu, UI stack, gpu
-├── viewer/             # the frontend: editor state, canvas interaction,
-│                       #   save flows, popups, input routing, frame building
-└── save_system/        # paths, loader/saver, versioning, orchestration
-tests/                  # integration tests incl. real-project round-trips + fixtures
-build.sh                # fmt/clippy/test/build driver (see above)
-```
-
-The `logic_sim` crate doubles as a library: the simulator (`Simulator`, `SimChip`), descriptions, save system, and the whole `viewer` frontend are usable headless without a GPU — see `src/lib.rs` for the public surface and `tests/` for usage examples.
+Projects stamped `DLSVersion >= 2.0.0` can be opened. Chips last saved by versions at or before 2.1.4 are migrated automatically on load (the pre-2.1.5 ORANGE palette-index shift and default LED colour data), and every save is re-stamped with the current version, `2.1.6`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). In short: run `./build.sh -y` before opening a PR, follow `rustfmt.toml`, and keep modules documented and small.
+- [CONTRIBUTING.md](CONTRIBUTING.md). In short: run `./build.sh -y` before opening a PR, follow `rustfmt.toml`, and keep modules documented and small.  
+
+- there are alwas a lot stuff to do   
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Original Digital Logic Sim by Sebastian Lague.
+- [LICENSE](LICENSE). Original Digital Logic Sim by Sebastian Lague.

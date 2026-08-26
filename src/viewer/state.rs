@@ -36,12 +36,15 @@ pub(crate) enum Overlay {
 	/// The boundary-dev-pin edit popup (`PinEditMenu`): rename +, for
 	/// multi-bit pins, the "Decimal Display" wheel.
 	PinEdit,
+	/// The LED colour picker popup: pick a palette colour for an LED
+	/// component's tint.
+	LedColour,
 	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`).
 	UnsavedChanges,
 }
 
 impl Overlay {
-	pub(crate) fn layer_id(self) -> LayerId {
+	pub(crate) 	fn layer_id(self) -> LayerId {
 		match self {
 			Overlay::Library => LayerId::Library,
 			Overlay::Search => LayerId::Search,
@@ -52,6 +55,7 @@ impl Overlay {
 			Overlay::SaveChip => LayerId::SaveChip,
 			Overlay::CustomizeChip => LayerId::CustomizePanel,
 			Overlay::PinEdit => LayerId::PinEdit,
+			Overlay::LedColour => LayerId::LedColour,
 			Overlay::UnsavedChanges => LayerId::UnsavedChanges,
 		}
 	}
@@ -149,6 +153,16 @@ pub(crate) struct PinEditState {
 	pub(crate) pin_id: i32,
 	pub(crate) display_mode_index: usize,
 	pub(crate) colour: crate::description::Color,
+}
+
+/// Working state for the LED colour picker (`Overlay::LedColour`):
+/// which LED subchip is being configured and the draft colour index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LedColourState {
+	/// Id of the subchip within the current root chip.
+	pub(crate) component_id: i32,
+	/// Draft colour palette index (written to `internal_data[0]` on confirm).
+	pub(crate) colour_index: usize,
 }
 
 /// Working state for wire edit mode (see [`viewer::wire_edit`]): which of
@@ -263,6 +277,8 @@ pub(crate) struct ViewerState {
 	pub(crate) rom_editor: Option<RomEditorState>,
 	/// Draft state for `Overlay::PinEdit`, when open -- see [`PinEditState`].
 	pub(crate) pin_edit: Option<PinEditState>,
+	/// Draft state for `Overlay::LedColour`, when open -- see [`LedColourState`].
+	pub(crate) led_colour: Option<LedColourState>,
 	/// What `Overlay::UnsavedChanges`' Continue should resume -- see
 	/// [`PendingUnsavedAction`]'s docs. `Some` exactly while the popup is
 	/// open.
@@ -416,6 +432,7 @@ impl ViewerState {
 			key_select_purpose: Default::default(),
 			rom_editor: None,
 			pin_edit: None,
+			led_colour: None,
 			pending_unsaved_action: None,
 			exit_requested: false,
 			customize: None,
@@ -733,6 +750,8 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 		// The pin-edit draft dies with the popup, success or not (the
 		// confirm path writes its values onto the pin *before* closing).
 		Overlay::PinEdit => v.pin_edit = None,
+		// Same pattern for the LED colour picker.
+		Overlay::LedColour => v.led_colour = None,
 		Overlay::UnsavedChanges => {
 			// Cancel: the pending action is dropped with the prompt --
 			// mirroring `UnsavedChangesPopup` never firing its callback

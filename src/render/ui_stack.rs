@@ -61,6 +61,9 @@ pub enum LayerId {
 	/// The pin-edit popup (`PinEditMenu`): rename a boundary dev-pin and,
 	/// for multi-bit pins, pick its "Decimal Display" mode.
 	PinEdit,
+	/// The LED colour picker popup: pick a palette colour for an LED
+	/// component's tint.
+	LedColour,
 	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`):
 	/// gates leaving the current chip behind while it has in-memory-only
 	/// edits.
@@ -85,6 +88,7 @@ impl LayerId {
 				| LayerId::RomEditor
 				| LayerId::SaveChip
 				| LayerId::PinEdit
+				| LayerId::LedColour
 				| LayerId::UnsavedChanges
 				| LayerId::CustomizePanel
 		)

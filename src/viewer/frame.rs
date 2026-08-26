@@ -517,6 +517,7 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 		// preview layout back onto `ViewerState::customize`), so reaching
 		// this arm at all would double-build it.
 		Overlay::CustomizeChip => editor_ui::EditorFrame::default(),
+		Overlay::LedColour => todo!(),
 	}
 }
 
