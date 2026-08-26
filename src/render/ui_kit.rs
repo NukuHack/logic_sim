@@ -83,6 +83,14 @@ impl UiRect {
 	pub fn centre(&self) -> Vec2 {
 		Vec2::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
 	}
+
+	/// Clamps this rect to lie fully within `container`, shrinking the
+	/// position (not the size) so nothing sticks out.
+	pub fn clamp_to(self, container: UiRect) -> Self {
+		let x = self.x.clamp(container.x, (container.x + container.w - self.w).max(container.x));
+		let y = self.y.clamp(container.y, (container.y + container.h - self.h).max(container.y));
+		Self { x, y, w: self.w, h: self.h }
+	}
 }
 
 /// One clickable region of a [`Frame`] -- a hit-box plus the action a click on it means, in the

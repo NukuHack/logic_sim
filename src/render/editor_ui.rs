@@ -906,8 +906,8 @@ pub fn build_simple_naming_popup(title: &str, text: &str, confirm_enabled: bool,
 	let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 46.0, panel_w - 60.0, 34.0);
 	ui_kit::text_field_row(&mut frame, ui, field_rect, text, "", FONT_SIZE, 16.0);
 
-	let confirm_rect = UiRect::new(cx - 185.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0);
-	let cancel_rect = UiRect::new(cx + 5.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0);
+	let confirm_rect = UiRect::new(cx - 185.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0).clamp_to(panel_rect);
+	let cancel_rect = UiRect::new(cx + 5.0, panel_rect.y + panel_h - 46.0, 180.0, 36.0).clamp_to(panel_rect);
 	add_button(&mut frame, ui, confirm_rect, "Confirm", EditorAction::ConfirmName, confirm_enabled);
 	add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 
@@ -950,8 +950,8 @@ pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse:
 	let shown = chosen_key.map(|c| c.to_string()).unwrap_or_default();
 	add_label(&mut frame, ui, key_box.centre(), key_box.w, &shown, [1.0, 1.0, 1.0, 1.0], 27.0);
 
-	let confirm_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0);
-	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0);
+	let confirm_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0).clamp_to(panel_rect);
+	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 46.0, 160.0, 36.0).clamp_to(panel_rect);
 	add_button(&mut frame, ui, confirm_rect, "Confirm", EditorAction::ConfirmKey, chosen_key.is_some());
 	add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 
@@ -1043,8 +1043,8 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 		}
 	}
 
-	let apply_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0);
-	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0);
+	let apply_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0).clamp_to(panel_rect);
+	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0).clamp_to(panel_rect);
 	add_button(&mut frame, ui, apply_rect, "Apply", EditorAction::RomApply, true);
 	add_button(&mut frame, ui, cancel_rect, "Cancel", EditorAction::ClosePopup, true);
 
@@ -1171,11 +1171,11 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		}
 		SaveChipMode::SaveAsOrRename => {
 			let w = (panel_w - 60.0 - 24.0) / 4.0;
-			add_button(&mut frame, ui, UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0), "Cancel", EditorAction::ClosePopup, true);
+			add_button(&mut frame, ui, UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0), button_y, w, 36.0),
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0), button_y, w, 36.0).clamp_to(panel_rect),
 				"Customize",
 				EditorAction::OpenChipCustomize,
 				true,
@@ -1183,7 +1183,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0),
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0).clamp_to(panel_rect),
 				"Save As",
 				EditorAction::SaveChipSaveAs,
 				confirm_enabled,
@@ -1191,7 +1191,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 3.0, button_y, w, 36.0),
+				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 3.0, button_y, w, 36.0).clamp_to(panel_rect),
 				"Rename",
 				EditorAction::SaveChipRename,
 				confirm_enabled,
@@ -1295,8 +1295,8 @@ pub fn build_pin_edit_popup(
 
 	let name_len = name.trim().chars().count();
 	let confirm_enabled = name_len > 0 && name_len <= MAX_PIN_NAME_LENGTH;
-	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0), "Confirm", EditorAction::ConfirmPinEdit, confirm_enabled);
-	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0), "Cancel", EditorAction::ClosePopup, true);
+	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0).clamp_to(panel_rect), "Confirm", EditorAction::ConfirmPinEdit, confirm_enabled);
+	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)
 }
@@ -1335,13 +1335,13 @@ pub fn build_unsaved_changes_popup(vw: f32, vh: f32, mouse: Vec2) -> EditorFrame
 	add_button_coloured(
 		&mut frame,
 		ui,
-		UiRect::new(cx - 186.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0),
+		UiRect::new(cx - 186.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0).clamp_to(panel_rect),
 		"Continue",
 		EditorAction::UnsavedChangesConfirm,
 		true,
 		[0.6, 0.2, 0.2, 1.0],
 	);
-	add_button(&mut frame, ui, UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0), "Cancel", EditorAction::ClosePopup, true);
+	add_button(&mut frame, ui, UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)
 }
