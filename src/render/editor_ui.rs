@@ -1332,13 +1332,14 @@ pub fn build_unsaved_changes_popup(vw: f32, vh: f32, mouse: Vec2) -> EditorFrame
 		FONT_SIZE,
 	);
 
-	add_button(
+	add_button_coloured(
 		&mut frame,
 		ui,
 		UiRect::new(cx - 186.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0),
 		"Continue",
 		EditorAction::UnsavedChangesConfirm,
 		true,
+		[0.6, 0.2, 0.2, 1.0],
 	);
 	add_button(&mut frame, ui, UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0), "Cancel", EditorAction::ClosePopup, true);
 
