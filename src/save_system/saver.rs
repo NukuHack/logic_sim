@@ -4,8 +4,8 @@
 use std::io;
 use std::path::Path;
 
-use crate::description::ChipDescription;
-use crate::json::{serialize_chip_description, ProjectDescription};
+use crate::description::{ChipDescription, ChipLibrary};
+use crate::json::{serialize_chip_description_for_save, ProjectDescription};
 use crate::save_system::loader::Loader;
 use crate::save_system::paths::SavePaths;
 use crate::save_system::timestamp::now_iso8601;
@@ -52,9 +52,13 @@ impl Saver {
 		Self::save_project_description(paths, &mut desc_new)
 	}
 
-	/// Mirrors `Saver.SaveChip`.
-	pub fn save_chip(paths: &SavePaths, project_name: &str, chip_description: &ChipDescription) -> io::Result<()> {
-		let data = serialize_chip_description(chip_description).map_err(json_err)?;
+	/// Mirrors `Saver.SaveChip`: writes the chip under its own name in the
+	/// project's `Chips/` folder. Takes the owning `ChipLibrary` so placed
+	/// subchips' `OutputPinColourInfo` can be resolved to the Unity-exact
+	/// shape (per-output-pin entries; `null` for buses -- see
+	/// `json::serialize_chip_description_for_save`).
+	pub fn save_chip(paths: &SavePaths, project_name: &str, library: &ChipLibrary, chip_description: &ChipDescription) -> io::Result<()> {
+		let data = serialize_chip_description_for_save(chip_description, library).map_err(json_err)?;
 		write_to_file(&data, &chip_file_path(paths, project_name, &chip_description.name))
 	}
 

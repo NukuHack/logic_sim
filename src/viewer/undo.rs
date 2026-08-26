@@ -757,7 +757,7 @@ mod edge_case_tests {
 		library.add(ChipDescription::new("FIRST", ChipType::Custom));
 		library.add(ChipDescription::new("SECOND", ChipType::Custom));
 		for name in ["FIRST", "SECOND"] {
-			crate::Saver::save_chip(&paths, "P", &library.get(name).clone()).expect("saved");
+			crate::Saver::save_chip(&paths, "P", &library, &library.get(name).clone()).expect("saved");
 		}
 		let mut v = ViewerState::new("P", library, "FIRST".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 

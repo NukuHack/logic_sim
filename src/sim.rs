@@ -877,9 +877,10 @@ fn build_internal_state(chip_type: ChipType, override_state: Option<&[u32]>) -> 
 		}
 		// `[duration, ticks_remaining, input_old]`, all three indexed unconditionally by
 		// `process_builtin_chip`'s `Pulse` arm -- a shorter (or absent) `override_state` needs
-		// padding out to that length rather than being used as-is.
+		// padding out to that length rather than being used as-is. 50 ticks matches the
+		// original's fresh-placement default (`DescriptionCreator.CreateDefaultInstanceData`).
 		ChipType::Pulse => {
-			const DEFAULT: [u32; 3] = [200, 0, 0];
+			const DEFAULT: [u32; 3] = [50, 0, 0];
 			match override_state {
 				Some(saved) if saved.len() >= DEFAULT.len() => saved.to_vec(),
 				Some(saved) => {

@@ -207,6 +207,13 @@ pub(crate) fn handle_preview_click(v: &mut ViewerState) {
 	}
 }
 
+/// Whether a customize-workspace grab/resize/place is in flight (what
+/// makes a right-click count as "cancelled something" in the event
+/// handler's consume logic).
+pub(crate) fn is_interacting(v: &ViewerState) -> bool {
+	v.customize.as_ref().is_some_and(|c| c.interaction != CustomizeInteraction::None)
+}
+
 /// Escape/right-click mid-interaction: put things back. Moves restore
 /// their pre-grab position, scales their pre-grab size; ghosts vanish.
 pub(crate) fn cancel_interaction(v: &mut ViewerState) {

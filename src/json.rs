@@ -226,7 +226,26 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 /// with sensible defaults, so round-tripping through this loader will lose
 /// layout info -- fine for the simulation core, not yet a full save-system
 /// replacement for the editor.
+///
+/// Library-free: each placed subchip's `OutputPinColourInfo` is emitted as
+/// its stored override list (empty array when none). Saving a *project*
+/// chip should prefer [`serialize_chip_description_for_save`], which
+/// resolves the Unity-exact shape against the chip library instead.
 pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<String> {
+	serialize_chip_description_impl(desc, None)
+}
+
+/// Project-aware twin of [`serialize_chip_description`] (`DescriptionCreator.CreateSubChipDescription`):
+/// every non-bus placed subchip saves one `OutputPinColourInfo` entry per
+/// output pin -- its per-instance override where one exists, else the
+/// library description's default colour -- and bus subchips save `null`
+/// (their pin colours follow live wire state, so writing them would make
+/// Unity flag phantom unsaved changes on open).
+pub fn serialize_chip_description_for_save(desc: &ChipDescription, library: &ChipLibrary) -> serde_json::Result<String> {
+	serialize_chip_description_impl(desc, Some(library))
+}
+
+fn serialize_chip_description_impl(desc: &ChipDescription, library: Option<&ChipLibrary>) -> serde_json::Result<String> {
 	let raw = JsonChipDescription {
 		// Every save is stamped with the running build's version, mirroring
 		// `DescriptionCreator.CreateChipDescription`'s `DLSVersion =
@@ -270,11 +289,9 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 			.map(|s| JsonSubChipDescription {
 				name: s.name.clone(),
 				id: s.id,
-				label: s.label.clone(),
+				label: Some(s.label.clone().unwrap_or_default()),
 				position: s.position,
-				pin_colour_info: Some(
-					s.pin_colour_info.iter().map(|(pin_id, colour)| JsonPinColourInfo { pin_colour: *colour, pin_id: *pin_id }).collect(),
-				),
+				pin_colour_info: json_pin_colour_info(s, library),
 				internal_data: s.internal_data.clone(),
 			})
 			.collect(),
@@ -306,6 +323,36 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 	// The original C# implementation pretty-prints; compact output is used here instead to keep file size down.
 
 	serde_json::to_string(&raw)
+}
+
+/// The on-disk `OutputPinColourInfo` for placed subchip `s`:
+///
+/// - with no library context (or an unresolvable chip name): the stored
+///   override list as-is;
+/// - a bus subchip: `None` -- serialized as JSON `null`, exactly what
+///   `DescriptionCreator.CreateSubChipDescription` writes (a bus' pin
+///   colours follow live wire state, so persisting them would make Unity's
+///   `UnsavedChangeDetector` flag phantom edits right after opening);
+/// - anything else: one entry per output pin of the library description --
+///   the subchip's own override where one exists, else that pin's default
+///   colour.
+fn json_pin_colour_info(s: &SubChipDescription, library: Option<&ChipLibrary>) -> Option<Vec<JsonPinColourInfo>> {
+	let stored = || s.pin_colour_info.iter().map(|(pin_id, colour)| JsonPinColourInfo { pin_colour: *colour, pin_id: *pin_id }).collect::<Vec<_>>();
+	let Some(library) = library else { return Some(stored()) };
+	let Some(chip_desc) = library.try_get(&s.name) else { return Some(stored()) };
+	if chip_desc.chip_type.is_bus_type() {
+		return None;
+	}
+	Some(
+		chip_desc
+			.output_pins
+			.iter()
+			.map(|pin| {
+				let colour = s.pin_colour_info.iter().find(|(id, _)| *id == pin.id).map(|(_, c)| *c).unwrap_or(pin.colour);
+				JsonPinColourInfo { pin_colour: colour, pin_id: pin.id }
+			})
+			.collect(),
+	)
 }
 
 /// Tolerance (absolute difference) within which two JSON numbers count as

@@ -107,12 +107,23 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 
 	if let Some(hit) = scene::hit_test_any_pin(root_desc, &placed, world_pos) {
 		let pending_ref = v.pending_wire.as_ref().expect("caller only calls this with a pending wire");
-		/*		// optional : if you want to only connect same bitcount wires
-			   if pending.bit_count != hit.bit_count {
-				   *status = Some("Can't connect different bitcounts".to_string());
-				   return;
-			   }
-		*/
+		// Widths must match -- except where exactly one end is a bus chip:
+		// the bus is the port's merge-everything node, so any-width pins may
+		// drive or tap it (its origin merges bitwise). Bus-to-bus and
+		// plain-pin-to-plain-pin completions keep the original's strict rule
+		// (`CanCompleteWireConnection`'s `endPin.bitCount != startPin.bitCount`):
+		// a mismatched pair would silently change one side's width.
+		let start_is_bus = match pending_ref.start {
+			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
+				bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type())
+			}
+			PendingWireEnd::WireTap { .. } => false,
+		};
+		let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(|t| t.is_bus_type());
+		if pending_ref.bit_count != hit.bit_count && start_is_bus == end_is_bus {
+			*status = Some(format!("Can't connect {}-bit to {}-bit pins", pending_ref.bit_count.to_int(), hit.bit_count.to_int()));
+			return;
+		}
 		// Any bus-family chip may wire to any other bus-family chip (see
 		// `resolve_bus_pair_completion`): the completing click converts the
 		// second half to the complementary origin/terminus type -- keeping
@@ -205,6 +216,14 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		let pending = v.pending_wire.as_ref().expect("checked above");
 		let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else { unreachable!("branch guarantees a pin start") };
 		if let Some(tap) = on_wire {
+			// Same width rule as the pin branch: a bus wire absorbs any
+			// width (its origin merges bitwise), any other tapped wire must
+			// match the pending placement's width exactly.
+			let wire_is_bus = bus_wiring::is_bus_wire(root_desc, &v.library, &root_desc.wires[tap.wire_index]);
+			if pending.bit_count != tap.bit_count && !wire_is_bus {
+				*status = Some(format!("Can't connect {}-bit to {}-bit wires", pending.bit_count.to_int(), tap.bit_count.to_int()));
+				return;
+			}
 			match bus_wiring::resolve_completion_on_wire(root_desc, &v.library, tap.wire_index, false, pending.start.is_source(), owner_id, pin_id) {
 				Ok((source, target)) => {
 					let pending = v.pending_wire.take().expect("checked above");
@@ -277,13 +296,14 @@ fn default_internal_data(chip_type: Option<ChipType>) -> Option<Vec<u32>> {
 		// `ROM_WORD_COUNT`-length contents up front, not just whatever's been configured so far --
 		// an absent/short one is exactly what caused the placement-time panic this fixes.
 		Some(ChipType::Rom256x16) => Some(vec![0u32; crate::render::editor_ui::ROM_WORD_COUNT]),
-		// Bound to 'A' by default, so a freshly-placed KEY chip responds to a keypress right away
+		// Bound to 'K' by default (`DescriptionCreator.CreateDefaultInstanceData`),
+		// so a freshly-placed KEY chip responds to a keypress right away
 		// instead of silently sitting bound to the (unpressable) null character until configured.
-		Some(ChipType::Key) => Some(vec![b'A' as u32]),
+		Some(ChipType::Key) => Some(vec![b'K' as u32]),
 		// [duration, ticks_remaining, input_old] -- see `sim::process_builtin_chip`'s `Pulse` arm,
-		// which indexes all three unconditionally. 200 simulation ticks is a short but visible
-		// default pulse length; the other two are just-started runtime state, always zero.
-		Some(ChipType::Pulse) => Some(vec![200, 0, 0]),
+		// which indexes all three unconditionally. 50 simulation ticks matches the original's
+		// fresh-placement pulse width; the other two are just-started runtime state, always zero.
+		Some(ChipType::Pulse) => Some(vec![50, 0, 0]),
 		_ => None,
 	}
 }
@@ -615,8 +635,8 @@ mod tests {
 
 	#[test]
 	fn default_internal_data_covers_every_configurable_builtin() {
-		assert_eq!(default_internal_data(Some(ChipType::Key)), Some(vec![b'A' as u32]));
-		assert_eq!(default_internal_data(Some(ChipType::Pulse)), Some(vec![200, 0, 0]));
+		assert_eq!(default_internal_data(Some(ChipType::Key)), Some(vec![b'K' as u32]));
+		assert_eq!(default_internal_data(Some(ChipType::Pulse)), Some(vec![50, 0, 0]));
 		let rom = default_internal_data(Some(ChipType::Rom256x16)).expect("ROM needs its full contents buffer");
 		assert_eq!(rom.len(), crate::render::editor_ui::ROM_WORD_COUNT);
 		assert!(rom.iter().all(|&w| w == 0));
@@ -871,6 +891,51 @@ mod tests {
 		chip_interaction::start_placing(v, "NAND");
 		try_place_pending_components(v, pos, &mut None);
 		v.library.get("ROOT").sub_chips.last().expect("placed").id
+	}
+
+	/// `CanCompleteWireConnection`'s width rule: a 1-bit NAND output may
+	/// not drive an 8-bit ROM address pin -- the click reports why and the
+	/// placement stays active for a retry.
+	#[test]
+	fn mismatched_width_pin_clicks_are_rejected() {
+		let mut v = viewer_with_builtins();
+		chip_interaction::start_placing(&mut v, "ROM 256\u{d7}16");
+		try_place_pending_components(&mut v, Vec2::new(30.0, 0.0), &mut None);
+		let rom_id = v.library.get("ROOT").sub_chips.last().expect("placed").id;
+		let nand_id = place_nand_for_test(&mut v, Vec2::ZERO);
+
+		let mut status = None;
+		let nand_out = pin_pos(&v, nand_id, 2);
+		let rom_address = pin_pos(&v, rom_id, 0);
+		handle_canvas_click(&mut v, nand_out, &mut status); // NAND OUT, 1 bit
+		assert!(v.pending_wire.is_some());
+		handle_canvas_click(&mut v, rom_address, &mut status); // ROM ADDRESS, 8 bits
+
+		assert!(status.as_deref().is_some_and(|m| m.contains("bit")), "mismatched widths report why: {status:?}");
+		assert!(v.pending_wire.is_some(), "the placement stays active");
+		assert!(v.library.get("ROOT").wires.is_empty());
+	}
+
+	/// The bus exception: a plain 1-bit pin may drive a bus origin's input
+	/// (the merge-everything rule this port documents), but two bus chips
+	/// of different widths still refuse each other.
+	#[test]
+	fn bus_absorbs_any_width_but_bus_to_bus_still_needs_matching() {
+		let mut v = viewer_with_builtins();
+		chip_interaction::start_placing(&mut v, "BUS-4");
+		try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
+		let ids: Vec<i32> = v.library.get("ROOT").sub_chips.iter().map(|s| s.id).collect();
+		let terminus = ids[1];
+		let nand_id = place_nand_for_test(&mut v, Vec2::new(20.0, 0.0));
+
+		// 1-bit NAND OUT -> BUS-4 terminus IN: allowed despite the width gap.
+		let mut status = None;
+		let nand_out = pin_pos(&v, nand_id, 2);
+		let terminus_in = pin_pos(&v, terminus, 0);
+		handle_canvas_click(&mut v, nand_out, &mut status);
+		handle_canvas_click(&mut v, terminus_in, &mut status);
+		assert_eq!(status, None, "any-width pin may wire into a bus");
+		assert_eq!(v.library.get("ROOT").wires.len(), 1);
 	}
 
 	fn sub_position(v: &ViewerState, id: i32) -> Vec2 {

@@ -1069,3 +1069,73 @@ fn chip_serialization_round_trips_are_always_equivalent() {
 	edited.input_pins[0].name = "CHANGED".into();
 	assert!(!is_equivalent_json(&first, &serialize_chip_description(&edited).unwrap()), "a real field change must read as an edit");
 }
+
+#[test]
+fn save_serialization_writes_unity_exact_output_pin_colour_info() {
+	let mut library = ChipLibrary::new();
+	logic_sim::register_all_builtins(&mut library);
+
+	let mut chip = ChipDescription::new("PARENT", ChipType::Custom);
+	// A bus pair (must serialize `OutputPinColourInfo: null`) and a NAND
+	// (must serialize one entry per output pin, at the description's
+	// default colour).
+	chip.sub_chips.push(SubChipDescription {
+		name: "BUS-4".into(),
+		id: 1,
+		internal_data: Some(vec![2]),
+		position: Vec2::ZERO,
+		label: None,
+		pin_colour_info: vec![],
+	});
+	chip.sub_chips.push(SubChipDescription {
+		name: "BUS-TERMINUS-4".into(),
+		id: 2,
+		internal_data: Some(vec![1]),
+		position: Vec2::new(4.0, 0.0),
+		label: None,
+		pin_colour_info: vec![],
+	});
+	chip.sub_chips.push(SubChipDescription {
+		name: "NAND".into(),
+		id: 3,
+		internal_data: None,
+		position: Vec2::new(8.0, 0.0),
+		label: None,
+		pin_colour_info: vec![],
+	});
+	// A per-instance override on the NAND's output pin must win.
+	chip.sub_chips[2].pin_colour_info.push((2, Color::Green));
+
+	let json = logic_sim::json::serialize_chip_description_for_save(&chip, &library).unwrap();
+
+	assert!(json.contains(r#""Name":"BUS-4","ID":1,"Label":"""#), "bus subchip: {json}");
+	assert!(json.contains(r#""Name":"BUS-TERMINUS-4","ID":2,"Label":"""#), "bus subchip: {json}");
+	let bus_section = &json[json.find("\"Name\":\"BUS-4\"").unwrap()..json.find("\"Name\":\"NAND\"").unwrap()];
+	assert!(bus_section.contains(r#""OutputPinColourInfo":null"#), "buses write null, not an array: {bus_section}");
+
+	let nand_section = &json[json.find("\"Name\":\"NAND\"").unwrap()..];
+	assert_eq!(nand_section.matches("\"PinID\":2").count(), 1, "one entry per output pin: {nand_section}");
+	assert!(nand_section.contains(r#""PinColour":3"#), "override colour (Green) wins: {nand_section}");
+	assert!(nand_section.contains(r#""OutputPinColourInfo":[{"#), "non-bus writes an array, not null: {nand_section}");
+
+	// The stored-label default serializes as "" (Unity never writes null).
+	assert!(!json.contains(r#""Label":null"#));
+}
+
+#[test]
+fn library_free_serialization_still_round_trips_overrides() {
+	let mut chip = ChipDescription::new("SOLO", ChipType::Custom);
+	chip.sub_chips.push(SubChipDescription {
+		name: "KEY".into(),
+		id: 1,
+		internal_data: Some(vec![75]),
+		position: Vec2::ZERO,
+		label: None,
+		pin_colour_info: vec![],
+	});
+
+	let json = serialize_chip_description(&chip).unwrap();
+	let parsed = parse_chip_description(&json).unwrap();
+	assert_eq!(parsed.sub_chips.len(), 1);
+	assert!(is_equivalent_json(&json, &serialize_chip_description(&parsed).unwrap()));
+}

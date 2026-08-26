@@ -25,6 +25,12 @@ use crate::viewer::frame::{build_menu_stack, build_viewer_stack};
 use crate::viewer::input::{encode_modifiers, handle_viewer_key};
 use crate::viewer::library::is_custom_chip;
 
+/// Modifier keys that suppress Key-chip input while held (Ctrl/Shift/Alt --
+/// the same set `SimKeyboardHelper.RefreshInputState` early-outs on).
+const KEY_CHIP_BLOCKING_MODS: winit::keyboard::ModifiersState = winit::keyboard::ModifiersState::from_bits_truncate(
+	winit::keyboard::ModifiersState::SHIFT.bits() | winit::keyboard::ModifiersState::CONTROL.bits() | winit::keyboard::ModifiersState::ALT.bits(),
+);
+
 impl ApplicationHandler for App {
 	fn resumed(&mut self, event_loop: &ActiveEventLoop) {
 		if self.state.is_some() {
@@ -69,6 +75,12 @@ impl ApplicationHandler for App {
 				self.modifiers = mods.state();
 				if let Screen::Viewer(v) = &mut self.screen {
 					v.sim.set_key_modifiers(encode_modifiers(self.modifiers));
+					// Mirror SimKeyboardHelper.RefreshInputState's early-out: with
+					// Ctrl/Shift/Alt held, *no* key chip input registers at all --
+					// keys already held when the modifier went down release too.
+					if self.modifiers.intersects(KEY_CHIP_BLOCKING_MODS) {
+						v.sim.clear_held_keys();
+					}
 				}
 			}
 
@@ -254,11 +266,21 @@ impl App {
 		// placement, a chip pending placement, a selection drag (reverting
 		// it), and the selection itself -- same as Escape (see the keyboard
 		// handler).
+		let cancelled_something = v.pending_wire.is_some()
+			|| !v.pending_place.is_empty()
+			|| !matches!(v.canvas_interaction, crate::viewer::chip_interaction::CanvasInteraction::None)
+			|| crate::viewer::customize::is_interacting(v);
 		v.pending_wire = None;
 		v.pending_place.clear();
 		chip_interaction::cancel_all(v);
 		// ...and for a customize-workspace grab/resize in flight.
 		crate::viewer::customize::cancel_interaction(v);
+		if cancelled_something {
+			// The cancel *consumed* the click (`ConsumeMouseButtonDownEvent`
+			// in the original): falling through would also delete a wire or
+			// open a context menu under the cursor on this very click.
+			return;
+		}
 
 		sync_stack_with_state(v);
 
@@ -462,9 +484,17 @@ impl App {
 				if !press_swallowed_by_ui {
 					if let Some(c) = s.chars().next() {
 						let c = c.to_ascii_uppercase();
-						match event.state {
-							ElementState::Pressed => v.sim.held_key_press(c),
-							ElementState::Released => v.sim.held_key_release(c),
+						// SimKeyboardHelper only ever registers A-Z / 0-9, and
+						// nothing while a modifier is held -- so e.g. Ctrl+C or
+						// Shift+A must never light a Key chip. Releases always
+						// pass through so a key can't get stuck "on".
+						let registers = c.is_ascii_alphanumeric()
+							&& (event.state == ElementState::Released || !self.modifiers.intersects(KEY_CHIP_BLOCKING_MODS));
+						if registers {
+							match event.state {
+								ElementState::Pressed => v.sim.held_key_press(c),
+								ElementState::Released => v.sim.held_key_release(c),
+							}
 						}
 					}
 				}

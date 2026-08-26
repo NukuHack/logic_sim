@@ -26,7 +26,7 @@ impl Vec2 {
 	}
 
 	pub fn max(&self, other: Self) -> Self {
-		Self { x: self.x.max(other.x), y: self.x.max(other.y) }
+		Self { x: self.x.max(other.x), y: self.y.max(other.y) }
 	}
 }
 
@@ -173,5 +173,16 @@ impl Vec2 {
 
 	pub fn lerp(&self, other: &Self, t: f32) -> Self {
 		Self { x: self.x + (other.x - self.x) * t, y: self.y + (other.y - self.y) * t }
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn max_is_component_wise() {
+		assert_eq!(Vec2::new(3.0, 5.0).max(Vec2::new(4.0, 2.0)), Vec2::new(4.0, 5.0), "each axis takes its own maximum");
+		assert_eq!(Vec2::ZERO.max(Vec2::new(-1.0, -2.0)), Vec2::ZERO);
 	}
 }

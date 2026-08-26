@@ -1092,7 +1092,11 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 94.0), panel_w - 40.0, hint, [0.85, 0.65, 0.4, 1.0], 14.0);
 	}
 
-	let confirm_enabled = !text.trim().is_empty();
+	let trimmed = text.trim();
+	// `ChipSaveMenu.ValidateChipNameInput`: length-capped and free of
+	// filename-illegal characters (the authoritative duplicate-name check
+	// lives in the confirm handler, which knows the library).
+	let confirm_enabled = !trimmed.is_empty() && trimmed.len() <= MAX_CHIP_NAME_LENGTH && !crate::save_system::name_contains_forbidden_char(trimmed);
 	let button_y = panel_rect.y + panel_h - 96.0;
 	match mode {
 		SaveChipMode::Save => {
@@ -1188,6 +1192,10 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 /// `PinEditMenu.MaxLengthPinName` (`"MY LONG PIN NAME"`) and its
 /// length-only validator.
 pub const MAX_PIN_NAME_LENGTH: usize = 16;
+
+/// Longest chip name the save popup accepts ("MY VERY LONG CHIP NAME",
+/// mirroring `ChipSaveMenu.MaxLengthChipName`'s length).
+pub const MAX_CHIP_NAME_LENGTH: usize = 22;
 
 /// Builds the boundary-dev-pin edit popup (mirrors `PinEditMenu`): a name
 /// field, a "Colour" row of palette swatches, and -- only for pins wider

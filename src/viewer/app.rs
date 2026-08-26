@@ -11,7 +11,7 @@ use crate::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use crate::viewer::input::encode_modifiers;
 use crate::viewer::save_flow::unique_new_chip_name;
 use crate::viewer::state::ViewerState;
-use crate::{default_chip_collections, default_starred_list, load_project, register_all_builtins, ChipDescription, ChipType, SavePaths};
+use crate::{default_chip_collections, default_starred_list, ChipDescription, ChipType, SavePaths};
 
 /// How long the transient status/error toast stays on screen before
 /// dismissing itself -- no interaction required.
@@ -127,13 +127,14 @@ impl App {
 	// ---- Screen transitions ----
 
 	pub(crate) fn open_project(&mut self, name: &str) {
-		let project_dir = self.paths.project_path(name);
-		match load_project(&project_dir) {
-			Ok((project_desc, mut library, errors)) => {
-				for e in &errors {
-					eprintln!("warning: {e}");
-				}
-				register_all_builtins(&mut library);
+		// The compliant loader (`Loader::load_project`): loads only the
+		// chips listed in `AllCustomChipNames` (never stray files), runs
+		// `UpgradeHelper`'s pre-2.1.5 migrations, and lets a custom chip
+		// shadow a same-named builtin -- exactly what the Unity build does.
+		match crate::save_system::Loader::load_project(&self.paths, name) {
+			Ok(project) => {
+				let project_desc = project.description;
+				let mut library = project.chip_library;
 
 				// Every project opens onto a blank, unsaved chip rather than jumping back into whichever
 				// custom chip happens to be "last" (or biggest) -- mirrors Ctrl+N rather than remembering a chip to reopen.

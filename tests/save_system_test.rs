@@ -285,7 +285,7 @@ fn save_chip_then_load_chip_library_round_trips() {
 
 	let mut chip = ChipDescription::new("MY GATE", ChipType::Custom);
 	chip.input_pins.push(logic_sim::description::PinDescription::new("A", 0, logic_sim::description::PinBitCount::Bit1));
-	Saver::save_chip(&paths, "P", &chip).unwrap();
+	Saver::save_chip(&paths, "P", &ChipLibrary::new(), &chip).unwrap();
 
 	assert!(paths.chips_path("P").join("MY GATE.json").is_file());
 
@@ -303,7 +303,7 @@ fn delete_chip_with_backup_moves_file_into_deleted_chips_folder() {
 	let root = temp_dir("delete_chip_backup");
 	let paths = SavePaths::new(&root);
 	let chip = ChipDescription::new("TEMP", ChipType::Custom);
-	Saver::save_chip(&paths, "P", &chip).unwrap();
+	Saver::save_chip(&paths, "P", &ChipLibrary::new(), &chip).unwrap();
 
 	Saver::delete_chip(&paths, "P", "TEMP", true).unwrap();
 
@@ -318,7 +318,7 @@ fn delete_chip_without_backup_removes_file_permanently() {
 	let root = temp_dir("delete_chip_no_backup");
 	let paths = SavePaths::new(&root);
 	let chip = ChipDescription::new("TEMP", ChipType::Custom);
-	Saver::save_chip(&paths, "P", &chip).unwrap();
+	Saver::save_chip(&paths, "P", &ChipLibrary::new(), &chip).unwrap();
 
 	Saver::delete_chip(&paths, "P", "TEMP", false).unwrap();
 
@@ -481,7 +481,7 @@ fn load_project_includes_builtins_and_custom_chips() {
 	SavePaths::ensure_directory_exists(&paths.chips_path("P")).unwrap();
 	let mut custom = logic_sim::description::ChipDescription::new("MY GATE", logic_sim::description::ChipType::Custom);
 	custom.input_pins.push(logic_sim::description::PinDescription::new("A", 0, logic_sim::description::PinBitCount::Bit1));
-	Saver::save_chip(&paths, "P", &custom).unwrap();
+	Saver::save_chip(&paths, "P", &ChipLibrary::new(), &custom).unwrap();
 
 	let mut desc = ProjectDescription { project_name: "P".to_string(), all_custom_chip_names: vec!["MY GATE".to_string()], ..Default::default() };
 	Saver::save_project_description(&paths, &mut desc).unwrap();
@@ -503,7 +503,7 @@ fn custom_chip_shadows_builtin_of_the_same_name() {
 	// project predates that builtin being added).
 	let mut custom = logic_sim::description::ChipDescription::new("NAND", logic_sim::description::ChipType::Custom);
 	custom.input_pins.push(logic_sim::description::PinDescription::new("MyInput", 0, logic_sim::description::PinBitCount::Bit1));
-	Saver::save_chip(&paths, "P", &custom).unwrap();
+	Saver::save_chip(&paths, "P", &ChipLibrary::new(), &custom).unwrap();
 
 	let mut desc = ProjectDescription { project_name: "P".to_string(), all_custom_chip_names: vec!["NAND".to_string()], ..Default::default() };
 	Saver::save_project_description(&paths, &mut desc).unwrap();

@@ -66,7 +66,7 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	let name = v.root_chip_name.clone();
 	let desc = v.library.get(&name).clone();
-	match Saver::save_chip(paths, &v.project_name, &desc) {
+	match Saver::save_chip(paths, &v.project_name, &v.library, &desc) {
 		Ok(()) => {
 			v.mark_saved(&name);
 			*status = Some(format!("Saved '{name}'"));
@@ -90,7 +90,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 	let mut new_desc = v.library.get(&old_name).clone();
 	new_desc.name = new_name.to_string();
 
-	match Saver::save_chip(paths, &v.project_name, &new_desc) {
+	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
 		Ok(()) => {
 			v.library.add(new_desc);
 			v.mark_saved(new_name);
@@ -143,7 +143,7 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 	let mut new_desc = v.library.get(&old_name).clone();
 	new_desc.name = new_name.to_string();
 
-	match Saver::save_chip(paths, &v.project_name, &new_desc) {
+	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
 		Ok(()) => {
 			if let Err(e) = Saver::delete_chip(paths, &v.project_name, &old_name, false) {
 				eprintln!("warning: renamed '{old_name}' to '{new_name}' but failed to remove the old file: {e}");
@@ -163,6 +163,21 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 	}
 }
 
+/// The authoritative save/rename name gate (`ChipSaveMenu.IsValidSaveName`):
+/// non-blank, a legal file name on every OS, and -- when it names a
+/// *different* existing chip -- only acceptable via the explicit Replace
+/// flow (the popup's mode logic routes those; everything else must refuse).
+/// The UI's Confirm-button greying mirrors the non-library halves of this;
+/// this function is the one that can't be bypassed by keyboard paths.
+fn valid_save_name(v: &ViewerState, typed: &str) -> bool {
+	let typed = typed.trim();
+	if typed.is_empty() || !crate::save_system::valid_file_name(typed) || typed.len() > crate::render::editor_ui::MAX_CHIP_NAME_LENGTH {
+		return false;
+	}
+	let already_used = v.library.try_get(typed).is_some();
+	!already_used || typed.eq_ignore_ascii_case(&v.root_chip_name)
+}
+
 /// Applies the `Overlay::SaveChip` popup's Confirm action -- shared by
 /// its "Save"/"Replace" button (`EditorAction::SaveChipConfirm`) and
 /// pressing Enter directly for those same two (unambiguous) modes; see
@@ -173,7 +188,8 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 /// inferred, only chosen).
 pub(crate) fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	let typed = v.overlay_text_input.trim().to_string();
-	if typed.is_empty() {
+	if !valid_save_name(v, &typed) {
+		*status = Some("Invalid chip name".to_string());
 		return;
 	}
 	match save_chip_mode(v, &typed) {
@@ -186,7 +202,8 @@ pub(crate) fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, st
 
 pub(crate) fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	let typed = v.overlay_text_input.trim().to_string();
-	if typed.is_empty() {
+	if !valid_save_name(v, &typed) {
+		*status = Some("Invalid chip name".to_string());
 		return;
 	}
 	save_chip_as(v, paths, status, &typed);
@@ -195,7 +212,8 @@ pub(crate) fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, statu
 
 pub(crate) fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	let typed = v.overlay_text_input.trim().to_string();
-	if typed.is_empty() {
+	if !valid_save_name(v, &typed) {
+		*status = Some("Invalid chip name".to_string());
 		return;
 	}
 	rename_current_chip(v, paths, status, &typed);
@@ -265,14 +283,17 @@ pub(crate) fn active_chip_has_unsaved_changes(v: &ViewerState, paths: &SavePaths
 	if !is_custom_chip(&v.library, &name) {
 		return false;
 	}
-	let saved_json =
-		load_single_chip_from_disk(paths, &v.project_name, &name).ok().and_then(|pristine| crate::json::serialize_chip_description(&pristine).ok());
+	// Both sides serialize through the project-aware writer -- the exact
+	// shape `Saver::save_chip` puts on disk -- so library-resolved
+	// `OutputPinColourInfo` (and bus `null`s) cancel out instead of
+	// reading as edits.
+	let saved_json = load_single_chip_from_disk(paths, &v.project_name, &name)
+		.ok()
+		.and_then(|pristine| crate::json::serialize_chip_description_for_save(&pristine, &v.library).ok());
 	let Some(saved_json) = saved_json else {
 		return !v.library.get(&name).sub_chips.is_empty();
 	};
-	let Ok(current_json) = crate::json::serialize_chip_description(v.library.get(&name)) else {
-		return true;
-	};
+	let Ok(current_json) = crate::json::serialize_chip_description_for_save(v.library.get(&name), &v.library) else { return true };
 	!crate::json::is_equivalent_json(&saved_json, &current_json)
 }
 
@@ -468,6 +489,29 @@ mod tests {
 		assert_eq!(unique_new_chip_name(&library), "New Chip 3");
 	}
 
+	/// The save-name gate (`IsValidSaveName`): blanks and filename-illegal
+	/// names are refused outright; a *different* existing chip's name is
+	/// refused (Replace is a separate flow); the active chip's own name is
+	/// always acceptable.
+	#[test]
+	fn valid_save_name_mirrors_the_originals_rules() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		library.add(ChipDescription::new("OTHER", ChipType::Custom));
+		let v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+
+		assert!(!valid_save_name(&v, ""), "blank");
+		assert!(!valid_save_name(&v, "   "), "whitespace");
+		assert!(!valid_save_name(&v, "bad:name"), "forbidden character");
+		assert!(!valid_save_name(&v, "CON"), "reserved device name");
+		assert!(!valid_save_name(&v, "MY VERY LONG CHIP NAME X"), "over the length cap");
+		assert!(!valid_save_name(&v, "OTHER"), "a different existing chip's name");
+		assert!(!valid_save_name(&v, "NAND"), "a builtin's name");
+		assert!(valid_save_name(&v, "Brand New"), "fresh name");
+		assert!(valid_save_name(&v, "root"), "the active chip's own name (case-insensitive)");
+	}
+
 	/// Switching chips must drop every canvas draft that references the
 	/// *previous* chip's ids -- pendings, selection, and any drag in flight.
 	#[test]
@@ -565,7 +609,7 @@ mod tests {
 		library.add(ChipDescription::new(other, ChipType::Custom));
 		let v = ViewerState::new("P", library, root.to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		for name in [root, other] {
-			Saver::save_chip(paths, "P", &v.library.get(name).clone()).expect("chip written");
+			Saver::save_chip(paths, "P", &v.library, &v.library.get(name).clone()).expect("chip written");
 		}
 		v
 	}
