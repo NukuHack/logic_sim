@@ -281,6 +281,10 @@ pub(crate) struct ViewerState {
 	/// `viewer::customize`.
 	pub(crate) customize: Option<CustomizeState>,
 
+	/// Whether pin and component name labels are visible on the canvas.
+	/// Toggled by Tab; defaults to `true` (labels shown on hover).
+	pub(crate) labels_visible: bool,
+
 	/// The viewer's UI stack as of the *last drawn* frame -- every
 	/// visible surface is a layer in here (canvas at the bottom, popups
 	/// on top), rebuilt from live state each frame by `viewer::frame`. All
@@ -415,6 +419,7 @@ impl ViewerState {
 			pending_unsaved_action: None,
 			exit_requested: false,
 			customize: None,
+			labels_visible: true,
 			stack: UiStack::new(),
 			bottom_bar_scroll_x: 0.0,
 			bottom_bar_scroll_max: 0.0,

@@ -225,7 +225,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		};
 		let root_ref = v.library.get(&scene_chip_name);
 		let lookup = SimulatorPinState { sim: &sim_guard, scope };
-		build_scene_with_spans(root_ref, &v.library, &lookup, Some(hover_world_pos))
+		build_scene_with_spans(root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
 	};
 
 	// A selection being dragged renders translucently -- deliberately the

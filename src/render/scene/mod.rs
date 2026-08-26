@@ -52,7 +52,7 @@ pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec
 /// as this chip's own boundary dev-pins (owner id == the pin's own id, per
 /// the on-disk wire-address convention).
 pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dyn PinStateLookup, hover_world_pos: Option<Vec2>) -> SceneGeometry {
-	build_scene_with_spans(chip, library, pin_state, hover_world_pos).0
+	build_scene_with_spans(chip, library, pin_state, hover_world_pos, true).0
 }
 
 /// Vertex-index span of one placed subchip's own geometry (its body, name
@@ -103,6 +103,7 @@ pub fn build_scene_with_spans(
 	library: &ChipLibrary,
 	pin_state: &dyn PinStateLookup,
 	hover_world_pos: Option<Vec2>,
+	labels_visible: bool,
 ) -> (SceneGeometry, ComponentSpans) {
 	let mut geo = SceneGeometry::default();
 	let placed = place_sub_chips(chip, library);
@@ -121,12 +122,13 @@ pub fn build_scene_with_spans(
 	// than as two whole layers) purely so each component's triangles land in
 	// one contiguous span.
 	wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
-	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, hover_world_pos);
+	let effective_hover = if labels_visible { hover_world_pos } else { None };
+	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, effective_hover);
 	let mut spans = ComponentSpans::default();
 	for sub in &placed {
 		let triangle_start = geo.triangles.len();
 		let label_start = geo.labels.len();
-		components::draw_component(&mut geo, sub, pin_state, hover_world_pos, hovered_pin_name.is_some());
+		components::draw_component(&mut geo, sub, pin_state, effective_hover, hovered_pin_name.is_some());
 		displays::draw_placed_displays_for(&mut geo, sub, library, pin_state);
 		spans.insert(sub.id, ComponentSpan { triangles: triangle_start..geo.triangles.len(), labels: label_start..geo.labels.len() });
 	}
@@ -198,7 +200,7 @@ mod span_tests {
 	fn build_scene_with_spans_tracks_each_components_own_vertices() {
 		let (library, chip) = two_nands_and_a_wire();
 
-		let (scene, spans) = build_scene_with_spans(&chip, &library, &AllLow, None);
+		let (scene, spans) = build_scene_with_spans(&chip, &library, &AllLow, None, true);
 		let span1 = spans.get(1).expect("component 1 is indexed");
 		let span2 = spans.get(2).expect("component 2 is indexed");
 

@@ -14,7 +14,7 @@ use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, co
 use crate::viewer::save_flow::{
 	confirm_save_chip_popup, confirm_unsaved_changes_popup, request_exit_to_menu, request_start_new_chip, save_chip_mode,
 };
-use crate::viewer::state::{close_all_overlays, close_top_overlay, open_preferences, open_save_chip, open_search, Overlay, ViewerState};
+use crate::viewer::state::{close_top_overlay, open_preferences, open_save_chip, open_search, Overlay, ViewerState};
 use crate::{sim, SavePaths, Saver};
 
 /// Convert winit's modifier state into the `Simulator::key_modifiers`
@@ -67,7 +67,7 @@ pub(crate) fn handle_viewer_key(
 	use winit::keyboard::{Key, NamedKey};
 	// ---- Right-click popup: anything not aimed at it dismisses it
 	// first, so the same key press then acts on whatever else it targets
-	// (Tab closes the popup AND opens the library) ----
+	// (Tab toggles label visibility and also dismisses the popup) ----
 	if v.context_menu.is_some() && !key_press_aimed_at_context_menu(&event.logical_key) {
 		v.context_menu = None;
 	}
@@ -193,14 +193,6 @@ pub(crate) fn handle_viewer_key(
 			apply_prefs_field_text(v);
 		}
 		// ---- Library panel keys (work while it has focus, even under another popup) ----
-		Key::Named(NamedKey::Tab) if v.stack.keyboard_target() == Some(LayerId::Library) => {
-			let mut desc = v.prefs.clone();
-			if Saver::save_project_description(paths, &mut desc).is_ok() {
-				v.prefs = desc;
-			}
-			close_all_overlays(v);
-			v.library_selection = LibrarySelection::None;
-		}
 		Key::Named(NamedKey::Escape)
 			if v.stack.keyboard_target() == Some(LayerId::Library)
 				&& (v.library_creating_collection
@@ -237,7 +229,7 @@ pub(crate) fn handle_viewer_key(
 		Key::Character(s) if v.stack.keyboard_target().is_none() && !modifiers.control_key() && s.eq_ignore_ascii_case("r") => v.restart_sim_fresh(),
 		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
 		// Ctrl+L opens the chip library panel (`KeyboardShortcuts`'s
-		// LibraryShortcutTriggered); Tab stays as this port's extra.
+		// LibraryShortcutTriggered).
 		Key::Character(s)
 			if v.stack.keyboard_target().is_none() && modifiers.control_key() && !modifiers.shift_key() && s.eq_ignore_ascii_case("l") =>
 		{
@@ -310,7 +302,7 @@ pub(crate) fn handle_viewer_key(
 			crate::viewer::undo::try_undo(v);
 		}
 		Key::Named(NamedKey::Tab) if v.stack.keyboard_target().is_none() => {
-			open_library_panel(v);
+			v.labels_visible = !v.labels_visible;
 		}
 		// MultiMode+D duplicates the selection into a carried copy
 		// (`DuplicateShortcutTriggered` -> `DuplicateSelectedElements`;
