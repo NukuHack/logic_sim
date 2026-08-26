@@ -10,6 +10,10 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
+/// Captured `internal_state` per chip id-path (see
+/// [`Simulator::capture_internal_states`]).
+pub type InternalStateMap = std::collections::HashMap<Vec<i32>, Vec<u32>>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PinIdx(pub usize);
 
@@ -752,6 +756,56 @@ impl Simulator {
 		let out_pin = self.chips[chip_idx.0].output_pins[0];
 		self.pins[out_pin.0].state = PinState::from_parts(pixel_state, 0);
 	}
+
+	/// Captures every `SimChip`'s `internal_state`, keyed by its id-path
+	/// from the root (root's own id first, then each nested subchip id).
+	/// This is the volatile runtime memory -- RAM/ROM contents, pulse
+	/// countdowns, display buffers, clock phases -- that a rebuild would
+	/// otherwise reset (`build_internal_state`'s defaults), and what
+	/// `ViewerState::rebuild_sim` carries across so editing one wire no
+	/// longer wipes unrelated chips' memory.
+	pub fn capture_internal_states(&self) -> InternalStateMap {
+		let mut map = InternalStateMap::default();
+		self.capture_internal_states_at(self.root, &[], &mut map);
+		map
+	}
+
+	fn capture_internal_states_at(&self, idx: ChipIdx, path: &[i32], map: &mut InternalStateMap) {
+		let chip = &self.chips[idx.0];
+		let mut key = Vec::with_capacity(path.len() + 1);
+		key.extend_from_slice(path);
+		key.push(chip.id);
+		map.insert(key.clone(), chip.internal_state.clone());
+		for &sub in &chip.sub_chips {
+			self.capture_internal_states_at(sub, &key, map);
+		}
+	}
+
+	/// Restores previously captured internal states onto the matching
+	/// (same id-path) chips of this simulator. Element-wise up to the
+	/// shorter length, so a state whose shape legitimately changed can
+	/// never break a builtin's indexing invariants; unmatched chips keep
+	/// their freshly-built defaults (a brand-new dev RAM still starts
+	/// randomized, exactly like the original's fresh placements).
+	pub fn restore_internal_states(&mut self, map: &InternalStateMap) {
+		self.restore_internal_states_at(self.root, &[], map);
+	}
+
+	fn restore_internal_states_at(&mut self, idx: ChipIdx, path: &[i32], map: &InternalStateMap) {
+		let mut key = Vec::with_capacity(path.len() + 1);
+		key.extend_from_slice(path);
+		key.push(self.chips[idx.0].id);
+		if let Some(saved) = map.get(&key) {
+			let state = &mut self.chips[idx.0].internal_state;
+			for (slot, &value) in state.iter_mut().zip(saved) {
+				*slot = value;
+			}
+		}
+		let sub_chips = self.chips[idx.0].sub_chips.clone();
+		for sub in sub_chips {
+			self.restore_internal_states_at(sub, &key, map);
+		}
+	}
 }
 
 /// Recursively build the flat pin/chip arenas from a ChipDescription tree.
@@ -895,5 +949,120 @@ fn build_internal_state(chip_type: ChipType, override_state: Option<&[u32]>) -> 
 			Some(s) if !s.is_empty() => s.to_vec(),
 			_ => Vec::new(),
 		},
+	}
+}
+
+#[cfg(test)]
+mod internal_state_carry_tests {
+	//! White-box: the capture/restore contract lives on `Simulator`'s
+	//! private arena (`pins`/`chips`), so it can only be driven from
+	//! beside the code -- an integration test would have no way in.
+
+	use super::*;
+	use crate::description::SubChipDescription;
+
+	fn simulator_with_ram() -> Simulator {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		let mut root = ChipDescription::new("ROOT", ChipType::Custom);
+		root.sub_chips.push(SubChipDescription {
+			name: "dev.RAM-8".into(),
+			id: 5,
+			internal_data: None,
+			position: Default::default(),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		// A nested chip holding its own RAM, so path-keyed matching has a
+		// two-level case to prove.
+		let mut inner = ChipDescription::new("INNER", ChipType::Custom);
+		inner.sub_chips.push(SubChipDescription {
+			name: "dev.RAM-8".into(),
+			id: 6,
+			internal_data: None,
+			position: Default::default(),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		library.add(inner);
+		root.sub_chips.push(SubChipDescription {
+			name: "INNER".into(),
+			id: 7,
+			internal_data: None,
+			position: Default::default(),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		Simulator::build(&root, &library)
+	}
+
+	fn ram_word(sim: &Simulator, id: i32, address: usize) -> Option<u32> {
+		for idx in 0..sim.chips.len() {
+			if sim.chips[idx].id == id && sim.chips[idx].chip_type == ChipType::DevRam8Bit {
+				return sim.chips[idx].internal_state.get(address).copied();
+			}
+		}
+		None
+	}
+
+	fn set_ram_word(sim: &mut Simulator, id: i32, address: usize, value: u32) {
+		for idx in 0..sim.chips.len() {
+			if sim.chips[idx].id == id && sim.chips[idx].chip_type == ChipType::DevRam8Bit {
+				sim.chips[idx].internal_state[address] = value;
+				return;
+			}
+		}
+		panic!("no dev RAM with id {id}");
+	}
+
+	#[test]
+	fn captured_states_restore_onto_matching_id_paths_after_a_rebuild() {
+		let mut first = simulator_with_ram();
+		set_ram_word(&mut first, 5, 7, 0xBEEF);
+		set_ram_word(&mut first, 6, 3, 0xF00D);
+
+		let captured = first.capture_internal_states();
+
+		// "Rebuild": same description, brand-new arena (fresh random RAM).
+		let mut second = simulator_with_ram();
+		assert_ne!(ram_word(&second, 5, 7), Some(0xBEEF), "precondition: the rebuild starts from scratch");
+		second.restore_internal_states(&captured);
+
+		assert_eq!(ram_word(&second, 5, 7), Some(0xBEEF), "the top-level RAM's contents carried over");
+		assert_eq!(ram_word(&second, 6, 3), Some(0xF00D), "the nested RAM's contents carried over too");
+	}
+
+	/// A chip that only exists on one side (added/removed between builds)
+	/// simply finds nothing to restore onto; restoring never panics or
+	/// writes past a state buffer.
+	#[test]
+	fn restore_tolerates_structure_changes_and_length_mismatches() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		let mut root = ChipDescription::new("ROOT", ChipType::Custom);
+		root.sub_chips.push(SubChipDescription {
+			name: "dev.RAM-8".into(),
+			id: 9,
+			internal_data: None,
+			position: Default::default(),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		let mut first = Simulator::build(&root, &library);
+		set_ram_word(&mut first, 9, 0, 42);
+		let captured = first.capture_internal_states();
+
+		// The rebuilt version wires something else entirely at id 9's slot.
+		root.sub_chips.clear();
+		root.sub_chips.push(SubChipDescription {
+			name: "NAND".into(),
+			id: 9,
+			internal_data: None,
+			position: Default::default(),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		let mut second = Simulator::build(&root, &library);
+		second.restore_internal_states(&captured);
 	}
 }

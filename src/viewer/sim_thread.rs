@@ -185,6 +185,13 @@ impl SimHandle {
 		(std::mem::take(&mut sim.held_keys), sim.key_modifiers, std::mem::take(&mut sim.driven_inputs))
 	}
 
+	/// Snapshots every chip's volatile internal state (RAM/ROM contents,
+	/// pulse countdowns, display buffers) so a rebuild can carry it into
+	/// the new arena -- see [`Simulator::capture_internal_states`].
+	pub(crate) fn capture_internal_states(&self) -> crate::sim::InternalStateMap {
+		self.lock().capture_internal_states()
+	}
+
 	// ---- Prefs-derived control plumbing ----
 
 	pub(crate) fn set_steps_per_clock_transition(&self, steps: u32) {

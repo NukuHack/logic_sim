@@ -258,7 +258,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 			v.exit_view_mode();
 			v.root_chip_name = new_name.to_string();
 			*status = Some(format!("Saved as '{new_name}'"));
-			v.rebuild_sim();
+			v.restart_sim_fresh();
 		}
 		Err(e) => *status = Some(format!("Failed to save '{new_name}': {e}")),
 	}
@@ -308,7 +308,7 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			v.exit_view_mode();
 			v.root_chip_name = new_name.to_string();
 			*status = Some(format!("Renamed '{old_name}' to '{new_name}'"));
-			v.rebuild_sim();
+			v.restart_sim_fresh();
 		}
 		Err(e) => *status = Some(format!("Failed to rename to '{new_name}': {e}")),
 	}
@@ -572,7 +572,7 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 	v.exit_view_mode();
 	v.root_chip_name = name.clone();
 	v.sim.reset_driven_inputs();
-	v.rebuild_sim();
+	v.restart_sim_fresh();
 	v.camera_fitted = false;
 	reset_canvas_interaction(v);
 	*status = Some(format!("New chip '{name}'"));
@@ -611,7 +611,7 @@ pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: 
 		}
 		v.root_chip_name = name.to_string();
 		v.sim.reset_driven_inputs();
-		v.rebuild_sim();
+		v.restart_sim_fresh();
 		if switching {
 			v.camera_fitted = false;
 			reset_canvas_interaction(v);

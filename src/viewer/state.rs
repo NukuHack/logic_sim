@@ -466,6 +466,29 @@ impl ViewerState {
 		// an in-place edit doesn't drop held keys / modifiers / toggled
 		// switches (see `SimHandle::take_transient_input_state`).
 		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
+		// Also carry every chip's volatile memory (RAM/ROM contents, pulse
+		// countdowns, display buffers) so an unrelated edit -- placing one
+		// wire, deleting another component -- no longer resets the whole
+		// circuit's runtime state. `restart_sim_fresh` is the explicit
+		// opt-out for rebuilds that *mean* a fresh run.
+		let internal_states = self.sim.capture_internal_states();
+		let mut sim = Simulator::build(&root_desc, &self.library);
+		sim.held_keys = held_keys;
+		sim.key_modifiers = key_modifiers;
+		sim.driven_inputs = driven_inputs;
+		sim.restore_internal_states(&internal_states);
+		self.sim.replace(sim);
+		self.sync_sim_clock_pref();
+	}
+
+	/// Rebuilds the simulator from scratch -- no carried-over chip memory.
+	/// The explicit "R restarts the simulation" path and the root-chip
+	/// switching flows use this: a fresh run (or a different circuit)
+	/// shouldn't inherit whatever the previous circuit's RAM happened to
+	/// hold.
+	pub(crate) fn restart_sim_fresh(&mut self) {
+		let root_desc = self.library.get(&self.root_chip_name).clone();
+		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
 		let mut sim = Simulator::build(&root_desc, &self.library);
 		sim.held_keys = held_keys;
 		sim.key_modifiers = key_modifiers;

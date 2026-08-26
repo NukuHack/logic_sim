@@ -234,7 +234,7 @@ pub(crate) fn handle_viewer_key(
 		// camera view (`CameraController.ResetView`) -- the two must not
 		// swallow each other's modifier state.
 		Key::Character(s) if v.stack.keyboard_target().is_none() && modifiers.control_key() && s.eq_ignore_ascii_case("r") => v.camera_fitted = false,
-		Key::Character(s) if v.stack.keyboard_target().is_none() && !modifiers.control_key() && s.eq_ignore_ascii_case("r") => v.rebuild_sim(),
+		Key::Character(s) if v.stack.keyboard_target().is_none() && !modifiers.control_key() && s.eq_ignore_ascii_case("r") => v.restart_sim_fresh(),
 		Key::Character(s) if v.stack.keyboard_target().is_none() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
 		// Ctrl+L opens the chip library panel (`KeyboardShortcuts`'s
 		// LibraryShortcutTriggered); Tab stays as this port's extra.
