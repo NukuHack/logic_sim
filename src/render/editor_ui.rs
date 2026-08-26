@@ -1436,7 +1436,7 @@ pub fn build_starred_bottom_bar(
 	let h = BOTTOM_BAR_HEIGHT - 8.0;
 	for item in starred_list {
 		let is_open = item.is_collection && open_collection == Some(item.name.as_str());
-		let label = if item.is_collection { format!("{} v", item.name) } else { item.name.clone() };
+		let label = item.name.clone();
 		let w = (label.chars().count() as f32 * 8.5 + 24.0).clamp(60.0, 220.0);
 		let rect = UiRect::new(x, y, w, h);
 		let (action, row_enabled) = if item.is_collection {
