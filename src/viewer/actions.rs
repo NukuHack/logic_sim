@@ -204,6 +204,11 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				edit.display_mode_index = i;
 			}
 		}
+		EditorAction::PinEditSetColour(i) => {
+			if let Some(edit) = v.pin_edit.as_mut() {
+				edit.colour = crate::description::Color::from_int(i as i32);
+			}
+		}
 		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
 		EditorAction::ExitViewedChip => v.return_to_previous_viewed_chip(),
 	}

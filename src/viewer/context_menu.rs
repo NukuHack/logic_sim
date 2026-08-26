@@ -162,18 +162,18 @@ pub(crate) fn apply_context_menu_action(
 			v.rebuild_sim();
 		}
 		// The dev-pin "Edit" row (`PinEditMenu`): rename +, for multi-bit
-		// pins, the Decimal Display wheel. Supersedes this port's old
-		// label-only naming popup for pins.
+		// pins, the Decimal Display wheel, plus the colour swatch pick.
+		// Supersedes this port's old label-only naming popup for pins.
 		(ContextMenuAction::Configure, ContextTarget::DevPin { is_input, id }) => {
 			let chip = v.library.get(&root_chip_name);
 			let pins = if is_input { &chip.input_pins } else { &chip.output_pins };
 			// Copy the draft's seeds out of the library first so the
 			// immutable borrow ends before the overlay opens.
-			let draft = pins.iter().find(|p| p.id == id).map(|p| (p.name.clone(), p.value_display_mode.to_int().max(0) as usize));
-			if let Some((current_name, display_mode_index)) = draft {
+			let draft = pins.iter().find(|p| p.id == id).map(|p| (p.name.clone(), p.value_display_mode.to_int().max(0) as usize, p.colour));
+			if let Some((current_name, display_mode_index, colour)) = draft {
 				open_overlay(v, Overlay::PinEdit);
 				v.overlay_text_input = current_name;
-				v.pin_edit = Some(PinEditState { is_input, pin_id: id, display_mode_index });
+				v.pin_edit = Some(PinEditState { is_input, pin_id: id, display_mode_index, colour });
 			}
 		}
 		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
@@ -277,8 +277,13 @@ mod tests {
 		assert_eq!(v.overlay_text_input, "DATA", "the name field starts from the pin's name");
 		assert_eq!(
 			v.pin_edit,
-			Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: crate::ValueDisplayMode::Hex as usize }),
-			"the wheel starts from the pin's current mode"
+			Some(PinEditState {
+				is_input: false,
+				pin_id: 4,
+				display_mode_index: crate::ValueDisplayMode::Hex as usize,
+				colour: crate::description::Color::Red
+			}),
+			"the wheel starts from the pin's current mode, the swatch from its current colour"
 		);
 
 		let _ = std::fs::remove_dir_all(&root);

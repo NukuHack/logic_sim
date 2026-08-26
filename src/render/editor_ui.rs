@@ -169,12 +169,16 @@ pub enum EditorAction {
 	/// `viewer::customize::place_list_entry`).
 	CustomizePlaceEntry(usize),
 	/// Pin-edit popup (`PinEditMenu`): commit the typed name -- and, for
-	/// multi-bit pins, the chosen Decimal Display mode -- onto the target
-	/// dev-pin and close.
+	/// multi-bit pins, the chosen Decimal Display mode, plus the picked
+	/// colour -- onto the target dev-pin and close.
 	ConfirmPinEdit,
 	/// Pin-edit popup: pick `usize` (an index into
 	/// [`ValueDisplayMode::ALL`]) as the draft Decimal Display mode.
 	PinEditSetDisplayMode(usize),
+	/// Pin-edit popup: set the draft pin colour to palette swatch `usize`
+	/// (an index into `theme::COLORS`, matching `description::Color`'s
+	/// discriminants).
+	PinEditSetColour(usize),
 	/// Unsaved-changes popup (`UnsavedChangesPopup`): the player chose to
 	/// walk away from the current chip's unsaved edits -- run whichever
 	/// action originally opened the popup (see
@@ -1186,17 +1190,29 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 pub const MAX_PIN_NAME_LENGTH: usize = 16;
 
 /// Builds the boundary-dev-pin edit popup (mirrors `PinEditMenu`): a name
-/// field plus -- only for pins wider than one bit -- a "Decimal Display"
-/// row of option buttons standing in for the original's wheel selector.
-/// Both halves commit together on Confirm; Cancel discards. `name` is the
-/// host's shared text buffer's current contents; `display_mode_index`
-/// indexes [`ValueDisplayMode::ALL`] (ignored while
-/// `show_display_options` is false).
-pub fn build_pin_edit_popup(name: &str, show_display_options: bool, display_mode_index: usize, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+/// field, a "Colour" row of palette swatches, and -- only for pins wider
+/// than one bit -- a "Decimal Display" row of option buttons standing in
+/// for the original's wheel selector. Everything commits together on
+/// Confirm; Cancel discards. `name` is the host's shared text buffer's
+/// current contents; `display_mode_index` indexes [`ValueDisplayMode::ALL`]
+/// (ignored while `show_display_options` is false); `colour_index` indexes
+/// `theme::COLORS`.
+pub fn build_pin_edit_popup(
+	name: &str,
+	show_display_options: bool,
+	display_mode_index: usize,
+	colour_index: usize,
+	vw: f32,
+	vh: f32,
+	mouse: Vec2,
+) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = 420.0;
-	let panel_h = if show_display_options { 232.0 } else { 152.0 };
+	const SWATCH_H: f32 = 26.0;
+	// Name field + Colour label/swatches (+ Decimal Display label/options)
+	// + Confirm/Cancel, plus a bottom margin.
+	let panel_h = if show_display_options { 296.0 } else { 216.0 };
 	let cx = vw / 2.0;
 	let cy = vh / 2.0;
 
@@ -1209,6 +1225,21 @@ pub fn build_pin_edit_popup(name: &str, show_display_options: bool, display_mode
 	ui_kit::text_field_row(&mut frame, ui, field_rect, name, "", FONT_SIZE, 16.0);
 
 	let mut y = field_rect.y + field_rect.h + 12.0;
+	add_label(&mut frame, ui, Vec2::new(cx, y + SWATCH_H / 2.0), panel_w - 40.0, "Colour", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
+	y += SWATCH_H + ROW_GAP;
+	let swatch_x = cx - (panel_w - 60.0) / 2.0;
+	let swatch_w = ((panel_w - 60.0) - 8.0 * (theme::COLORS.len() - 1) as f32) / theme::COLORS.len() as f32;
+	for (i, colour) in theme::COLORS.iter().enumerate() {
+		let rect = UiRect::new(swatch_x + i as f32 * (swatch_w + 8.0), y, swatch_w, SWATCH_H);
+		add_button_coloured(&mut frame, ui, rect, "", EditorAction::PinEditSetColour(i), true, *colour);
+		if i == colour_index.min(theme::COLORS.len() - 1) {
+			// Same translucent-white "picked" wash the customize workspace
+			// lays over its selected body-colour swatch.
+			frame.geometry.add_rect(ui_kit::to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
+		}
+	}
+	y += SWATCH_H + ROW_GAP;
+
 	if show_display_options {
 		add_label(&mut frame, ui, Vec2::new(cx, y + ROW_H / 2.0), panel_w - 40.0, "Decimal Display", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
 		y += ROW_H + ROW_GAP;

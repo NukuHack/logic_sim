@@ -2,8 +2,8 @@
 //! rename, component labels, pulse length), the ROM cell editor, and
 //! the key-select popup -- each shared by its popup's Confirm *button*
 //! and pressing Enter directly, so the two input paths can't drift
-//! apart. Also the pin-edit popup's own confirm (rename + Decimal
-//! Display mode), which follows the same shape.
+//! apart. Also the pin-edit popup's own confirm (rename + colour +
+//! Decimal Display mode), which follows the same shape.
 
 use crate::render::editor_ui;
 use crate::viewer::state::{close_top_overlay, KeySelectPurpose, NamingPurpose, ViewerState};
@@ -149,10 +149,11 @@ pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<
 /// (`EditorAction::ConfirmPinEdit`, shared by the popup's Confirm button
 /// and pressing Enter): renames it when a fresh, validly-sized name is
 /// typed (empty/too-long drafts leave the name alone, matching the
-/// disabled Confirm button) and -- for multi-bit pins -- writes the
-/// chosen Decimal Display mode back to
-/// `PinDescription::value_display_mode`, which scene rendering reads each
-/// frame. Always closes the popup afterwards.
+/// disabled Confirm button), writes the picked colour swatch back to
+/// `PinDescription::colour`, and -- for multi-bit pins -- the chosen
+/// Decimal Display mode to `PinDescription::value_display_mode`, both of
+/// which scene rendering reads each frame. Always closes the popup
+/// afterwards.
 pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 	if let Some(edit) = v.pin_edit.take() {
 		let trimmed = v.overlay_text_input.trim().to_string();
@@ -163,6 +164,7 @@ pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 			let pins = if edit.is_input { &mut chip.input_pins } else { &mut chip.output_pins };
 			if let Some(pin) = pins.iter_mut().find(|p| p.id == edit.pin_id) {
 				pin.name = trimmed;
+				pin.colour = edit.colour;
 				// Mirrors `PinEditMenu.Confirm`'s guard: 1-bit pins never
 				// take a display mode (the popup offers no wheel for them).
 				if pin.bit_count != crate::PinBitCount::Bit1 {
@@ -219,15 +221,15 @@ mod tests {
 		v.overlays.push(crate::viewer::state::Overlay::PinEdit);
 	}
 
-	/// The popup's whole contract: Confirm writes both halves (name +
-	/// Decimal Display mode for multi-bit pins) onto the pin and closes;
-	/// a 1-bit pin never gets a mode written; an empty name leaves the
-	/// old one.
+	/// The popup's whole contract: Confirm writes every half (name +
+	/// colour + Decimal Display mode for multi-bit pins) onto the pin and
+	/// closes; a 1-bit pin never gets a mode written; an empty name leaves
+	/// the old values alone.
 	#[test]
 	fn confirm_pin_edit_writes_name_and_display_mode() {
 		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit8);
 		open_pin_edit(&mut v);
-		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 3 });
+		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 3, colour: crate::description::Color::Green });
 		v.overlay_text_input = "DATA BUS".to_string();
 
 		confirm_pin_edit_popup(&mut v);
@@ -235,6 +237,7 @@ mod tests {
 		let pin = &v.library.get("ROOT").output_pins[0];
 		assert_eq!(pin.name, "DATA BUS");
 		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::Hex);
+		assert_eq!(pin.colour, crate::description::Color::Green);
 		assert!(v.pin_edit.is_none() && v.overlays.is_empty(), "the popup closed with its draft dropped");
 	}
 
@@ -242,7 +245,7 @@ mod tests {
 	fn confirm_pin_edit_ignores_mode_for_1bit_and_bad_names() {
 		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit1);
 		open_pin_edit(&mut v);
-		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 1 });
+		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 1, colour: crate::description::Color::Red });
 		v.overlay_text_input = "CLK".to_string();
 		confirm_pin_edit_popup(&mut v);
 		let pin = &v.library.get("ROOT").output_pins[0];
@@ -251,11 +254,12 @@ mod tests {
 
 		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit8);
 		open_pin_edit(&mut v);
-		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 2 });
+		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 2, colour: crate::description::Color::Blue });
 		v.overlay_text_input = "   ".to_string();
 		confirm_pin_edit_popup(&mut v);
 		let pin = &v.library.get("ROOT").output_pins[0];
 		assert_eq!(pin.name, "OUT", "an empty/whitespace draft keeps the old name");
 		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::None);
+		assert_eq!(pin.colour, crate::description::Color::Red, "an invalid draft keeps the old colour too");
 	}
 }

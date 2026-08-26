@@ -470,7 +470,7 @@ fn key_select_popup_disables_confirm_until_a_key_is_chosen() {
 fn pin_edit_popup_offers_the_display_wheel_only_when_asked() {
 	// Multi-bit call: one option button per Decimal Display mode plus
 	// Confirm/Cancel, with the chosen mode's tile highlighted.
-	let multi = build_pin_edit_popup("BUS", true, 2, 1280.0, 800.0, Vec2::ZERO);
+	let multi = build_pin_edit_popup("BUS", true, 2, 0, 1280.0, 800.0, Vec2::ZERO);
 	for i in 0..4 {
 		assert!(multi.buttons.iter().any(|b| b.action == EditorAction::PinEditSetDisplayMode(i)), "Decimal Display option {i} must be clickable");
 	}
@@ -481,15 +481,29 @@ fn pin_edit_popup_offers_the_display_wheel_only_when_asked() {
 	assert!(multi.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == active_highlight), "the selected wheel option is highlighted");
 
 	// 1-bit call: no wheel at all, and no highlight tiles.
-	let single = build_pin_edit_popup("CLK", false, 1, 1280.0, 800.0, Vec2::ZERO);
+	let single = build_pin_edit_popup("CLK", false, 1, 0, 1280.0, 800.0, Vec2::ZERO);
 	assert!(!single.buttons.iter().any(|b| matches!(b.action, EditorAction::PinEditSetDisplayMode(_))));
 	assert!(!single.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == active_highlight));
 }
 
 #[test]
+fn pin_edit_popup_offers_colour_swatch_rows() {
+	// One clickable swatch per palette colour in both variants; the
+	// picked swatch carries the translucent-white wash.
+	let pick_wash = [1.0f32, 1.0, 1.0, 0.35].map(f32::to_bits);
+	for (show_display_options, colour_index) in [(true, 4usize), (false, 7)] {
+		let frame = build_pin_edit_popup("BUS", show_display_options, 0, colour_index, 1280.0, 800.0, Vec2::ZERO);
+		for i in 0..8 {
+			assert!(frame.buttons.iter().any(|b| b.action == EditorAction::PinEditSetColour(i)), "colour swatch {i} must be clickable");
+		}
+		assert!(frame.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == pick_wash), "the picked swatch is washed out");
+	}
+}
+
+#[test]
 fn pin_edit_popup_gates_confirm_on_name_presence_and_length() {
 	let confirm_for = |name: &str| {
-		build_pin_edit_popup(name, false, 0, 1280.0, 800.0, Vec2::ZERO)
+		build_pin_edit_popup(name, false, 0, 0, 1280.0, 800.0, Vec2::ZERO)
 			.buttons
 			.iter()
 			.find(|b| b.action == EditorAction::ConfirmPinEdit)

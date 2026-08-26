@@ -137,17 +137,18 @@ pub(crate) struct RomEditorState {
 
 /// Working state for the pin-edit popup (`Overlay::PinEdit`, mirroring
 /// `PinEditMenu`): which of the current root chip's own boundary dev-pins
-/// it's editing, plus the draft "Decimal Display" wheel selection --
-/// `display_mode_index` is an index into `ValueDisplayMode::ALL` and only
-/// meaningful for pins
-/// wider than one bit. The name draft lives in the shared
-/// `overlay_text_input` like every other text-field popup. Both halves
-/// are written back onto the pin only on Confirm.
+/// it's editing, plus the drafts of the two option rows -- the "Decimal
+/// Display" wheel selection (`display_mode_index`, an index into
+/// `ValueDisplayMode::ALL`, only meaningful for pins wider than one bit)
+/// and the colour-palette swatch pick (`colour`). The name draft lives in
+/// the shared `overlay_text_input` like every other text-field popup. All
+/// three are written back onto the pin only on Confirm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PinEditState {
 	pub(crate) is_input: bool,
 	pub(crate) pin_id: i32,
 	pub(crate) display_mode_index: usize,
+	pub(crate) colour: crate::description::Color,
 }
 
 /// What [`Overlay::UnsavedChanges`]'s Continue button should do once the

@@ -489,9 +489,14 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			let pins = if edit.is_input { &chip.input_pins } else { &chip.output_pins };
 			let pin = pins.iter().find(|p| p.id == edit.pin_id);
 			editor_ui::build_pin_edit_popup(
-				pin.map(|p| p.name.as_str()).unwrap_or_default(),
+				// The live draft, not the pin's committed name -- keystrokes
+				// land in the shared buffer, so feeding the builder the pin
+				// itself would freeze the field (and the Confirm gate) on
+				// the pre-edit name until confirm.
+				&v.overlay_text_input,
 				pin.is_some_and(|p| p.bit_count != crate::description::PinBitCount::Bit1),
 				edit.display_mode_index,
+				edit.colour.to_int().max(0) as usize,
 				vw,
 				vh,
 				mouse,
