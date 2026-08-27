@@ -1,8 +1,14 @@
 TODO LIST:
 
-if i connect a wire from the "output" to a wire it will connect the wire visually from the source wire's input - to the wire (where i clicked) so it's insainly wrong
+if i connect a wire from a component to a wire it will connect the wire visually from the source wire's input - to the wire (where i clicked) so it's insainly wrong
 
 if i "delete-part" of the wire that has wires that go out from it then tey will connect to random other wires instead of being deleted
+
+if i delete a component what has wires going out from it the wires delete like with "delete-part" should be the normal "delete
+
+if i delete a wire the pins it was connected sometimes don't update (and keep reciveing the data) this happens more frequently withh output pins
+
+duplicating a somponent (ie ROM) only duplicates the first inner data not the entire (it should not for bus-es but for the rest it should)
 
 - Show wire during placement: while dragging duplicated
   components, wires connecting them should be visible at the same alpha
@@ -13,8 +19,11 @@ if i "delete-part" of the wire that has wires that go out from it then tey will 
 
 make everything inside costumize a dragging stuff, so the displays and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
+shift-clicking on a component in theb ottom bar should not close the collections (if open and a component is clicked) just add the clicked chip to placement (make sure to offset the newest relative to the last position so they can be placed and will not collide)
 
 FUTURE PLANS (can be ignored now) :
+
+the chip search should be similar to the library, defualt click should just select it and show the "open" "delete" "use" and "star" buttons (if it is stared as is, so not with collection make it an "un-star" button)
 
 if i create e new chip (ctrl n) and i use save on it (ctrl s) it show us as the "save as | rename" not as "save" making it not starred if i do rename - sine i obv. don't want to save my custom chip as "New Chip <n>"
 
