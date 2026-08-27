@@ -39,7 +39,7 @@ Or use the all-in-one script:
 | `Ctrl+N` | New chip |
 | `Ctrl+P` | Preferences |
 | `Ctrl+R` | Rebuild/restart the simulation |
-| `Ctrl+F` | Toggle fit-to-view camera |
+| `Ctrl+H` | Toggle fit-to-view camera |
 | `Ctrl+G` | Toggle grid |
 | `(Ctrl/Shift)+D` | Duplicate selected |
 | `Ctrl+Space` | Pause/resume the simulation |

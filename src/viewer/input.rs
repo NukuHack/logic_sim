@@ -16,12 +16,13 @@ use crate::viewer::save_flow::{
 };
 use crate::viewer::state::{close_top_overlay, open_preferences, open_save_chip, open_search, Overlay, ViewerState};
 use crate::{sim, SavePaths, Saver};
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
 /// Convert winit's modifier state into the `Simulator::key_modifiers`
 /// bitmask (see `key_mods_bits`), using winit's own boolean accessors
 /// rather than its raw `bits()` value -- see the doc comment on
 /// `key_mods_bits` for why.
-pub(crate) fn encode_modifiers(mods: winit::keyboard::ModifiersState) -> u32 {
+pub(crate) fn encode_modifiers(mods: ModifiersState) -> u32 {
 	let mut bits = 0u32;
 	if mods.shift_key() {
 		bits |= sim::key_mods_bits::SHIFT;
@@ -44,54 +45,38 @@ pub(crate) fn encode_modifiers(mods: winit::keyboard::ModifiersState) -> u32 {
 /// for) keep it. Everything else -- Tab, Ctrl+F, typed characters --
 /// dismisses the popup first and then processes normally, mirroring the
 /// original's close-on-any-input stance while keeping shortcuts live.
-pub(crate) fn key_press_aimed_at_context_menu(logical_key: &winit::keyboard::Key) -> bool {
-	use winit::keyboard::{Key, NamedKey};
+pub(crate) fn key_press_aimed_at_context_menu(logical_key: &Key) -> bool {
 	matches!(logical_key, Key::Named(NamedKey::Escape | NamedKey::Alt | NamedKey::Control | NamedKey::Shift | NamedKey::Super))
+}
+
+fn digit_from_keycode(code: KeyCode) -> Option<char> {
+	match code {
+		KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
+		KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
+		KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
+		KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
+		KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
+		KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
+		KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
+		KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
+		KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
+		KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
+		_ => None,
+	}
 }
 
 /// Resolves a key event to the single alphanumeric char it should register
 /// as -- for the Key chip's held-key set and for the key-select popup's
 /// capture -- preferring the *physical* digit key over whatever character
 /// the layout happens to produce for it.
-///
-/// Letters go through `logical_key` as before (layout-aware, so e.g. an
-/// AZERTY 'A' key registers as the 'A' its cap shows). Digits go through
-/// `physical_key` instead: several common layouts (German QWERTZ, French
-/// AZERTY, ...) require holding Shift just to *type* a digit at all, so a
-/// Key chip bound to '5' via `logical_key` would never see a bare press of
-/// that key on those layouts -- only a Shift+5. Matching the physical
-/// digit-row/numpad position instead means the binding works the same
-/// regardless of layout or Shift state, which is what a player configuring
-/// "press 5" actually expects.
-///
-/// Split into `char_for_keys` (the real logic, over the two constructible
-/// key types) plus this thin wrapper over the actual event -- same reason
-/// as `can_delete_selection`: winit's `KeyEvent` itself can't be built
-/// outside winit, so the guard has to be testable without one.
-pub(crate) fn char_for_key_event(event: &winit::event::KeyEvent) -> Option<char> {
-	char_for_keys(event.physical_key, &event.logical_key)
-}
-
-fn char_for_keys(physical_key: winit::keyboard::PhysicalKey, logical_key: &winit::keyboard::Key) -> Option<char> {
-	use winit::keyboard::{Key, KeyCode, PhysicalKey};
+// Add this helper function in the same file, above `char_for_keys`
+pub(crate) fn char_for_keys(physical_key: PhysicalKey, logical_key: &Key) -> Option<char> {
 	if let PhysicalKey::Code(code) = physical_key {
-		let digit = match code {
-			KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
-			KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
-			KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
-			KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
-			KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
-			KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
-			KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
-			KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
-			KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
-			KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
-			_ => None,
-		};
-		if digit.is_some() {
-			return digit;
+		if let Some(digit) = digit_from_keycode(code) {
+			return Some(digit);
 		}
 	}
+
 	if let Key::Character(s) = logical_key {
 		return s.chars().next().map(|c| c.to_ascii_uppercase());
 	}
@@ -111,10 +96,8 @@ pub(crate) fn handle_viewer_key(
 	paths: &SavePaths,
 	status: &mut Option<String>,
 	event: &winit::event::KeyEvent,
-	modifiers: winit::keyboard::ModifiersState,
+	modifiers: ModifiersState,
 ) {
-	use winit::keyboard::{Key, NamedKey};
-
 	let target = v.stack.keyboard_target();
 	// ---- Right-click popup: anything not aimed at it dismisses it
 	// first, so the same key press then acts on whatever else it targets
@@ -122,77 +105,34 @@ pub(crate) fn handle_viewer_key(
 	if v.context_menu.is_some() && !key_press_aimed_at_context_menu(&event.logical_key) {
 		v.context_menu = None;
 	}
+
+	let (s, named): (&str, &NamedKey) = match &event.logical_key {
+		Key::Character(s) => (s, &NamedKey::PowerOff),
+		Key::Named(n) => ("", n),
+		_ => ("", &NamedKey::PowerOff),
+	};
+
 	// ---- Key-select overlay: a digit key's *physical* position takes
 	// priority over its logical character (see `char_for_key_event`'s
 	// docs) -- falls through to the `Key::Character` arm below
 	// unchanged for everything else (letters, and any layout where the
 	// digit key's own character already matches).
 	if target == Some(LayerId::KeySelect) {
-		if let Some(c @ '0'..='9') = char_for_key_event(event) {
+		if let Some(c @ '0'..='9') = char_for_keys(event.physical_key, &event.logical_key) {
 			v.overlay_key_choice = Some(c);
 		}
 	}
 
-	match &event.logical_key {
-		// ---- Text entry for whichever text-field overlay owns focus ----
-		// The search popup deliberately types into its own `search_query`
-		// buffer rather than the shared `overlay_text_input`, so a
-		// collection-name field open underneath it (Library + Ctrl+F) keeps
-		// its draft while the query comes and goes.
-		Key::Named(NamedKey::Backspace) if target == Some(LayerId::Search) => {
-			v.search_query.pop();
-		}
-		Key::Named(NamedKey::Backspace)
-			if matches!(target, Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::PinEdit))
-				|| (matches!(target, Some(LayerId::Library)) && (v.library_creating_collection || v.library_renaming_collection)) =>
-		{
-			v.overlay_text_input.pop();
-		}
-		Key::Named(NamedKey::Enter) if target == Some(LayerId::Naming) => {
-			confirm_naming_popup(v, status);
-		}
-		Key::Named(NamedKey::Enter) if target == Some(LayerId::PinEdit) => {
-			confirm_pin_edit_popup(v);
-		}
-		Key::Named(NamedKey::Enter) if target == Some(LayerId::UnsavedChanges) => {
-			confirm_unsaved_changes_popup(v, paths, status);
-		}
-		Key::Named(NamedKey::Enter)
-			if target == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) =>
-		{
-			apply_editor_action(v, paths, status, EditorAction::ConfirmCollectionName);
-		}
-		Key::Named(NamedKey::Enter) if target == Some(LayerId::RomEditor) => {
-			confirm_rom_cell(v, status);
-		}
-		Key::Named(NamedKey::Enter) if target == Some(LayerId::KeySelect) && v.overlay_key_choice.is_some() => {
-			confirm_key_select_popup(v, status);
-		}
-		// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"
-		// action) -- when both "Save As" and "Rename" are on offer, that choice needs a click.
-		Key::Named(NamedKey::Enter)
-			if target == Some(LayerId::SaveChip)
-				&& save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
-		{
-			confirm_save_chip_popup(v, paths, status);
-		}
-		Key::Character(s) if target == Some(LayerId::Search) => {
+	if !s.is_empty() {
+		if target == Some(LayerId::Search) {
 			if v.search_query.chars().count() < 64 {
 				v.search_query.push_str(s);
 			}
-		}
-		Key::Character(s)
-			if matches!(target, Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))
-				|| (matches!(target, Some(LayerId::Library))
-					&& (v.library_creating_collection || v.library_renaming_collection)) =>
-		{
-			if v.overlay_text_input.chars().count() < 64 {
-				v.overlay_text_input.push_str(s);
-			}
+			return;
 		}
 		// ROM cell values are short numbers -- a lower cap keeps a
 		// stray paste from overflowing the little text field.
-		Key::Character(s) if target == Some(LayerId::RomEditor) => {
+		else if target == Some(LayerId::RomEditor) {
 			if v.overlay_text_input.chars().count() < 10 {
 				v.overlay_text_input.push_str(s);
 			}
@@ -200,38 +140,122 @@ pub(crate) fn handle_viewer_key(
 		// The customizer's hex colour field: only hex digits and a leading
 		// '#' get through, capped at "#RRGGBB" -- each accepted keystroke
 		// re-parses into the draft colour immediately.
-		Key::Character(s) if target == Some(LayerId::CustomizePanel) => {
+		else if target == Some(LayerId::CustomizePanel) {
 			let is_hexish = |c: char| c.is_ascii_hexdigit() || c == '#';
 			if s.chars().all(is_hexish) && v.overlay_text_input.chars().count() < 7 {
 				v.overlay_text_input.push_str(s);
 				customize_flow::apply_hex_input(v);
 			}
 		}
-		Key::Named(NamedKey::Backspace) if target == Some(LayerId::CustomizePanel) => {
-			v.overlay_text_input.pop();
-			customize_flow::apply_hex_input(v);
-		}
-		Key::Named(NamedKey::Enter) if target == Some(LayerId::CustomizePanel) => {
-			customize_flow::confirm_customize(v, status);
-		}
-		Key::Named(NamedKey::Delete)
-			if target == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_active()) =>
-		{
-			customize_flow::delete_held_display(v);
-		}
 		// ---- Key-select overlay: capture the next alphanumeric key ----
-		Key::Character(s) if target == Some(LayerId::KeySelect) => {
+		else if target == Some(LayerId::KeySelect) {
 			if let Some(c) = s.chars().next() {
 				let upper = c.to_ascii_uppercase();
 				if editor_ui::KEY_SELECT_ALLOWED_CHARS.contains(upper) {
 					v.overlay_key_choice = Some(upper);
 				}
 			}
+		} else if matches!(target, Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))
+			|| (matches!(target, Some(LayerId::Library)) && (v.library_creating_collection || v.library_renaming_collection))
+		{
+			if v.overlay_text_input.chars().count() < 64 {
+				v.overlay_text_input.push_str(s);
+			}
+		} else if target == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() && prefs_field_accepts(v, s) {
+			match v.prefs_field_focus {
+				Some(PrefValueField::ClockSpeed) => v.prefs_clock_text.push_str(s),
+				Some(PrefValueField::TargetRate) => v.prefs_rate_text.push_str(s),
+				None => unreachable!("arm is gated on a focused field"),
+			}
+			apply_prefs_field_text(v);
+		} else {
+			match s {
+				// ---- Normal viewer shortcuts (only while nothing owns the keyboard) ----
+				// Ctrl+F camera, Ctrl+R reset
+				"r" if target.is_none() && modifiers.control_key() => v.restart_sim_fresh(),
+				"h" if target.is_none() && modifiers.control_key() => v.camera_fitted = !v.camera_fitted,
+				// Ctrl+L opens the chip library panel (`KeyboardShortcuts`'s
+				// LibraryShortcutTriggered).
+				"l" if target.is_none() && modifiers.control_key() && !modifiers.shift_key() => open_library_panel(v),
+				// Toggle grid: the Ctrl+G form mirrors `KeyboardShortcuts.ToggleGridShortcutTriggered`
+				// (works over open panels, like `PreferencesMenu.HandleKeyboardShortcuts`);
+				// Ctrl+P fpr preferences
+				"g" if target.is_none() && modifiers.control_key() => toggle_grid(v, paths),
+				"p" if target.is_none() && modifiers.control_key() => open_preferences(v),
+				"f" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => open_search(v),
+				"s" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => open_save_chip(v),
+				"n" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => request_start_new_chip(v, paths, status),
+				// Ctrl+Z undo / Ctrl+Shift+Z redo (`KeyboardShortcuts.UndoShortcutTriggered`
+				// / `.RedoShortcutTriggered`), replaying the edited chip's recorded
+				// actions -- see `viewer::undo`.
+				"y" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => crate::viewer::undo::try_redo(v),
+				"z" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => crate::viewer::undo::try_undo(v),
+				// MultiMode+D duplicates the selection into a carried copy
+				// (`DuplicateShortcutTriggered` -> `DuplicateSelectedElements`;
+				// MultiMode = Alt or Shift, same as box-select add).
+				"d" if (target.is_none() || target == Some(LayerId::Library)) && (modifiers.control_key() || modifiers.shift_key()) => {
+					chip_interaction::duplicate_selection(v);
+				}
+				_ => {}
+			}
+		}
+		return;
+	}
+	match named {
+		NamedKey::PowerOff => (),
+		// ---- Text entry for whichever text-field overlay owns focus ----
+		// The search popup deliberately types into its own `search_query`
+		// buffer rather than the shared `overlay_text_input`, so a
+		// collection-name field open underneath it (Library + Ctrl+F) keeps
+		// its draft while the query comes and goes.
+		NamedKey::Backspace if target == Some(LayerId::Search) => {
+			v.search_query.pop();
+		}
+		NamedKey::Backspace
+			if matches!(target, Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::PinEdit))
+				|| (matches!(target, Some(LayerId::Library)) && (v.library_creating_collection || v.library_renaming_collection)) =>
+		{
+			v.overlay_text_input.pop();
+		}
+		NamedKey::Enter if target == Some(LayerId::Naming) => {
+			confirm_naming_popup(v, status);
+		}
+		NamedKey::Enter if target == Some(LayerId::PinEdit) => {
+			confirm_pin_edit_popup(v);
+		}
+		NamedKey::Enter if target == Some(LayerId::UnsavedChanges) => {
+			confirm_unsaved_changes_popup(v, paths, status);
+		}
+		NamedKey::Enter if target == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) => {
+			apply_editor_action(v, paths, status, EditorAction::ConfirmCollectionName);
+		}
+		NamedKey::Enter if target == Some(LayerId::RomEditor) => {
+			confirm_rom_cell(v, status);
+		}
+		NamedKey::Enter if target == Some(LayerId::KeySelect) && v.overlay_key_choice.is_some() => {
+			confirm_key_select_popup(v, status);
+		}
+		// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"
+		// action) -- when both "Save As" and "Rename" are on offer, that choice needs a click.
+		NamedKey::Enter
+			if target == Some(LayerId::SaveChip) && save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
+		{
+			confirm_save_chip_popup(v, paths, status);
+		}
+		NamedKey::Backspace if target == Some(LayerId::CustomizePanel) => {
+			v.overlay_text_input.pop();
+			customize_flow::apply_hex_input(v);
+		}
+		NamedKey::Enter if target == Some(LayerId::CustomizePanel) => {
+			customize_flow::confirm_customize(v, status);
+		}
+		NamedKey::Delete if target == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_active()) => {
+			customize_flow::delete_held_display(v);
 		}
 		// ---- Preferences panel's numeric fields: digits only (mirrors
 		// `PreferencesMenu.ValidateIntegerInput`), each edit re-parsed
 		// straight onto the prefs so changes act live ----
-		Key::Named(NamedKey::Backspace) if target == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() => {
+		NamedKey::Backspace if target == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() => {
 			match v.prefs_field_focus {
 				Some(PrefValueField::ClockSpeed) => {
 					v.prefs_clock_text.pop();
@@ -243,18 +267,8 @@ pub(crate) fn handle_viewer_key(
 			}
 			apply_prefs_field_text(v);
 		}
-		Key::Character(s)
-			if target == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() && prefs_field_accepts(v, s) =>
-		{
-			match v.prefs_field_focus {
-				Some(PrefValueField::ClockSpeed) => v.prefs_clock_text.push_str(s),
-				Some(PrefValueField::TargetRate) => v.prefs_rate_text.push_str(s),
-				None => unreachable!("arm is gated on a focused field"),
-			}
-			apply_prefs_field_text(v);
-		}
 		// ---- Library panel keys (work while it has focus, even under another popup) ----
-		Key::Named(NamedKey::Escape)
+		NamedKey::Escape
 			if target == Some(LayerId::Library)
 				&& (v.library_creating_collection
 					|| v.library_renaming_collection
@@ -265,119 +279,51 @@ pub(crate) fn handle_viewer_key(
 		}
 		// ---- Customize workspace: Escape cancels a grab/resize first,
 		// only closing the workspace itself on the next press ----
-		Key::Named(NamedKey::Escape)
-			if target == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_active()) =>
-		{
+		NamedKey::Escape if target == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_active()) => {
 			customize_flow::cancel_interaction(v);
 		}
-		Key::Named(NamedKey::Escape) if target.is_some_and(LayerId::is_overlay_panel) => {
+		NamedKey::Escape if target.is_some_and(LayerId::is_overlay_panel) => {
 			if target == Some(LayerId::Library) {
 				v.library_selection = LibrarySelection::None;
 			}
 			close_top_overlay(v);
 		}
 		// ---- Right-click popup: Escape dismisses it ----
-		Key::Named(NamedKey::Escape) if v.context_menu.is_some() => v.context_menu = None,
+		NamedKey::Escape if v.context_menu.is_some() => v.context_menu = None,
 		// ---- Viewed-chip stack: Escape pops back to the parent chip
 		// (the banner's Back gesture; `CancelShortcutTriggered` inside
 		// `ViewedChipsBar`) ----
-		Key::Named(NamedKey::Escape) if !v.view_stack.is_empty() => v.return_to_previous_viewed_chip(),
-		// ---- Normal viewer shortcuts (only while nothing owns the keyboard) ----
-		// Ctrl+F camera, Ctrl+R reset
-		Key::Character(s) if target.is_none() && modifiers.control_key() && s.eq_ignore_ascii_case("r") => v.restart_sim_fresh(),
-		Key::Character(s) if target.is_none() && modifiers.control_key() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
-		// Ctrl+L opens the chip library panel (`KeyboardShortcuts`'s
-		// LibraryShortcutTriggered).
-		Key::Character(s)
-			if target.is_none() && modifiers.control_key() && !modifiers.shift_key() && s.eq_ignore_ascii_case("l") =>
-		{
-			open_library_panel(v);
-		}
-		// Toggle grid: the Ctrl+G form mirrors `KeyboardShortcuts.ToggleGridShortcutTriggered`
-		// (works over open panels, like `PreferencesMenu.HandleKeyboardShortcuts`);
-		// Ctrl+P fpr preferences
-		Key::Character(s) if target.is_none() && modifiers.control_key() && s.eq_ignore_ascii_case("g") => toggle_grid(v, paths),
-		Key::Character(s) if target.is_none() && modifiers.control_key() && s.eq_ignore_ascii_case("p") => open_preferences(v),
+		NamedKey::Escape if !v.view_stack.is_empty() => v.return_to_previous_viewed_chip(),
 		// Ctrl+Space toggles pause (`SimPauseToggleShortcutTriggered`); Space alone, while
 		// paused and nothing owns the keyboard, advances a single step (`SimNextStepShortcutTriggered`,
 		// which the original also only handles over the bare editor).
-		Key::Named(NamedKey::Space) if modifiers.control_key() && !typing_into_free_text_field(v) => {
+		NamedKey::Space if modifiers.control_key() && !typing_into_free_text_field(v) => {
 			v.toggle_sim_paused();
 			persist_prefs_shortcut_change(v, paths);
 		}
-		Key::Named(NamedKey::Space) if target.is_none() && !modifiers.control_key() && v.prefs.prefs_sim_paused => {
+		NamedKey::Space if target.is_none() && !modifiers.control_key() && v.prefs.prefs_sim_paused => {
 			v.request_single_sim_step();
 		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("f") =>
-		{
-			open_search(v);
-		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("s") =>
-		{
-			open_save_chip(v);
-		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("n") =>
-		{
-			request_start_new_chip(v, paths, status);
-		}
-		// Ctrl+Z undo / Ctrl+Shift+Z redo (`KeyboardShortcuts.UndoShortcutTriggered`
-		// / `.RedoShortcutTriggered`), replaying the edited chip's recorded
-		// actions -- see `viewer::undo`.
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("y") =>
-		{
-			crate::viewer::undo::try_redo(v);
-		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("z") =>
-		{
-			crate::viewer::undo::try_undo(v);
-		}
-		Key::Named(NamedKey::Tab) if target.is_none() => {
+		NamedKey::Tab if target.is_none() => {
 			v.labels_visible = !v.labels_visible;
-		}
-		// MultiMode+D duplicates the selection into a carried copy
-		// (`DuplicateShortcutTriggered` -> `DuplicateSelectedElements`;
-		// MultiMode = Alt or Shift, same as box-select add).
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& (modifiers.control_key() || modifiers.shift_key())
-				&& s.eq_ignore_ascii_case("d") =>
-		{
-			chip_interaction::duplicate_selection(v);
 		}
 		// ---- Plain-viewer selection: Delete removes every selected
 		// component (bus partners cascade along per `delete_component`).
 		// Only while no surface owns the keyboard and nothing else is in
 		// flight, so a text field's or a pending action's Delete stays its
 		// own gesture ----
-		Key::Named(NamedKey::Delete) if can_delete_selection(v) => delete_selected(v),
+		NamedKey::Delete if can_delete_selection(v) => delete_selected(v),
 		// ---- Wire edit mode: Enter leaves it (`ConfirmShortcutTriggered`
 		// -> `ExitWireEditMode`); Delete removes the selected bend
 		// (`DeleteSelected`'s wireToEdit branch) ----
-		Key::Named(NamedKey::Enter) if v.wire_edit.is_some() => crate::viewer::wire_edit::exit(v),
-		Key::Named(NamedKey::Delete) if target.is_none() && v.wire_edit.is_some_and(|e| e.selected_bend.is_some()) => {
+		NamedKey::Enter if v.wire_edit.is_some() => crate::viewer::wire_edit::exit(v),
+		NamedKey::Delete if target.is_none() && v.wire_edit.is_some_and(|e| e.selected_bend.is_some()) => {
 			crate::viewer::wire_edit::delete_selected_bend(v);
 		}
 		// ---- Pending wire placement: Backspace/Delete removes the last
 		// placed bend, cancelling only when none remain
 		// (`WireInstance.RemoveLastPoint`) ----
-		Key::Named(NamedKey::Delete)
-			if v.pending_wire.is_some() && v.pending_wire.as_ref().is_some_and(|p| !p.bend_points.is_empty()) =>
-		{
+		NamedKey::Delete if v.pending_wire.is_some() && v.pending_wire.as_ref().is_some_and(|p| !p.bend_points.is_empty()) => {
 			if let Some(pending) = v.pending_wire.as_mut() {
 				pending.bend_points.pop();
 			}
@@ -386,7 +332,7 @@ pub(crate) fn handle_viewer_key(
 		// overlay > pending wire/chip/selection-drag > bottom-bar flyout >
 		// leave the editor (gated by the unsaved-changes prompt while the
 		// open chip has in-memory-only edits) ----
-		Key::Named(NamedKey::Escape) => {
+		NamedKey::Escape => {
 			if has_cancellable_canvas_state(v) {
 				v.pending_wire = None;
 				v.pending_place.clear();
@@ -483,8 +429,7 @@ mod tests {
 
 	#[test]
 	fn only_escape_and_modifiers_are_aimed_at_the_context_menu() {
-		let aimed = |key: winit::keyboard::Key| key_press_aimed_at_context_menu(&key);
-		use winit::keyboard::{Key, NamedKey};
+		let aimed = |key: Key| key_press_aimed_at_context_menu(&key);
 
 		assert!(aimed(Key::Named(NamedKey::Escape)), "Escape stays the popup's own dismiss gesture");
 		for modifier in [NamedKey::Shift, NamedKey::Control, NamedKey::Alt, NamedKey::Super] {
@@ -498,8 +443,6 @@ mod tests {
 
 	#[test]
 	fn char_for_keys_prefers_the_physical_digit_over_a_shifted_symbol() {
-		use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
-
 		// A US layout: the '5' key's own character is '5' -- both paths agree.
 		assert_eq!(char_for_keys(PhysicalKey::Code(KeyCode::Digit5), &Key::Character("5".into())), Some('5'));
 
@@ -520,7 +463,6 @@ mod tests {
 	#[test]
 	fn encode_modifiers_maps_each_winit_flag_to_its_sim_bit() {
 		use sim::key_mods_bits;
-		use winit::keyboard::ModifiersState;
 
 		assert_eq!(encode_modifiers(ModifiersState::empty()), 0);
 		assert_eq!(encode_modifiers(ModifiersState::SHIFT), key_mods_bits::SHIFT);

@@ -5,12 +5,12 @@
 
 use crate::description::{ChipDescription, ChipLibrary, Color, WireConnectionType, WireDescription};
 use crate::render::foundation::{offset_polyline, SceneGeometry};
-use crate::render::{layout, place_sub_chips};
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_colour};
 use crate::render::scene::placed::PlacedSubChip;
 use crate::render::scene::wire_endpoints::{WireCtx, WirePointCache};
 use crate::render::theme;
+use crate::render::{layout, place_sub_chips};
 use crate::structs::Vec2;
 use std::collections::HashMap;
 
@@ -192,7 +192,6 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 
 	removed_count
 }
-
 
 pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipLibrary) -> usize {
 	if index >= chip.wires.len() {
