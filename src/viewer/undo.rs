@@ -185,7 +185,8 @@ pub(crate) fn delete_wire_segment_with_undo(v: &mut ViewerState, root_chip_name:
 	let Some(wire) = v.library.get(root_chip_name).wires.get(wire_index).cloned() else { return };
 	let full_state = capture_full_wire_state(v, &[wire_index], &[]);
 	record(v, UndoAction::WireExistence(WireExistenceAction { wire, wire_index, is_delete: true, full_state: Some(full_state) }));
-	scene::delete_wire_segment(v.library.get_mut(root_chip_name), wire_index);
+	let library = v.library.clone();
+	scene::delete_wire_old(v.library.get_mut(root_chip_name), wire_index, &library);
 	v.rebuild_sim();
 }
 

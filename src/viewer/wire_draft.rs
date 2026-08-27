@@ -57,7 +57,6 @@ impl PendingWireEnd {
 /// out to be the wire's real *source*, since `points` always runs
 /// source-to-target). `None` on [`crate::viewer::state::ViewerState`] whenever no
 /// wire is being placed.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub(crate) struct PendingWire {
 	pub(crate) start: PendingWireEnd,

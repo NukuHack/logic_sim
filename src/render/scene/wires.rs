@@ -5,7 +5,7 @@
 
 use crate::description::{ChipDescription, ChipLibrary, Color, WireConnectionType, WireDescription};
 use crate::render::foundation::{offset_polyline, SceneGeometry};
-use crate::render::layout;
+use crate::render::{layout, place_sub_chips};
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_colour};
 use crate::render::scene::placed::PlacedSubChip;
@@ -150,6 +150,92 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 		}
 		shift_connected_indices_after_removal(chip, &to_remove);
 		return removed_count;
+	}
+
+	// Bus-wire cascade: seed with `index` and everything attached to the
+	// origin's pins, then grow through transitive taps.
+	let origin_owner = chip.wires[index].source_pin_address.pin_owner_id;
+	let origin_pin_ids: Vec<i32> = chip
+		.sub_chips
+		.iter()
+		.find(|s| s.id == origin_owner)
+		.and_then(|s| library.try_get(&s.name))
+		.map(|d| d.input_pins.iter().chain(d.output_pins.iter()).map(|p| p.id).collect())
+		.unwrap_or_default();
+
+	let mut to_remove = vec![index];
+	loop {
+		let mut added = false;
+		for (i, w) in chip.wires.iter().enumerate() {
+			if to_remove.contains(&i) {
+				continue;
+			}
+			let touches_origin_pins =
+				[w.source_pin_address, w.target_pin_address].iter().any(|a| a.pin_owner_id == origin_owner && origin_pin_ids.contains(&a.pin_id));
+			let taps_removed = w.connection_type != WireConnectionType::ToPins && to_remove.contains(&(w.connected_wire_index as usize));
+			if touches_origin_pins || taps_removed {
+				to_remove.push(i);
+				added = true;
+			}
+		}
+		if !added {
+			break;
+		}
+	}
+	to_remove.sort_unstable();
+
+	let removed_count = to_remove.len();
+	for &i in to_remove.iter().rev() {
+		chip.wires.remove(i);
+	}
+	shift_connected_indices_after_removal(chip, &to_remove);
+
+	removed_count
+}
+
+
+pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipLibrary) -> usize {
+	if index >= chip.wires.len() {
+		return 0;
+	}
+
+	let is_bus = crate::viewer::bus_wiring::is_bus_wire(chip, library, &chip.wires[index]);
+
+	// World-space polyline of the doomed wire (endpoints resolved exactly
+	// the way drawing resolves them), needed to re-route detached tappers.
+	let anchor_world = if is_bus {
+		Vec::new()
+	} else {
+		let chip_snapshot = chip.clone();
+		let placed = place_sub_chips(&chip_snapshot, library);
+		let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
+		let mut cache: WirePointCache = HashMap::new();
+		let ctx = WireCtx { chip: &chip_snapshot, placed: &placed, owner_to_placed: &owner_to_placed, wires: &chip_snapshot.wires };
+		let src = ctx.endpoint(index, false, &mut cache, 0);
+		let dst = ctx.endpoint(index, true, &mut cache, 0);
+		let mut world = Vec::with_capacity(chip.wires[index].points.len() + 2);
+		world.push(src.or(Some(chip.wires[index].cached_source_point)).expect("endpoint fallback"));
+		world.extend_from_slice(&chip.wires[index].points);
+		world.push(dst.unwrap_or(chip.wires[index].cached_target_point));
+		world
+	};
+
+	if !is_bus {
+		let anchor = chip.wires[index].clone();
+		let dependents: Vec<usize> = chip
+			.wires
+			.iter()
+			.enumerate()
+			.filter(|(i, w)| *i != index && w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == index)
+			.map(|(i, _)| i)
+			.collect();
+		for d in dependents {
+			detach_dependent(chip, d, &anchor, &anchor_world);
+		}
+
+		chip.wires.remove(index);
+		shift_connected_indices_after_removal(chip, &[index]);
+		return 1;
 	}
 
 	// Bus-wire cascade: seed with `index` and everything attached to the

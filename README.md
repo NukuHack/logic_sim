@@ -41,6 +41,7 @@ Or use the all-in-one script:
 | `Ctrl+R` | Rebuild/restart the simulation |
 | `Ctrl+F` | Toggle fit-to-view camera |
 | `Ctrl+G` | Toggle grid |
+| `(Ctrl/Shift)+D` | Duplicate selected |
 | `Ctrl+Space` | Pause/resume the simulation |
 | `Space` (while paused) | Advance the simulation one step |
 | `Esc` | Cancel pending action / close topmost overlay / leave viewed chip / leave editor |

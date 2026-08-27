@@ -72,17 +72,6 @@ pub(crate) fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCou
 	point_in_rounded_rect(point, pos, size, radius, round_left, !round_left)
 }
 
-/// A point-in-shape test covering an *input* dev-pin's whole clickable
-/// body (the union of every individual bit cell) -- used for the
-/// coarse "is the cursor anywhere on this pin" hover check. For
-/// per-bit toggle handling (which exact bit a click landed on), use
-/// `hit_test_input_dev_pin_bit` instead.
-#[allow(dead_code)]
-fn point_in_input_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> bool {
-	let size = layout::input_dev_pin_body_size(bit_count);
-	point_in_rect(point, pos, size)
-}
-
 /// Returns the bit index (0-based) of whichever of an input dev-pin's
 /// individual clickable cells `point` landed on, or `None` if it missed
 /// every cell. `pos` is the dev-pin's own saved position, the same value

@@ -486,6 +486,7 @@ impl App {
 	}
 
 	pub(crate) fn handle_key_event(&mut self, event: winit::event::KeyEvent) {
+		let pressed = event.state == ElementState::Pressed;
 		// Feed the Key chip's held-key set on both press and release (not just press, unlike the
 		// shortcut handling below) since it needs to know when a key stops being held. The chip
 		// stores/compares its target letter in capitals, so lowercase 'a' must register as 'A' here.
@@ -498,20 +499,17 @@ impl App {
 		// never get stuck "on".
 		if let Some(c) = crate::viewer::input::char_for_key_event(&event) {
 			if let Screen::Viewer(v) = &mut self.screen {
-				let press_swallowed_by_ui = event.state == ElementState::Pressed && v.stack.keyboard_stop();
-				if !press_swallowed_by_ui {
-					let registers = c.is_ascii_alphanumeric();
-					if registers {
-						match event.state {
-							ElementState::Pressed => v.sim.held_key_press(c),
-							ElementState::Released => v.sim.held_key_release(c),
-						}
+				if pressed && v.stack.keyboard_stop()
+					&& c.is_ascii_alphanumeric() {
+					match pressed {
+						true => v.sim.held_key_press(c),
+						false => v.sim.held_key_release(c),
 					}
 				}
 			}
 		}
 
-		if event.state != ElementState::Pressed {
+		if !pressed {
 			return;
 		}
 
