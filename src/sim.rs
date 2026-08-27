@@ -795,10 +795,50 @@ impl Simulator {
 		let mut key = Vec::with_capacity(path.len() + 1);
 		key.extend_from_slice(path);
 		key.push(self.chips[idx.0].id);
-		if let Some(saved) = map.get(&key) {
-			let state = &mut self.chips[idx.0].internal_state;
-			for (slot, &value) in state.iter_mut().zip(saved) {
-				*slot = value;
+		let chip_type = self.chips[idx.0].chip_type;
+		// How many leading slots of this chip's `internal_state` are pure
+		// config (written only by the player through an editor popup, never
+		// by `process_builtin_chip` at runtime) versus genuine volatile
+		// memory a rebuild should carry over (RAM/ROM cell contents, pulse
+		// countdowns, display buffers -- see `capture_internal_states`'s
+		// docs). Blindly restoring a config slot from the pre-edit capture
+		// means the edit that triggered this very rebuild -- a key rebind,
+		// an LED colour, a ROM word, a bus link/flip, a Pulse's configured
+		// length -- gets silently reverted back to its stale value, and
+		// only "sticks" once something reloads the chip from scratch
+		// (`open_chip_by_name`'s `restart_sim_fresh`, which skips restore
+		// entirely). `usize::MAX` means "skip restoring this chip
+		// altogether" for types that are 100% config with no runtime slots
+		// at all.
+		let skip_leading = match chip_type {
+			// `[0]` is the bound key char (`E::Key` only ever reads it).
+			ChipType::Key => usize::MAX,
+			// `[0]` is the palette index rendering reads each frame;
+			// nothing in `sim.rs` processes `DisplayLed` at all.
+			ChipType::DisplayLed => usize::MAX,
+			// All 256 words are ROM contents -- `E::Rom256x16` only ever
+			// reads `internal_state`, it's never written back at runtime.
+			ChipType::Rom256x16 => usize::MAX,
+			// `[0]` is the linked partner's instance id, `[1]` is the
+			// flip flag -- inert as far as the sim is concerned (bus
+			// routing is baked into wire topology at `Simulator::build`
+			// time, and nothing in `process_builtin_chip` reads either
+			// slot for a bus chip), but excluded for the same reason as
+			// the config-only types above rather than relying on that.
+			t if t.is_bus_type() => usize::MAX,
+			// `[0]` is the configured pulse length (ticks); `[1]`
+			// (ticks remaining) and `[2]` (last sampled input edge) are
+			// genuine runtime state `process_builtin_chip`'s `Pulse` arm
+			// both reads and writes, so those still carry over normally.
+			ChipType::Pulse => 1,
+			_ => 0,
+		};
+		if skip_leading != usize::MAX {
+			if let Some(saved) = map.get(&key) {
+				let state = &mut self.chips[idx.0].internal_state;
+				for (slot, &value) in state.iter_mut().zip(saved).skip(skip_leading) {
+					*slot = value;
+				}
 			}
 		}
 		let sub_chips = self.chips[idx.0].sub_chips.clone();
@@ -1096,6 +1136,52 @@ mod internal_state_carry_tests {
 
 		assert_eq!(ram_word(&second, 5, 7), Some(0xBEEF), "the top-level RAM's contents carried over");
 		assert_eq!(ram_word(&second, 6, 3), Some(0xF00D), "the nested RAM's contents carried over too");
+	}
+
+	fn key_chip_state<'a>(sim: &'a Simulator, id: i32) -> &'a [u32] {
+		for idx in 0..sim.chips.len() {
+			if sim.chips[idx].id == id && sim.chips[idx].chip_type == ChipType::Key {
+				return &sim.chips[idx].internal_state;
+			}
+		}
+		panic!("no Key chip with id {id}");
+	}
+
+	/// Regression test: rebinding a Key chip through the key-select popup
+	/// (which edits `SubChipDescription::internal_data` then calls
+	/// `ViewerState::rebuild_sim`, i.e. capture-old-states -> build-from-new-
+	/// description -> restore-old-states) must not have that restore step
+	/// silently undo the rebind by copying the *old* bound char back over
+	/// the freshly-built chip's `internal_state`. Key has no runtime-mutated
+	/// state for `restore_internal_states` to legitimately preserve -- see
+	/// `Simulator::restore_internal_states_at`'s doc comment.
+	#[test]
+	fn rebuilding_after_a_key_chip_rebind_does_not_revert_to_the_old_key() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		let mut root = ChipDescription::new("ROOT", ChipType::Custom);
+		root.sub_chips.push(SubChipDescription {
+			name: "Key".into(),
+			id: 1,
+			internal_data: Some(vec!['A' as u32]),
+			position: Default::default(),
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+
+		let first = Simulator::build(&root, &library);
+		assert_eq!(key_chip_state(&first, 1), &['A' as u32], "precondition: built bound to 'A'");
+		let captured = first.capture_internal_states();
+
+		// The player rebinds it to '5' through the popup: the *description*
+		// changes, then a rebuild carries the old capture across -- exactly
+		// `ViewerState::rebuild_sim`'s sequence.
+		root.sub_chips[0].internal_data = Some(vec!['5' as u32]);
+		let mut second = Simulator::build(&root, &library);
+		assert_eq!(key_chip_state(&second, 1), &['5' as u32], "precondition: rebuild picks up the new binding");
+		second.restore_internal_states(&captured);
+
+		assert_eq!(key_chip_state(&second, 1), &['5' as u32], "the rebind must survive the restore, not revert to 'A'");
 	}
 
 	/// A chip that only exists on one side (added/removed between builds)

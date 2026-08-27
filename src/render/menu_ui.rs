@@ -290,8 +290,18 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 		);
 	}
 
-	let confirm_rect = UiRect::new(cx - BUTTON_W / 2.0 - 6.0 - 90.0, panel_rect.y + panel_h - 56.0, 180.0, 40.0).clamp_to(panel_rect);
-	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 40.0).clamp_to(panel_rect);
+	// Confirm/Cancel share the same 30px side margins as the name field
+	// above (`panel_w - 60`) with a fixed gap between them, so they're
+	// always symmetric and never need `clamp_to` to pull one back inside
+	// the panel -- the old fixed-width-from-centre math could push
+	// Confirm's left edge past the panel's own left edge on any popup
+	// whose title/label made the panel narrower than the buttons assumed.
+	let button_gap = 12.0;
+	let buttons_w = panel_w - 60.0;
+	let button_w = (buttons_w - button_gap) / 2.0;
+	let button_y = panel_rect.y + panel_h - 56.0;
+	let confirm_rect = UiRect::new(panel_rect.x + 30.0, button_y, button_w, 40.0);
+	let cancel_rect = UiRect::new(confirm_rect.x + button_w + button_gap, button_y, button_w, 40.0);
 	let confirm_enabled =
 		!is_name_popup || (menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input)) && !text_input.trim().is_empty();
 	add_button(frame, ui, confirm_rect, "Confirm", UiAction::PopupConfirm, confirm_enabled);

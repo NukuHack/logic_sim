@@ -795,6 +795,36 @@ fn new_project_popup_shows_a_text_field_and_disables_confirm_for_invalid_names()
 }
 
 #[test]
+fn popup_confirm_and_cancel_buttons_stay_inside_the_panel_and_are_symmetric() {
+	// Regression test for the popup buttons overflowing/misaligning
+	// (todo.txt: "some do even flow out from the container"). Confirm
+	// and Cancel must be equal width, share the panel's own side
+	// margins, and never spill past its left/right edges.
+	let root = temp_dir("menu_ui_popup_button_bounds");
+	let paths = SavePaths::new(&root);
+	let mut menu = MainMenu::new(paths);
+	menu.choose_new_project();
+
+	let frame = build_popup_frame(&menu, 1280.0, 800.0, "My New Project", Vec2::ZERO);
+	let confirm = frame.buttons.iter().find(|b| b.action == UiAction::PopupConfirm).unwrap();
+	let cancel = frame.buttons.iter().find(|b| b.action == UiAction::PopupCancel).unwrap();
+
+	assert!((confirm.rect.w - cancel.rect.w).abs() < 1e-6, "both buttons should be the same width");
+	assert!(confirm.rect.x < cancel.rect.x, "confirm sits to the left of cancel");
+	assert!(confirm.rect.x + confirm.rect.w <= cancel.rect.x, "buttons must not overlap");
+
+	// The panel itself is centred and 420 wide (see `build_popup`); every
+	// button edge must land strictly inside it, with no reliance on
+	// `clamp_to` to pull an overflowing rect back in.
+	let panel_left = 1280.0 / 2.0 - 420.0 / 2.0;
+	let panel_right = 1280.0 / 2.0 + 420.0 / 2.0;
+	assert!(confirm.rect.x >= panel_left, "confirm must not flow out of the panel's left edge");
+	assert!(cancel.rect.x + cancel.rect.w <= panel_right, "cancel must not flow out of the panel's right edge");
+
+	std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
 fn build_screen_excludes_popup_buttons_and_build_popup_frame_is_popup_only() {
 	// Regression test: a click on the popup must never fall through and hit a main-menu button
 	// underneath it (e.g. the New Project popup's Confirm overlapping the Quit button) -- which

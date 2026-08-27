@@ -6,7 +6,7 @@ use crate::render::context_menu::{ContextMenuAction, ContextMenuItem};
 use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
-use crate::viewer::state::{open_overlay, KeySelectPurpose, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState};
+use crate::viewer::state::{open_overlay, KeySelectPurpose, LedColourState, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState};
 use crate::viewer::undo::{delete_wire_segment_with_undo, delete_wire_with_undo};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 
@@ -77,7 +77,7 @@ pub(crate) fn context_menu_items_for_component(library: &ChipLibrary, chip_name:
 	items.push(ContextMenuItem::new_enabled("View", ContextMenuAction::View, is_custom_chip(library, chip_name)));
 	items.push(ContextMenuItem::new("Label", ContextMenuAction::Label));
 	let chip_type = library.try_get(chip_name).map(|d| d.chip_type);
-	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16)) {
+	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16) | Some(ChipType::DisplayLed)) {
 		items.push(ContextMenuItem::new("Configure", ContextMenuAction::Configure));
 	}
 	if chip_type.unwrap_or_default().is_bus_type() {
@@ -217,6 +217,11 @@ pub(crate) fn apply_context_menu_action(
 					open_overlay(v, Overlay::RomEditor);
 					v.overlay_text_input = data[0].to_string();
 					v.rom_editor = Some(RomEditorState { component_id: id, data, selected: 0 });
+				}
+				Some(ChipType::DisplayLed) => {
+					let colour_index = internal_data.first().copied().unwrap_or(0) as usize;
+					open_overlay(v, Overlay::LedColour);
+					v.led_colour = Some(LedColourState { component_id: id, colour_index });
 				}
 				_ => {}
 			}

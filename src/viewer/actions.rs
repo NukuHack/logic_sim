@@ -11,7 +11,8 @@ use crate::viewer::library::{
 	sync_library_collections,
 };
 use crate::viewer::popups::{
-	apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_naming_popup, confirm_pin_edit_popup, confirm_rom_cell, cycle_pref,
+	apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_led_colour_popup, confirm_naming_popup, confirm_pin_edit_popup,
+	confirm_rom_cell, cycle_pref,
 };
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
@@ -211,8 +212,12 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		}
 		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
 		EditorAction::ExitViewedChip => v.return_to_previous_viewed_chip(),
-		EditorAction::LedColourConfirm => todo!(),
-		EditorAction::LedColourSetColour(_) => todo!(),
+		EditorAction::LedColourConfirm => confirm_led_colour_popup(v),
+		EditorAction::LedColourSetColour(i) => {
+			if let Some(edit) = v.led_colour.as_mut() {
+				edit.colour_index = i;
+			}
+		}
 	}
 }
 

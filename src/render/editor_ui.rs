@@ -1177,7 +1177,14 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 		}
 		SaveChipMode::SaveAsOrRename => {
 			let w = (panel_w - 60.0 - 24.0) / 4.0;
-			add_button(&mut frame, ui, UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
+			add_button(
+				&mut frame,
+				ui,
+				UiRect::new(panel_rect.x + 30.0, button_y, w, 36.0).clamp_to(panel_rect),
+				"Cancel",
+				EditorAction::ClosePopup,
+				true,
+			);
 			add_button(
 				&mut frame,
 				ui,
@@ -1301,7 +1308,14 @@ pub fn build_pin_edit_popup(
 
 	let name_len = name.trim().chars().count();
 	let confirm_enabled = name_len > 0 && name_len <= MAX_PIN_NAME_LENGTH;
-	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0).clamp_to(panel_rect), "Confirm", EditorAction::ConfirmPinEdit, confirm_enabled);
+	add_button(
+		&mut frame,
+		ui,
+		UiRect::new(cx - 186.0, y, 180.0, 36.0).clamp_to(panel_rect),
+		"Confirm",
+		EditorAction::ConfirmPinEdit,
+		confirm_enabled,
+	);
 	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
 
 	finish(frame, ui)
@@ -1391,7 +1405,14 @@ pub fn build_unsaved_changes_popup(vw: f32, vh: f32, mouse: Vec2) -> EditorFrame
 		true,
 		[0.6, 0.2, 0.2, 1.0],
 	);
-	add_button(&mut frame, ui, UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
+	add_button(
+		&mut frame,
+		ui,
+		UiRect::new(cx + 6.0, panel_rect.y + panel_h - 56.0, 180.0, 36.0).clamp_to(panel_rect),
+		"Cancel",
+		EditorAction::ClosePopup,
+		true,
+	);
 
 	finish(frame, ui)
 }

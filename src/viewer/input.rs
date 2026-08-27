@@ -49,6 +49,55 @@ pub(crate) fn key_press_aimed_at_context_menu(logical_key: &winit::keyboard::Key
 	matches!(logical_key, Key::Named(NamedKey::Escape | NamedKey::Alt | NamedKey::Control | NamedKey::Shift | NamedKey::Super))
 }
 
+/// Resolves a key event to the single alphanumeric char it should register
+/// as -- for the Key chip's held-key set and for the key-select popup's
+/// capture -- preferring the *physical* digit key over whatever character
+/// the layout happens to produce for it.
+///
+/// Letters go through `logical_key` as before (layout-aware, so e.g. an
+/// AZERTY 'A' key registers as the 'A' its cap shows). Digits go through
+/// `physical_key` instead: several common layouts (German QWERTZ, French
+/// AZERTY, ...) require holding Shift just to *type* a digit at all, so a
+/// Key chip bound to '5' via `logical_key` would never see a bare press of
+/// that key on those layouts -- only a Shift+5. Matching the physical
+/// digit-row/numpad position instead means the binding works the same
+/// regardless of layout or Shift state, which is what a player configuring
+/// "press 5" actually expects.
+///
+/// Split into `char_for_keys` (the real logic, over the two constructible
+/// key types) plus this thin wrapper over the actual event -- same reason
+/// as `can_delete_selection`: winit's `KeyEvent` itself can't be built
+/// outside winit, so the guard has to be testable without one.
+pub(crate) fn char_for_key_event(event: &winit::event::KeyEvent) -> Option<char> {
+	char_for_keys(event.physical_key, &event.logical_key)
+}
+
+fn char_for_keys(physical_key: winit::keyboard::PhysicalKey, logical_key: &winit::keyboard::Key) -> Option<char> {
+	use winit::keyboard::{Key, KeyCode, PhysicalKey};
+	if let PhysicalKey::Code(code) = physical_key {
+		let digit = match code {
+			KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
+			KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
+			KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
+			KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
+			KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
+			KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
+			KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
+			KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
+			KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
+			KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
+			_ => None,
+		};
+		if digit.is_some() {
+			return digit;
+		}
+	}
+	if let Key::Character(s) = logical_key {
+		return s.chars().next().map(|c| c.to_ascii_uppercase());
+	}
+	None
+}
+
 /// Routes a key *press* to whichever surface currently owns the keyboard,
 /// per `ViewerState::stack.keyboard_target()` -- mirroring, guard-for-guard, the old
 /// single match over `v.overlay` states this replaces. Typed characters are only UI data when a
@@ -70,6 +119,16 @@ pub(crate) fn handle_viewer_key(
 	// (Tab toggles label visibility and also dismisses the popup) ----
 	if v.context_menu.is_some() && !key_press_aimed_at_context_menu(&event.logical_key) {
 		v.context_menu = None;
+	}
+	// ---- Key-select overlay: a digit key's *physical* position takes
+	// priority over its logical character (see `char_for_key_event`'s
+	// docs) -- falls through to the `Key::Character` arm below
+	// unchanged for everything else (letters, and any layout where the
+	// digit key's own character already matches).
+	if v.stack.keyboard_target() == Some(LayerId::KeySelect) {
+		if let Some(c @ '0'..='9') = char_for_key_event(event) {
+			v.overlay_key_choice = Some(c);
+		}
 	}
 	match &event.logical_key {
 		// ---- Text entry for whichever text-field overlay owns focus ----
@@ -450,6 +509,27 @@ mod tests {
 		assert!(!aimed(Key::Named(NamedKey::Tab)), "Tab must close the popup and open the library");
 		assert!(!aimed(Key::Named(NamedKey::Space)));
 		assert!(!aimed(Key::Character("f".into())));
+	}
+
+	#[test]
+	fn char_for_keys_prefers_the_physical_digit_over_a_shifted_symbol() {
+		use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};
+
+		// A US layout: the '5' key's own character is '5' -- both paths agree.
+		assert_eq!(char_for_keys(PhysicalKey::Code(KeyCode::Digit5), &Key::Character("5".into())), Some('5'));
+
+		// A layout (e.g. German QWERTZ) where that physical key produces a
+		// symbol unless Shift is held: the physical position must still win.
+		assert_eq!(char_for_keys(PhysicalKey::Code(KeyCode::Digit5), &Key::Character("ß".into())), Some('5'));
+
+		// Numpad 5 registers the same as the top-row digit.
+		assert_eq!(char_for_keys(PhysicalKey::Code(KeyCode::Numpad5), &Key::Character("5".into())), Some('5'));
+
+		// A plain letter still goes through the logical (layout-aware) character.
+		assert_eq!(char_for_keys(PhysicalKey::Code(KeyCode::KeyA), &Key::Character("a".into())), Some('A'));
+
+		// Named/non-character keys (Enter, Escape, ...) resolve to nothing.
+		assert_eq!(char_for_keys(PhysicalKey::Code(KeyCode::Enter), &Key::Named(NamedKey::Enter)), None);
 	}
 
 	#[test]

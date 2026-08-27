@@ -244,7 +244,10 @@ pub(crate) fn delete_components_with_undo(v: &mut ViewerState, ids: impl Iterato
 
 	let (subchips, pins) = capture_elements(v, &all_ids);
 	let wire_state = capture_full_wire_state(v, &[], &all_ids);
-	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true, wires: Vec::new() }));
+	record(
+		v,
+		UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true, wires: Vec::new() }),
+	);
 	canvas::apply_component_deletion(v, &all_ids);
 	v.rebuild_sim();
 }
@@ -373,7 +376,11 @@ fn apply_element_existence(v: &mut ViewerState, action: &ElementExistenceAction,
 			let chip = v.library.get_mut(&root_chip_name);
 			for (wire, index) in &action.wires {
 				let idx = (*index).min(chip.wires.len());
-				if !chip.wires.iter().any(|existing| existing.source_pin_address == wire.source_pin_address && existing.target_pin_address == wire.target_pin_address) {
+				if !chip
+					.wires
+					.iter()
+					.any(|existing| existing.source_pin_address == wire.source_pin_address && existing.target_pin_address == wire.target_pin_address)
+				{
 					chip.wires.insert(idx, wire.clone());
 				}
 			}

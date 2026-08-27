@@ -496,18 +496,15 @@ impl App {
 		// to 'A' must not itself hold 'A' down in the simulator. Only *presses* are gated;
 		// releases always go through, so a key that was being held when a text overlay opened can
 		// never get stuck "on".
-		if let Key::Character(s) = &event.logical_key {
+		if let Some(c) = crate::viewer::input::char_for_key_event(&event) {
 			if let Screen::Viewer(v) = &mut self.screen {
 				let press_swallowed_by_ui = event.state == ElementState::Pressed && v.stack.keyboard_stop();
 				if !press_swallowed_by_ui {
-					if let Some(c) = s.chars().next() {
-						let c = c.to_ascii_uppercase();
-						let registers = c.is_ascii_alphanumeric();
-						if registers {
-							match event.state {
-								ElementState::Pressed => v.sim.held_key_press(c),
-								ElementState::Released => v.sim.held_key_release(c),
-							}
+					let registers = c.is_ascii_alphanumeric();
+					if registers {
+						match event.state {
+							ElementState::Pressed => v.sim.held_key_press(c),
+							ElementState::Released => v.sim.held_key_release(c),
 						}
 					}
 				}

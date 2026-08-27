@@ -14,7 +14,9 @@ use crate::render::context_menu;
 use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
 use crate::render::layout::{self, force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
-use crate::render::scene::{bounding_box, build_grid, build_scene, build_scene_with_spans, fade_component, AllLow, SceneGeometry, SimulatorPinState};
+use crate::render::scene::{
+	bounding_box, build_grid, build_scene, build_scene_with_spans, fade_component, fade_wire, AllLow, SceneGeometry, SimulatorPinState,
+};
 use crate::render::theme;
 use crate::render::ui_kit::{pin_geometry_to_screen, to_world, Button, UiCtx, UiRect};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
@@ -217,7 +219,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// The scene reads pin states straight out of the shared arena under a
 	// short-lived lock -- the read half of the original's per-frame
 	// `ViewedChip.UpdateStateFromSim` sync.
-	let (mut chip_scene, component_spans) = {
+	let (mut chip_scene, component_spans, wire_spans) = {
 		let sim_guard = v.sim.lock();
 		let scope = match scene_target {
 			SceneTarget::EditRoot => sim_guard.root(),
@@ -230,15 +232,23 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 
 	// A selection being dragged renders translucently -- deliberately the
 	// same read as a placement ghost -- by fading exactly the carried
-	// components' own geometry (bodies, labels, embedded displays). Their
-	// wires stretch along at full strength. Fading happens here, before the
-	// scene merges with the grid layer, because the spans index into the
-	// chip scene's buffers alone.
+	// components' own geometry (bodies, labels, embedded displays), plus
+	// any wire that runs entirely *between* two carried components (which
+	// rides along rigidly with them, same as a duplicate-then-drag): those
+	// fade to the same alpha instead of stretching along at full strength.
+	// Wires with only one end carried stay opaque -- they genuinely
+	// stretch, since the other end hasn't moved. Fading happens here,
+	// before the scene merges with the grid layer, because the spans
+	// index into the chip scene's buffers alone.
 	if let CanvasInteraction::MovingSelection { originals, .. } = &v.canvas_interaction {
 		for &(id, _) in originals {
 			if let Some(span) = component_spans.get(id) {
 				fade_component(&mut chip_scene, span, PENDING_PLACEMENT_ALPHA);
 			}
+		}
+		let carried_ids: std::collections::HashSet<i32> = originals.iter().map(|&(id, _)| id).collect();
+		for wire in wire_spans.fully_within(&carried_ids) {
+			fade_wire(&mut chip_scene, wire, PENDING_PLACEMENT_ALPHA);
 		}
 	}
 
@@ -517,7 +527,10 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 		// preview layout back onto `ViewerState::customize`), so reaching
 		// this arm at all would double-build it.
 		Overlay::CustomizeChip => editor_ui::EditorFrame::default(),
-		Overlay::LedColour => todo!(),
+		Overlay::LedColour => {
+			let colour_index = v.led_colour.as_ref().map(|e| e.colour_index).unwrap_or(0);
+			editor_ui::build_led_colour_popup(colour_index, vw, vh, mouse)
+		}
 	}
 }
 

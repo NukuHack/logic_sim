@@ -44,7 +44,7 @@ pub(crate) enum Overlay {
 }
 
 impl Overlay {
-	pub(crate) 	fn layer_id(self) -> LayerId {
+	pub(crate) fn layer_id(self) -> LayerId {
 		match self {
 			Overlay::Library => LayerId::Library,
 			Overlay::Search => LayerId::Search,

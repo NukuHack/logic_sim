@@ -178,6 +178,28 @@ pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 	close_top_overlay(v);
 }
 
+/// Commits the LED colour picker popup's draft onto its target LED
+/// subchip (`EditorAction::LedColourConfirm`): writes the picked
+/// palette index back to `internal_data[0]`, which scene rendering
+/// reads each frame to tint the LED body (see `PlacedSubChip::internal_data`'s
+/// docs). Always closes the popup afterwards.
+pub(crate) fn confirm_led_colour_popup(v: &mut ViewerState) {
+	if let Some(edit) = v.led_colour.take() {
+		let root_chip_name = v.root_chip_name.clone();
+		let chip = v.library.get_mut(&root_chip_name);
+		if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == edit.component_id) {
+			let mut data = sub.internal_data.clone().unwrap_or_default();
+			if data.is_empty() {
+				data.push(0);
+			}
+			data[0] = edit.colour_index as u32;
+			sub.internal_data = Some(data);
+		}
+		v.rebuild_sim();
+	}
+	close_top_overlay(v);
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;

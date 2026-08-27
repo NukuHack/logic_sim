@@ -8,7 +8,7 @@ use crate::render::foundation::{offset_polyline, SceneGeometry};
 use crate::render::layout;
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_colour};
-use crate::render::scene::placed::{place_sub_chips, PlacedSubChip};
+use crate::render::scene::placed::PlacedSubChip;
 use crate::render::scene::wire_endpoints::{WireCtx, WirePointCache};
 use crate::render::theme;
 use crate::structs::Vec2;
@@ -63,12 +63,13 @@ pub(crate) fn draw_wires(
 	placed: &[PlacedSubChip],
 	owner_to_placed: &HashMap<i32, usize>,
 	pin_state: &dyn PinStateLookup,
-) {
+) -> super::WireSpans {
 	// Resolve each wire's two endpoints to world positions and draw a polyline through any
 	// player-authored bend points. `ToPins` resolves straight from the pin's world position;
 	// `ToWireSource`/`ToWireTarget` re-project onto the other wire's segment instead, to stay in sync with authored bends.
 	let wire_ctx = WireCtx { chip, placed, owner_to_placed, wires: &chip.wires };
 	let mut wire_point_cache: WirePointCache = HashMap::new();
+	let mut spans = super::WireSpans::default();
 	for (wire_idx, wire) in chip.wires.iter().enumerate() {
 		let src = wire_ctx.endpoint(wire_idx, false, &mut wire_point_cache, 0);
 		let dst = wire_ctx.endpoint(wire_idx, true, &mut wire_point_cache, 0);
@@ -85,6 +86,7 @@ pub(crate) fn draw_wires(
 			centreline.extend_from_slice(&wire.points);
 			centreline.push(dst);
 
+			let triangle_start = geo.triangles.len();
 			draw_wire_strands(
 				geo,
 				&centreline,
@@ -94,8 +96,16 @@ pub(crate) fn draw_wires(
 				wire.source_pin_address.pin_id,
 				pin_state,
 			);
+			spans.insert(
+				wire_idx,
+				super::WireEndpoints {
+					triangles: triangle_start..geo.triangles.len(),
+					owners: (wire.source_pin_address.pin_owner_id, wire.target_pin_address.pin_owner_id),
+				},
+			);
 		}
 	}
+	spans
 }
 
 /// Removes wire `index` from `chip.wires`, mirroring
@@ -126,10 +136,7 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 		while i < to_remove.len() {
 			let current = to_remove[i];
 			for (j, w) in chip.wires.iter().enumerate() {
-				if !to_remove.contains(&j)
-					&& w.connection_type != WireConnectionType::ToPins
-					&& w.connected_wire_index as usize == current
-				{
+				if !to_remove.contains(&j) && w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == current {
 					to_remove.push(j);
 				}
 			}
@@ -206,6 +213,7 @@ pub fn delete_wire_segment(chip: &mut ChipDescription, index: usize) -> usize {
 /// the anchor's route up to/past the attachment point is folded into the
 /// dependent's own bend list, and its attached-side connection info is
 /// inherited from the anchor's corresponding side.
+#[allow(unused)]
 fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescription, anchor_world: &[Vec2]) {
 	let seg = chip.wires[d].connected_wire_segment_index;
 

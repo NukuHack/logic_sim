@@ -94,6 +94,46 @@ pub fn fade_component(geo: &mut SceneGeometry, span: &ComponentSpan, alpha: f32)
 	}
 }
 
+/// Vertex-index span of one wire's own strand geometry inside the
+/// [`SceneGeometry`] returned by [`build_scene_with_spans`], plus the
+/// `pin_owner_id`s of both its endpoints -- lets a caller fade exactly the
+/// wires that run *between* a set of carried components (a drag or a
+/// duplicate-then-drag), matching [`ComponentSpan`]'s ghost fade instead of
+/// stretching along at full strength.
+#[derive(Debug, Clone)]
+pub struct WireEndpoints {
+	pub triangles: std::ops::Range<usize>,
+	pub owners: (i32, i32),
+}
+
+/// Per-wire-index map of [`WireEndpoints`].
+#[derive(Debug, Default, Clone)]
+pub struct WireSpans {
+	spans: HashMap<usize, WireEndpoints>,
+}
+
+impl WireSpans {
+	fn insert(&mut self, wire_idx: usize, span: WireEndpoints) {
+		self.spans.insert(wire_idx, span);
+	}
+
+	/// Every wire whose *both* endpoints belong to `owner_ids` -- i.e. a
+	/// wire fully internal to a set of carried components, which should
+	/// fade with them rather than stay opaque while it stretches.
+	pub fn fully_within<'a>(&'a self, owner_ids: &'a std::collections::HashSet<i32>) -> impl Iterator<Item = &'a WireEndpoints> {
+		self.spans.values().filter(move |w| owner_ids.contains(&w.owners.0) && owner_ids.contains(&w.owners.1))
+	}
+}
+
+/// Multiplies every vertex alpha of `span`'s triangle slice of `geo` by
+/// `alpha` -- the wire counterpart of [`fade_component`] (wires have no
+/// labels of their own).
+pub fn fade_wire(geo: &mut SceneGeometry, span: &WireEndpoints, alpha: f32) {
+	for v in &mut geo.triangles[span.triangles.clone()] {
+		v.colour[3] *= alpha;
+	}
+}
+
 /// [`build_scene`] plus a per-component index of where each placed
 /// subchip's own geometry landed in the returned buffers (see
 /// [`ComponentSpan`]). Wires/pins/dev-pins stay untracked -- they're never
@@ -104,7 +144,7 @@ pub fn build_scene_with_spans(
 	pin_state: &dyn PinStateLookup,
 	hover_world_pos: Option<Vec2>,
 	labels_visible: bool,
-) -> (SceneGeometry, ComponentSpans) {
+) -> (SceneGeometry, ComponentSpans, WireSpans) {
 	let mut geo = SceneGeometry::default();
 	let placed = place_sub_chips(chip, library);
 
@@ -121,7 +161,7 @@ pub fn build_scene_with_spans(
 	// shows the pin. Components and their displays draw interleaved (rather
 	// than as two whole layers) purely so each component's triangles land in
 	// one contiguous span.
-	wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
+	let wire_spans = wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
 	let effective_hover = if labels_visible { hover_world_pos } else { None };
 	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, effective_hover);
 	let mut spans = ComponentSpans::default();
@@ -136,7 +176,7 @@ pub fn build_scene_with_spans(
 		push_hover_label(&mut geo, pos, name);
 	}
 
-	(geo, spans)
+	(geo, spans, wire_spans)
 }
 
 /// Pushes a small hover-triggered name label just above `pos`. Shared by
@@ -200,7 +240,7 @@ mod span_tests {
 	fn build_scene_with_spans_tracks_each_components_own_vertices() {
 		let (library, chip) = two_nands_and_a_wire();
 
-		let (scene, spans) = build_scene_with_spans(&chip, &library, &AllLow, None, true);
+		let (scene, spans, _wire_spans) = build_scene_with_spans(&chip, &library, &AllLow, None, true);
 		let span1 = spans.get(1).expect("component 1 is indexed");
 		let span2 = spans.get(2).expect("component 2 is indexed");
 
