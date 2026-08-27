@@ -116,6 +116,24 @@ pub enum EditorAction {
 	/// ROM editor: write the whole edited buffer back to the subchip and
 	/// close the popup.
 	RomApply,
+	/// ROM editor: clear the small per-cell text field (next to "Set")
+	/// without touching the selected cell's committed value.
+	RomClearField,
+	/// ROM editor: zero out every one of the 256 words in the draft
+	/// buffer (not just the selected cell) -- the whole grid back to
+	/// 0-0, same "edit a draft, commit on Apply" shape as everything
+	/// else here, so Cancel still backs out of a reset too.
+	RomResetAll,
+	/// ROM editor: copy the whole 256-word draft buffer to the system
+	/// clipboard as 16 rows of 16 `;`-separated decimal words, one row
+	/// per line (see [`build_rom_editor_popup`]'s docs).
+	RomCopy,
+	/// ROM editor: replace the draft buffer with whatever numbers can be
+	/// parsed out of the system clipboard -- the reverse of
+	/// [`EditorAction::RomCopy`], but also accepts a plain list of
+	/// numbers separated only by newlines (or any other non-numeric
+	/// separator), not just its own `;`/line-separated CSV shape.
+	RomPaste,
 	/// Save-chip popup: commit the typed name -- either a plain
 	/// overwrite/create (`SaveChipMode::Save`) or, when the name belongs
 	/// to a *different* existing chip, a backup-then-overwrite
@@ -973,7 +991,9 @@ pub fn build_key_select_popup(chosen_key: Option<char>, vw: f32, vh: f32, mouse:
 /// expected length for one (see `sim::process_builtin_chip`'s `Rom256x16`
 /// arm, which indexes `internal_state` by the read address 0..256).
 pub const ROM_WORD_COUNT: usize = 256;
-const ROM_GRID_COLS: usize = 16;
+/// Row width of the ROM grid -- also the CSV row width `viewer::popups`'s
+/// Copy/Paste handlers serialise to/from the clipboard.
+pub(crate) const ROM_GRID_COLS: usize = 16;
 const ROM_GRID_ROWS: usize = ROM_WORD_COUNT / ROM_GRID_COLS;
 const ROM_CELL_W: f32 = 42.0;
 const ROM_CELL_H: f32 = 22.0;
@@ -992,7 +1012,12 @@ const ROM_CELL_GAP: f32 = 2.0;
 /// either click "Set" or press Enter (`EditorAction::RomConfirmCell`) to
 /// commit it and move on to the next cell. Accepts a leading `0x`/`0X`
 /// for hex input; displays decimal, to match the plain-number contents
-/// most ROM programs actually use.
+/// most ROM programs actually use. "Clear" (next to "Set") empties the
+/// text field alone, without touching the selected cell. "Reset" (top
+/// middle) zeroes the whole 256-word draft. "Copy"/"Paste" round-trip
+/// the whole draft through the system clipboard as a 16x16 grid of
+/// `;`-separated decimal words, one row per line -- see
+/// `viewer::popups::rom_copy_text`/`rom_parse_clipboard_text`.
 pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
@@ -1000,8 +1025,8 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 	let grid_w = ROM_GRID_COLS as f32 * (ROM_CELL_W + ROM_CELL_GAP) - ROM_CELL_GAP;
 	let grid_h = ROM_GRID_ROWS as f32 * (ROM_CELL_H + ROM_CELL_GAP) - ROM_CELL_GAP;
 	let panel_w = grid_w + 40.0;
-	let header_h = 92.0;
-	let footer_h = 56.0;
+	let header_h = 132.0;
+	let footer_h = 100.0;
 	let panel_h = header_h + grid_h + footer_h;
 	let cx = vw / 2.0;
 	let cy = vh / 2.0;
@@ -1011,14 +1036,23 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 
 	add_label(&mut frame, ui, Vec2::new(cx, panel_rect.y + 20.0), panel_w - 30.0, "Configure ROM (256 x 16-bit)", [1.0, 1.0, 1.0, 1.0], 20.0);
 
+	// Top middle: wipes the entire draft buffer back to 0-0, not just the
+	// selected cell -- distinct from "Clear", which only empties the
+	// little text field below.
+	let reset_rect = UiRect::new(cx - 70.0, panel_rect.y + 40.0, 140.0, 28.0);
+	add_button_coloured(&mut frame, ui, reset_rect, "Reset", EditorAction::RomResetAll, true, [0.5, 0.25, 0.25, 1.0]);
+
 	let selected = selected.min(ROM_WORD_COUNT - 1);
 	let addr_label = format!("Address {selected} (0x{selected:02X})");
-	add_label(&mut frame, ui, Vec2::new(panel_rect.x + 90.0, panel_rect.y + 52.0), 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
+	add_label(&mut frame, ui, Vec2::new(panel_rect.x + 90.0, panel_rect.y + 92.0), 150.0, &addr_label, [0.85, 0.85, 0.85, 1.0], 15.0);
 
-	let field_rect = UiRect::new(panel_rect.x + panel_w - 190.0, panel_rect.y + 38.0, 100.0, 30.0);
+	let field_rect = UiRect::new(panel_rect.x + panel_w - 245.0, panel_rect.y + 78.0, 100.0, 30.0);
 	ui_kit::text_field_row(&mut frame, ui, field_rect, edit_text, "", FONT_SIZE, 10.0);
 
-	let set_rect = UiRect::new(panel_rect.x + panel_w - 80.0, panel_rect.y + 38.0, 60.0, 30.0);
+	let clear_rect = UiRect::new(panel_rect.x + panel_w - 135.0, panel_rect.y + 78.0, 55.0, 30.0);
+	add_button(&mut frame, ui, clear_rect, "Clear", EditorAction::RomClearField, true);
+
+	let set_rect = UiRect::new(panel_rect.x + panel_w - 70.0, panel_rect.y + 78.0, 60.0, 30.0);
 	add_button(&mut frame, ui, set_rect, "Set", EditorAction::RomConfirmCell, true);
 
 	let grid_origin = Vec2::new(panel_rect.x + (panel_w - grid_w) / 2.0, panel_rect.y + header_h);
@@ -1048,6 +1082,13 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 			frame.buttons.push(EditorButton { rect: cell_rect, action: EditorAction::RomSelectCell(idx), enabled: true });
 		}
 	}
+
+	// Bottom row: Copy/Paste round-trip the whole grid through the
+	// system clipboard as CSV text (see the doc comment above).
+	let copy_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 88.0, 160.0, 34.0).clamp_to(panel_rect);
+	let paste_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 88.0, 160.0, 34.0).clamp_to(panel_rect);
+	add_button(&mut frame, ui, copy_rect, "Copy", EditorAction::RomCopy, true);
+	add_button(&mut frame, ui, paste_rect, "Paste", EditorAction::RomPaste, true);
 
 	let apply_rect = UiRect::new(cx - 166.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0).clamp_to(panel_rect);
 	let cancel_rect = UiRect::new(cx + 6.0, panel_rect.y + panel_h - 44.0, 160.0, 34.0).clamp_to(panel_rect);

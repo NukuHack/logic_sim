@@ -34,7 +34,7 @@ pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
 pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
 pub use placed::{place_sub_chips, PlacedSubChip};
 pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};
-pub use wires::{delete_wire, delete_wire_old, delete_wire_segment};
+pub use wires::{delete_wire, delete_wire_segment, delete_wire_old};
 
 /// Finds whichever placed subchip's body (as laid out by
 /// [`place_sub_chips`]) contains `world_pos`, if any -- used to resolve a

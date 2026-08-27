@@ -11,8 +11,8 @@ use crate::viewer::library::{
 	sync_library_collections,
 };
 use crate::viewer::popups::{
-	apply_prefs_field_text, apply_rom_editor, confirm_key_select_popup, confirm_led_colour_popup, confirm_naming_popup, confirm_pin_edit_popup,
-	confirm_rom_cell, cycle_pref,
+	apply_prefs_field_text, apply_rom_editor, clear_rom_field, confirm_key_select_popup, confirm_led_colour_popup, confirm_naming_popup, confirm_pin_edit_popup,
+	confirm_rom_cell, copy_rom_editor, cycle_pref, paste_rom_editor, reset_rom_editor,
 };
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
@@ -187,6 +187,10 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		}
 		EditorAction::RomConfirmCell => confirm_rom_cell(v, status),
 		EditorAction::RomApply => apply_rom_editor(v, status),
+		EditorAction::RomClearField => clear_rom_field(v),
+		EditorAction::RomResetAll => reset_rom_editor(v),
+		EditorAction::RomCopy => copy_rom_editor(v, status),
+		EditorAction::RomPaste => paste_rom_editor(v, status),
 		EditorAction::SaveChipConfirm => confirm_save_chip_popup(v, paths, status),
 		EditorAction::SaveChipSaveAs => confirm_save_chip_as(v, paths, status),
 		EditorAction::SaveChipRename => confirm_save_chip_rename(v, paths, status),

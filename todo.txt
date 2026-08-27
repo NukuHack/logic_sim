@@ -8,8 +8,6 @@ if i delete a component what has wires going out from it the wires delete like w
 
 if i delete a wire the pins it was connected sometimes don't update (and keep reciveing the data) this happens more frequently withh output pins
 
-duplicating a somponent (ie ROM) only duplicates the first inner data not the entire (it should not for bus-es but for the rest it should)
-
 - Show wire during placement: while dragging duplicated
   components, wires connecting them should be visible at the same alpha
   as the component ghosts.

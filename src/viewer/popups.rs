@@ -120,6 +120,106 @@ pub(crate) fn apply_rom_editor(v: &mut ViewerState, status: &mut Option<String>)
 	close_top_overlay(v);
 }
 
+/// "Clear" (`EditorAction::RomClearField`): empties the little per-cell
+/// text field alone. Doesn't touch the selected cell's already-committed
+/// value or move the selection -- just gives the player a blank field to
+/// type a fresh value into instead of backspacing through whatever was
+/// loaded in from the last selected cell.
+pub(crate) fn clear_rom_field(v: &mut ViewerState) {
+	if v.rom_editor.is_some() {
+		v.overlay_text_input.clear();
+	}
+}
+
+/// "Reset" (`EditorAction::RomResetAll`): zeroes every one of the 256
+/// words in the draft buffer -- the whole grid back to 0-0, not just the
+/// selected cell. Still only a draft edit like everything else the ROM
+/// editor does: nothing is written to the subchip until "Apply", so
+/// "Cancel" backs a reset out just as cleanly as any other edit.
+pub(crate) fn reset_rom_editor(v: &mut ViewerState) {
+	if let Some(editor) = v.rom_editor.as_mut() {
+		editor.data.iter_mut().for_each(|w| *w = 0);
+		v.overlay_text_input = "0".to_string();
+	}
+}
+
+/// Serialises a ROM draft buffer as `editor_ui::ROM_GRID_COLS`-wide rows
+/// of `;`-separated decimal words, one row per line -- what
+/// `EditorAction::RomCopy` puts on the clipboard, and the shape
+/// `rom_parse_clipboard_text` reads back. Pure text-in/text-out so it's
+/// unit-testable without a real clipboard. Pads short buffers with 0s and
+/// ignores anything past `editor_ui::ROM_WORD_COUNT` words, so it's safe
+/// to call on a buffer of any length.
+pub(crate) fn rom_copy_text(data: &[u32]) -> String {
+	let mut rows = Vec::with_capacity(editor_ui::ROM_WORD_COUNT / editor_ui::ROM_GRID_COLS);
+	for chunk in data.chunks(editor_ui::ROM_GRID_COLS).take(editor_ui::ROM_WORD_COUNT / editor_ui::ROM_GRID_COLS) {
+		let row: Vec<String> = chunk.iter().map(u32::to_string).collect();
+		rows.push(row.join(";"));
+	}
+	rows.join("\n")
+}
+
+/// Parses whatever came back from the clipboard into up to
+/// `editor_ui::ROM_WORD_COUNT` words -- the reverse of `rom_copy_text`,
+/// but deliberately more lenient than that exact shape: any run of
+/// non-numeric characters (commas, semicolons, newlines, plain
+/// whitespace) counts as a separator, so a plain list of numbers with
+/// nothing but `\n` between them (no `;`, no 16-per-row grouping) parses
+/// just as well as this editor's own CSV. Each token may have a leading
+/// `0x`/`0X` for hex, matching `parse_rom_word`'s single-cell rule.
+/// Unparseable tokens are skipped rather than aborting the whole paste.
+/// Returns `None` if nothing at all could be parsed.
+pub(crate) fn rom_parse_clipboard_text(text: &str) -> Option<Vec<u32>> {
+	let values: Vec<u32> = text
+		.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+		.filter(|tok| !tok.is_empty())
+		.filter_map(parse_rom_word)
+		.take(editor_ui::ROM_WORD_COUNT)
+		.collect();
+	if values.is_empty() {
+		return None;
+	}
+	let mut data = values;
+	data.resize(editor_ui::ROM_WORD_COUNT, 0);
+	Some(data)
+}
+
+/// "Copy" (`EditorAction::RomCopy`): puts the whole draft buffer on the
+/// system clipboard via `rom_copy_text`.
+pub(crate) fn copy_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
+	let Some(editor) = v.rom_editor.as_ref() else { return };
+	let text = rom_copy_text(&editor.data);
+	match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+		Ok(()) => *status = Some("ROM contents copied".to_string()),
+		Err(e) => *status = Some(format!("Couldn't copy to clipboard: {e}")),
+	}
+}
+
+/// "Paste" (`EditorAction::RomPaste`): replaces the whole draft buffer
+/// with whatever numbers `rom_parse_clipboard_text` can find in the
+/// system clipboard's text. Leaves the buffer untouched (and reports a
+/// status message) if the clipboard has nothing parseable in it, rather
+/// than silently zeroing the grid.
+pub(crate) fn paste_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
+	let clip = match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+		Ok(text) => text,
+		Err(e) => {
+			*status = Some(format!("Couldn't read clipboard: {e}"));
+			return;
+		}
+	};
+	let Some(parsed) = rom_parse_clipboard_text(&clip) else {
+		*status = Some("Clipboard didn't contain any numbers to paste".to_string());
+		return;
+	};
+	if let Some(editor) = v.rom_editor.as_mut() {
+		editor.data = parsed;
+		editor.selected = editor.selected.min(editor_ui::ROM_WORD_COUNT - 1);
+		v.overlay_text_input = editor.data[editor.selected].to_string();
+		*status = Some("ROM contents pasted".to_string());
+	}
+}
+
 /// Applies whatever's chosen in `Overlay::KeySelect`, per
 /// `v.key_select_purpose` -- shared by the popup's Confirm button
 /// (`EditorAction::ConfirmKey`) and pressing Enter directly, mirroring
@@ -213,6 +313,70 @@ mod tests {
 		assert_eq!(parse_rom_word("0X10"), Some(16));
 		assert_eq!(parse_rom_word(""), None);
 		assert_eq!(parse_rom_word("nope"), None);
+	}
+
+	#[test]
+	fn rom_copy_text_is_sixteen_semicolon_rows_one_per_line() {
+		let mut data = vec![0u32; editor_ui::ROM_WORD_COUNT];
+		data[0] = 1;
+		data[1] = 2;
+		data[16] = 9;
+		let text = rom_copy_text(&data);
+		let lines: Vec<&str> = text.lines().collect();
+		assert_eq!(lines.len(), 16, "one line per row of the 16x16 grid");
+		assert_eq!(lines[0], format!("1;2;{}", "0;".repeat(13) + "0"));
+		assert!(lines[1].starts_with("9;0"));
+	}
+
+	#[test]
+	fn rom_copy_then_parse_round_trips() {
+		let mut data = vec![0u32; editor_ui::ROM_WORD_COUNT];
+		for (i, w) in data.iter_mut().enumerate() {
+			*w = i as u32 * 3;
+		}
+		let text = rom_copy_text(&data);
+		let parsed = rom_parse_clipboard_text(&text).expect("valid CSV parses back");
+		assert_eq!(parsed, data);
+	}
+
+	#[test]
+	fn rom_parse_clipboard_text_accepts_plain_newline_separated_numbers() {
+		let text = "1\n2\n3\n4\n";
+		let parsed = rom_parse_clipboard_text(text).expect("plain newline list parses");
+		assert_eq!(&parsed[..4], &[1, 2, 3, 4]);
+		assert!(parsed[4..].iter().all(|&w| w == 0), "unspecified words default to 0");
+	}
+
+	#[test]
+	fn rom_parse_clipboard_text_rejects_empty_or_nonnumeric_input() {
+		assert_eq!(rom_parse_clipboard_text(""), None);
+		assert_eq!(rom_parse_clipboard_text("hello, world"), None);
+	}
+
+	fn viewer_with_rom_editor(data: Vec<u32>) -> ViewerState {
+		let mut library = crate::ChipLibrary::new();
+		let chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
+		library.add(chip);
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		v.rom_editor = Some(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 });
+		v.overlay_text_input = "999".to_string();
+		v
+	}
+
+	#[test]
+	fn clear_rom_field_empties_the_text_field_without_touching_the_buffer() {
+		let mut v = viewer_with_rom_editor(vec![7u32; editor_ui::ROM_WORD_COUNT]);
+		clear_rom_field(&mut v);
+		assert_eq!(v.overlay_text_input, "");
+		assert_eq!(v.rom_editor.as_ref().unwrap().data[0], 7, "the committed buffer is untouched");
+	}
+
+	#[test]
+	fn reset_rom_editor_zeroes_the_whole_draft_buffer() {
+		let mut v = viewer_with_rom_editor(vec![7u32; editor_ui::ROM_WORD_COUNT]);
+		reset_rom_editor(&mut v);
+		assert!(v.rom_editor.as_ref().unwrap().data.iter().all(|&w| w == 0));
+		assert_eq!(v.overlay_text_input, "0");
 	}
 
 	#[test]

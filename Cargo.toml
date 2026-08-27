@@ -26,6 +26,9 @@ cpal = "0.18.2"
 # rtkit client for the audio worker's SCHED_FIFO promotion (see
 # `audio::promote_worker_to_realtime`); pure Rust, no dbus system headers.
 zbus = "5"
+# System clipboard access for the ROM editor's Copy/Paste buttons
+# (`render::editor_ui::build_rom_editor_popup`, `viewer::popups::rom_copy`/`rom_paste`).
+arboard = "3"
 
 [lib]
 name = "logic_sim"

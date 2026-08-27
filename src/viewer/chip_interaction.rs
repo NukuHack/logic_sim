@@ -713,11 +713,21 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 	for source in &originals {
 		let mut copy = source.clone();
 		copy.id = id_map[&source.id];
-		let new_link = id_map.get(&linked_partner(source)).copied().unwrap_or(0);
-		let mut data = copy.internal_data.clone().unwrap_or_default();
-		data.resize(2, 0);
-		data[0] = new_link as u32;
-		copy.internal_data = Some(data);
+		// Only Bus components stash a linked-partner id in `internal_data[0]`
+		// (see `bus_wiring`) -- remapping it to the fresh duplicate's id is
+		// what makes a carried bus half still find its pair. Every other
+		// component's `internal_data` is its own custom payload (e.g. the
+		// ROM editor's 256-word contents) that must come along untouched;
+		// previously this unconditionally truncated it down to 2 slots,
+		// which silently dropped everything past index 1.
+		let is_bus = v.library.try_get(&source.name).is_some_and(|d| d.chip_type.is_bus_type());
+		if is_bus {
+			let new_link = id_map.get(&linked_partner(source)).copied().unwrap_or(0);
+			let mut data = copy.internal_data.clone().unwrap_or_default();
+			data.resize(2, 0);
+			data[0] = new_link as u32;
+			copy.internal_data = Some(data);
+		}
 
 		carry.push((
 			source.position - centroid,
@@ -858,5 +868,32 @@ mod duplicate_tests {
 			bit_count: crate::PinBitCount::Bit1,
 		});
 		assert!(!duplicate_selection(&mut v), "a pending wire blocks duplicating");
+	}
+
+	/// Regression test for the bug this fix addresses: duplicating a
+	/// component whose `internal_data` is a large custom payload (a ROM's
+	/// 256 words, not a bus's 2-slot linked-partner data) used to get
+	/// silently truncated down to 2 elements by the bus-remapping logic,
+	/// which ran unconditionally on every component's `internal_data`.
+	#[test]
+	fn duplicating_a_rom_carries_its_entire_internal_data_not_just_the_first_two_words() {
+		let mut v = viewer_with_builtins();
+		start_placing(&mut v, "ROM 256\u{d7}16");
+		let mut status = None;
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut status);
+		assert!(status.is_none(), "drop on free canvas space must succeed");
+
+		let rom_id = v.library.get("ROOT").sub_chips.last().expect("placement succeeded").id;
+		let full_data: Vec<u32> = (0..256).collect();
+		{
+			let sub = v.library.get_mut("ROOT").sub_chips.iter_mut().find(|s| s.id == rom_id).unwrap();
+			sub.internal_data = Some(full_data.clone());
+		}
+
+		v.selected_ids = vec![rom_id];
+		assert!(duplicate_selection(&mut v));
+
+		let carried = &v.pending_place[0].1.duplicate_of.as_ref().expect("ROM copy is carried as a full override").internal_data;
+		assert_eq!(carried.as_ref(), Some(&full_data), "every word rides along, not just the first two");
 	}
 }
