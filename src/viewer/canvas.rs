@@ -215,6 +215,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	if !on_component && v.pending_wire.as_ref().is_some_and(|p| matches!(p.start, PendingWireEnd::Pin { .. })) {
 		let pending = v.pending_wire.as_ref().expect("checked above");
 		let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else { unreachable!("branch guarantees a pin start") };
+		let start_is_source = pending.start.is_source();
 		if let Some(tap) = on_wire {
 			// Same width rule as the pin branch: a bus wire absorbs any
 			// width (its origin merges bitwise), any other tapped wire must
@@ -227,7 +228,23 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			match bus_wiring::resolve_completion_on_wire(root_desc, &v.library, tap.wire_index, false, pending.start.is_source(), owner_id, pin_id) {
 				Ok((source, target)) => {
 					let pending = v.pending_wire.take().expect("checked above");
-					let mut wire = WireDescription::new_tapped_target(source, target, tap.wire_index as i32, tap.segment_index, tap.point);
+					// Whichever end of the pending placement is the one landing
+					// on the tapped wire's line is the end that must visually
+					// attach there -- an output-started placement completes its
+					// *target* onto the tap point (see the bus-merge branch
+					// above), but an input-started one completes its *source*
+					// there (the tapped wire's real source pin feeds the new
+					// wire, but the branch physically springs from the click,
+					// not from that pin's own position). Picking the wrong
+					// constructor here previously drew every input-started "wire
+					// into a wire" completion running from the tapped wire's
+					// original source pin straight to the click point, ignoring
+					// the pin the player actually started from.
+					let mut wire = if start_is_source {
+						WireDescription::new_tapped_target(source, target, tap.wire_index as i32, tap.segment_index, tap.point)
+					} else {
+						WireDescription::new_tapped_source(source, target, tap.wire_index as i32, tap.segment_index, tap.point)
+					};
 					wire.points = pending.bend_points;
 					if !pending.start.is_source() {
 						wire.points.reverse();
@@ -602,11 +619,12 @@ pub(crate) fn compute_component_delete_set(v: &ViewerState, id: i32) -> Vec<i32>
 /// the current root chip -- but, per the brief, only the "shortest
 /// possible section" of wiring: just the wire(s) whose source or target
 /// pin actually belongs to one of these components (via
-/// `scene::delete_wire`, which itself only cascades to wires *tapping
-/// onto* one of those, never anything further away). A wire fanning out
-/// from one of these components' *output* pins to some other, unrelated
-/// component is left completely alone at the far end -- only the segment
-/// that touched the deleted component goes.
+/// `scene::delete_wire_old`, the same detach-not-cascade removal "Delete
+/// Part" uses on a single wire). A wire fanning out from one of these
+/// components' *output* pins to some other, unrelated component is left
+/// completely alone at the far end -- only the segment that touched the
+/// deleted component goes; anything merely *tapping* onto that segment
+/// stays too, detached rather than deleted with it.
 ///
 /// `ids` may mix placed subchips' `SubChipDescription::id`s and boundary
 /// dev-pins' `PinDescription::id`s freely -- the two share one id space
@@ -626,7 +644,7 @@ pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
 				Some(idx) => {
 					let library = v.library.clone();
 					let chip = v.library.get_mut(&root_chip_name);
-					scene::delete_wire(chip, idx, &library);
+					scene::delete_wire_old(chip, idx, &library);
 				}
 				None => break,
 			}

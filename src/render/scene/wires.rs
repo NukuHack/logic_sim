@@ -108,16 +108,12 @@ pub(crate) fn draw_wires(
 	spans
 }
 
-/// Removes wire `index` from `chip.wires`, mirroring
-/// `DevChipInstance.DeleteWire`'s two very different cases:
-///
-/// - **bus wire**: everything hanging off the bus origin's pins dies with
-///   it -- the wire itself, every wire tapping onto it (transitively),
-///   and every wire wired into either of the origin's pins;
-/// - **normal wire**: wires tapping onto it are *detached, not deleted*
-///   (`WireInstance.RemoveConnectionDependency`) -- each inherits the
-///   removed wire's route up to their attachment point plus its electrical
-///   connection, so fan-outs survive the loss of their anchor.
+/// Removes wire `index` from `chip.wires` -- the full "Delete" context-menu
+/// action, which cascades: the wire itself, and every wire tapping onto it
+/// (transitively), go with it. For a bus wire this cascade also reaches
+/// everything else wired into either of the origin's pins, since a bus
+/// merges onto one shared net. See [`delete_wire_old`] for the "Delete
+/// Part" counterpart, which detaches taps instead of destroying them.
 ///
 /// Every remaining wire's `connected_wire_index` is shifted so the rest of
 /// the tap graph stays intact. Returns the number of wires removed.
@@ -193,7 +189,9 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 	removed_count
 }
 
-
+/// Removes just wire `index` (`chip.wires[index]`'s tappers, if any, are
+/// detached rather than destroyed) -- backs the "Delete Part" context-menu
+/// action.
 pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipLibrary) -> usize {
 	if index >= chip.wires.len() {
 		return 0;
@@ -259,7 +257,20 @@ pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipL
 			let touches_origin_pins =
 				[w.source_pin_address, w.target_pin_address].iter().any(|a| a.pin_owner_id == origin_owner && origin_pin_ids.contains(&a.pin_id));
 			let taps_removed = w.connection_type != WireConnectionType::ToPins && to_remove.contains(&(w.connected_wire_index as usize));
-			if touches_origin_pins || taps_removed {
+			// Only genuine direct (`ToPins`) connections into the origin's
+			// pins are real net members and actually die with the net. A
+			// wire that merely *taps* onto something in the net (drawn
+			// attachment only -- `connection_type != ToPins`) keeps its own
+			// identity here: it gets auto-detached by
+			// `shift_connected_indices_after_removal` once its anchor is
+			// actually gone, instead of being destroyed along with it.
+			// Without this split, "Delete Part" on the bus segment (or
+			// anything touching the origin's pins) swept in and deleted
+			// every fan-out tap too, since a tap always carries the
+			// origin's real pin address and so always satisfies
+			// `touches_origin_pins` -- turning "delete part" into "delete
+			// the whole net", much more than the clicked part.
+			if (touches_origin_pins || taps_removed) && w.connection_type == WireConnectionType::ToPins {
 				to_remove.push(i);
 				added = true;
 			}
@@ -299,7 +310,6 @@ pub fn delete_wire_segment(chip: &mut ChipDescription, index: usize) -> usize {
 /// the anchor's route up to/past the attachment point is folded into the
 /// dependent's own bend list, and its attached-side connection info is
 /// inherited from the anchor's corresponding side.
-#[allow(unused)]
 fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescription, anchor_world: &[Vec2]) {
 	let seg = chip.wires[d].connected_wire_segment_index;
 
@@ -314,6 +324,15 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 			// or, when the anchor was itself a tap, inherit its whole
 			// source-side attachment (`SourceConnectionInfo` hand-over).
 			let mut points: Vec<Vec2> = anchor_world.iter().take((seg as usize + 1).min(anchor_world.len())).skip(1).copied().collect();
+			// However many vertices we're about to prepend (the folded
+			// anchor route plus the frozen tap point itself) -- any wire
+			// that in turn taps onto *this* one (`d`) measures its own
+			// `connected_wire_segment_index` from vertex 0 of `d`'s point
+			// list, so once we prepend here every such downstream tap's
+			// segment number needs to move forward by the same amount or
+			// it re-projects onto whatever unrelated segment now sits
+			// where its real attachment used to be.
+			let prefix_len = points.len() + 1;
 			points.push(chip.wires[d].cached_source_point);
 			points.extend_from_slice(&chip.wires[d].points);
 			let dep = &mut chip.wires[d];
@@ -324,23 +343,31 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 				dep.cached_source_point = anchor.cached_source_point;
 			} else {
 				dep.connection_type = WireConnectionType::ToPins;
-				dep.connected_wire_index = 0;
-				dep.connected_wire_segment_index = 0;
+				dep.connected_wire_index = -1;
+				dep.connected_wire_segment_index = -1;
 				dep.cached_source_point = Vec2::ZERO;
+			}
+			for w in chip.wires.iter_mut() {
+				if w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == d {
+					w.connected_wire_segment_index += prefix_len as i32;
+				}
 			}
 		}
 		WireConnectionType::ToWireTarget => {
 			// Dependent's *target* sits ON the anchor -- purely a drawing
 			// attachment (its electrical endpoints are fully its own).
 			// Freeze the attachment point as an ordinary bend and draw
-			// straight to the real target pin from now on.
+			// straight to the real target pin from now on. Appending here
+			// (rather than prepending) leaves every earlier vertex index
+			// untouched, so unlike the source-side case above, nothing
+			// downstream needs its `connected_wire_segment_index` shifted.
 			let mut points = chip.wires[d].points.clone();
 			points.push(chip.wires[d].cached_target_point);
 			let dep = &mut chip.wires[d];
 			dep.points = points;
 			dep.connection_type = WireConnectionType::ToPins;
-			dep.connected_wire_index = 0;
-			dep.connected_wire_segment_index = 0;
+			dep.connected_wire_index = -1;
+			dep.connected_wire_segment_index = -1;
 			dep.cached_target_point = Vec2::ZERO;
 		}
 		WireConnectionType::ToPins => {}
@@ -348,10 +375,39 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 }
 
 /// Adjusts every surviving wire's `connected_wire_index` down by however
-/// many `removed` indices sat below it.
+/// many `removed` indices sat below it -- and, for any wire whose anchor
+/// *is* one of the removed indices (a tap whose target wasn't detached
+/// upstream, e.g. by a bare `delete_wire_segment`, or a bus fan-out tap
+/// excluded from `delete_wire_old`'s net-cascade), freezes that end at its
+/// last known attachment point and falls back to a plain pin-to-pin wire.
+/// Without this, such a wire keeps a `connected_wire_index` that (after the
+/// list shrinks) now names some unrelated surviving wire or none at all --
+/// `WireCtx::endpoint` then resolves to `None` and it stops being drawn,
+/// even though its own `source_pin_address`/`target_pin_address` are still
+/// the real pins, so the simulation keeps carrying its signal: a wire that
+/// looks disconnected but is still live.
 fn shift_connected_indices_after_removal(chip: &mut ChipDescription, removed: &[usize]) {
 	for w in chip.wires.iter_mut() {
 		if w.connection_type == WireConnectionType::ToPins {
+			continue;
+		}
+		if removed.contains(&(w.connected_wire_index as usize)) {
+			match w.connection_type {
+				WireConnectionType::ToWireSource => {
+					let mut points = vec![w.cached_source_point];
+					points.extend_from_slice(&w.points);
+					w.points = points;
+					w.cached_source_point = Vec2::ZERO;
+				}
+				WireConnectionType::ToWireTarget => {
+					w.points.push(w.cached_target_point);
+					w.cached_target_point = Vec2::ZERO;
+				}
+				WireConnectionType::ToPins => {}
+			}
+			w.connection_type = WireConnectionType::ToPins;
+			w.connected_wire_index = -1;
+			w.connected_wire_segment_index = -1;
 			continue;
 		}
 		let shift = removed.iter().filter(|&&r| (r as i32) < w.connected_wire_index).count() as i32;
@@ -559,5 +615,56 @@ mod tests {
 
 		assert_eq!(chip.wires.len(), 1, "everything on the origin net goes; only the unrelated wire stays");
 		assert_eq!(chip.wires[0].source_pin_address, PinAddress::new(11, 2));
+	}
+
+	/// "Delete Part" detaches a direct tap by folding the anchor's route
+	/// into the tap's own bends -- prepending vertices ahead of whatever
+	/// the tap's own points already were. Anything that in turn taps onto
+	/// *that* tap must have its `connected_wire_segment_index` shifted
+	/// forward by the same amount, or it silently re-projects onto
+	/// whichever unrelated segment now occupies its old attachment index.
+	#[test]
+	fn delete_part_shifts_segment_index_of_taps_on_a_detached_tap() {
+		let mut chip = ChipDescription::new("CHAIN", ChipType::Custom);
+		for id in [1, 2, 3, 4] {
+			chip.sub_chips.push(SubChipDescription {
+				name: "NAND".into(),
+				id,
+				internal_data: None,
+				position: Vec2::ZERO,
+				label: None,
+				pin_colour_info: vec![],
+			});
+		}
+		// anchor: NAND1 -> NAND2, with one bend (index 0)
+		let mut anchor = WireDescription::new(PinAddress::new(1, 0), PinAddress::new(2, 0));
+		anchor.points = vec![Vec2::new(2.0, 2.0)];
+		chip.wires.push(anchor);
+		// wire 1: taps onto the anchor's source side (segment 0) -- this is
+		// the wire that survives "Delete Part" as a detached tap.
+		let mut mid_tap = WireDescription::new_tapped_source(PinAddress::new(1, 0), PinAddress::new(3, 1), 0, 0, Vec2::ZERO);
+		mid_tap.points = vec![Vec2::new(1.0, 5.0)];
+		chip.wires.push(mid_tap);
+		// wire 2: taps onto wire 1's source side, at wire 1's only segment (0).
+		let leaf_tap = WireDescription::new_tapped_source(PinAddress::new(1, 0), PinAddress::new(4, 1), 1, 0, Vec2::ZERO);
+		chip.wires.push(leaf_tap);
+
+		let mut library = ChipLibrary::new();
+		library.add(nand_desc());
+
+		delete_wire_old(&mut chip, 0, &library);
+
+		// Anchor gone; the two taps survive, renumbered.
+		assert_eq!(chip.wires.len(), 2);
+		let mid = &chip.wires[0];
+		assert_eq!(mid.connection_type, WireConnectionType::ToPins, "the anchor's direct tap is detached");
+		// `mid_tap` tapped anchor's segment 0 (between the anchor's real
+		// source pin and its bend), so no intermediate anchor vertices get
+		// folded in ahead of it -- just its own frozen tap point, one new
+		// vertex prepended. Segment 0 (old vertex0 -> vertex1) therefore
+		// becomes segment 1 in `mid_tap`'s now-detached point list.
+		let leaf = &chip.wires[1];
+		assert_eq!(leaf.connected_wire_index, 0, "renumbered to mid_tap's new index");
+		assert_eq!(leaf.connected_wire_segment_index, 1, "shifted forward by the 1 vertex prepended onto mid_tap");
 	}
 }
