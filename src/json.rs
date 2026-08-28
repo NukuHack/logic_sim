@@ -488,6 +488,13 @@ pub struct ProjectDescription {
 	pub prefs_snapping: i32,
 	#[serde(rename = "Prefs_StraightWires", default)]
 	pub prefs_straight_wires: i32,
+	/// Whether `CanCompleteWireConnection`'s bit-width check gates wire
+	/// completion at all. Defaults to `true` (on), matching the
+	/// previously-hardcoded always-on behaviour; exposed in the
+	/// preferences UI so it can be turned off to allow connecting
+	/// mismatched-width pins.
+	#[serde(rename = "Prefs_CanCompleteWireConnection", default)]
+	pub prefs_can_complete_wire_connection: i32,
 	#[serde(rename = "Prefs_SimPaused", default)]
 	pub prefs_sim_paused: bool,
 	#[serde(rename = "Prefs_SimTargetStepsPerSecond", default)]

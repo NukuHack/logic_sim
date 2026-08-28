@@ -1,15 +1,19 @@
 TODO LIST:
 
-- Show wire during placement: while dragging duplicated
-  components, wires connecting them should be visible at the same alpha
-  as the ghost components.
+- Show wire during placement: while dragging duplicated components,
+  wires connecting them should be visible at the same alpha as the ghost components.
 
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 
 make everything inside costumize a dragging stuff, so the displays and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
-shift-clicking on a component in the bottom bar should not close the collections (if open and a component is clicked) just add the clicked chip to placement (make sure to offset the newest relative to the last position so they can be placed and will not collide)
+shift-clicking on a component in the bottom bar should not close the collections (rn that only works after one selected)
+make sure to offset the newest relative to the last position (asume the height of the chip isn ot 0, makse it so they can be placed and will not collide )
+
+- Ctrl+right-click drag delete: nearly perfect, make sure visually the things get deleted as i move the mouse
+  make sure the dragged wires get a "delete-part" (not only the components)
+
 
 FUTURE PLANS (can be ignored now) :
 
@@ -23,21 +27,10 @@ going into edit mode should make the entire wire network in edit mode, so everyt
 
 separate the rendering from logic (rn lagging logic laggs the ui too)
 
-- CanCompleteWireConnection conditional on prefs: the wire-completion
-  check should only gate on a user-facing pref (default yes). Currently
-  the logic is always-on and not exposed in the preferences UI.
-
-- Ctrl+right-click drag delete: shift+rightclick should delete
-  components while dragging, recording all deletions as a single undo
-  entry. Currently right-click only acts on the single point under the
-  cursor. Requires: tracking a "delete-drag" interaction, hit-testing
-  components along the drag path, batching undo records.
-
-
 speedup : 
 add a checkbox into the customization menu (default off) like "make lut"
-add an optional lut in every circuit (only in memory), and in simulation just do an "is_some() then use lookup" - important use key, and values as more compressed variables
-	rn even one bit of value is 16 bit (so it's a really big lut uselessly)
+add an optional lut in every circuit (only in memory, so no serialization), and in simulation just do an "is_some() then use lookup" - important use key, and values as more compressed variables
+	rn even one bit of value is 16 bit (so it's a really big lut uselessly) - example : most of the circuits don't care about the input being "off or disabled" so if possible minimize the lut
 add a pattern maching or something like that to the customization menu, that would make it so some pre-defined lookup tables mach the lut generated lut by the circuit
 	so it would use real math in the code instead of lut : like 8 bit adder would be 2x8+1 bit in, 8+1 bit out so a lot, but addition with pure math is insainly fast
 

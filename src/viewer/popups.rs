@@ -18,7 +18,8 @@ pub(crate) fn cycle_pref(prefs: &mut crate::json::ProjectDescription, row_index:
 		2 => prefs.prefs_grid_display_mode = (prefs.prefs_grid_display_mode + 1) % 2,
 		3 => prefs.prefs_snapping = (prefs.prefs_snapping + 1) % 3,
 		4 => prefs.prefs_straight_wires = (prefs.prefs_straight_wires + 1) % 3,
-		5 => prefs.prefs_sim_paused = !prefs.prefs_sim_paused,
+		5 => prefs.prefs_can_complete_wire_connection = (prefs.prefs_can_complete_wire_connection + 1) % 2,
+		6 => prefs.prefs_sim_paused = !prefs.prefs_sim_paused,
 		_ => {}
 	}
 }
@@ -388,8 +389,14 @@ mod tests {
 		cycle_pref(&mut prefs, 2); // On -> Off
 		assert_eq!(prefs.prefs_grid_display_mode, 0);
 
+		assert!(prefs.prefs_can_complete_wire_connection == 0, "defaults to on");
+		cycle_pref(&mut prefs, 5); // wire-completion check: On -> Off
+		assert!(!prefs.prefs_can_complete_wire_connection == 0);
+		cycle_pref(&mut prefs, 5); // Off -> On
+		assert!(prefs.prefs_can_complete_wire_connection == 0);
+
 		prefs.prefs_sim_paused = false;
-		cycle_pref(&mut prefs, 5);
+		cycle_pref(&mut prefs, 6);
 		assert!(prefs.prefs_sim_paused);
 
 		cycle_pref(&mut prefs, 99); // out of range: no-op

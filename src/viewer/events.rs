@@ -10,7 +10,7 @@ use crate::render::scene::{hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, p
 use crate::render::ui_stack::{InputResult, LayerId};
 use crate::structs::Vec2;
 use crate::viewer::app::{App, Screen};
-use crate::viewer::state::{sync_stack_with_state, ViewerAction};
+use crate::viewer::state::{sync_stack_with_state, ViewerAction, ViewerState};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -111,6 +111,18 @@ impl ApplicationHandler for App {
 						v.camera.pan(Vec2::new(before.x - after.x, before.y - after.y));
 					}
 					v.last_cursor = cursor;
+					// Shift+right-drag delete in progress: sweep up
+					// whatever's newly under the cursor (deduped) --
+					// nothing is deleted or recorded until release, see
+					// `handle_right_mouse_button`.
+					if v.delete_drag.is_some() {
+						if let Some(id) = Self::delete_drag_hit(v, cursor) {
+							let ids = v.delete_drag.as_mut().unwrap();
+							if !ids.contains(&id) {
+								ids.push(id);
+							}
+						}
+					}
 				}
 			}
 
@@ -174,10 +186,13 @@ impl App {
 							// A row inside an open starred-collection flyout acts *and* closes the
 							// flyout; the flyout's own capture region swallows everything else.
 							Some(LayerId::BottomBarFlyout) => {
+								let shift_add = v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 && !v.pending_place.is_empty();
 								if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
 									apply_editor_action(v, &self.paths, &mut self.status, action);
 								}
-								v.bottom_bar_open_collection = None;
+								if !shift_add {
+									v.bottom_bar_open_collection = None;
+								}
 							}
 							// The context menu's layer either picks one of its rows or just dismisses
 							// it -- either way the click is swallowed, never reaching what's underneath.
@@ -252,11 +267,47 @@ impl App {
 	/// than one resolves to whichever one the player can actually see --
 	/// with UI-surface lookups now delegated to the stack instead of
 	/// hand-rolled per list.
+	///
+	/// Shift held throughout takes an entirely different path: press
+	/// starts (and release commits) a delete-drag instead of any of the
+	/// above -- see [`Self::delete_drag_hit`].
 	fn handle_right_mouse_button(&mut self, btn_state: ElementState) {
+		let Screen::Viewer(v) = &mut self.screen else { return };
+
+		// Shift+right-click-and-drag deletes every placed component the
+		// cursor passes over while held, batched into a single undo entry
+		// on release -- kept entirely separate from the click-once popup
+		// flow below (which shift never touches). Checked by drag state
+		// (not just the live shift key) on release too, so letting go of
+		// Shift a moment before the mouse button doesn't strand the drag
+		// un-applied.
+		if v.delete_drag.is_some() && btn_state == ElementState::Released {
+			if let Some(ids) = v.delete_drag.take() {
+				crate::viewer::undo::delete_components_with_undo(v, ids.into_iter());
+			}
+			return;
+		}
+		if v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 {
+			let mouse_pos = self.mouse_pos;
+			match btn_state {
+				ElementState::Pressed => {
+					v.context_menu = None;
+					let mut ids = Vec::new();
+					if let Some(id) = Self::delete_drag_hit(v, mouse_pos) {
+						ids.push(id);
+					}
+					v.delete_drag = Some(ids);
+					return;
+				}
+				ElementState::Released => return, // handled above
+			}
+		}
+		// Not a delete-drag: don't leave a stale one pending forever.
+		v.delete_drag = None;
+
 		if btn_state != ElementState::Pressed {
 			return;
 		}
-		let Screen::Viewer(v) = &mut self.screen else { return };
 
 		// Right-clicking always closes whatever popup was already open
 		// (matches normal desktop-app behaviour: a fresh right-click
@@ -411,6 +462,25 @@ impl App {
 				v.context_menu = Some(ContextMenuState::new(format!("wire:{wire_idx}"), self.mouse_pos, items));
 			}
 		}
+	}
+
+	/// The placed-component id (if any) under `mouse_pos` on whatever
+	/// chip is currently displayed -- the single hit-test a
+	/// shift+right-drag delete step needs; used both to seed the drag on
+	/// press and to extend it on every `CursorMoved` while it's active.
+	/// Edited-chip territory only, same as every other delete path.
+	fn delete_drag_hit(v: &mut ViewerState, mouse_pos: Vec2) -> Option<i32> {
+		if !v.can_edit_viewed_chip() {
+			return None;
+		}
+		let displayed_chip_name = match v.resolve_scene_target() {
+			crate::viewer::state::SceneTarget::EditRoot => v.root_chip_name.clone(),
+			crate::viewer::state::SceneTarget::Viewed { name, .. } => name,
+		};
+		let world_pos = v.camera.screen_to_world(mouse_pos);
+		let displayed_desc = v.library.get(&displayed_chip_name);
+		let placed = place_sub_chips(displayed_desc, &v.library);
+		hit_test_sub_chip(&placed, world_pos).map(|sub| sub.id)
 	}
 
 	/// Middle-click handling: drags/pans the camera, exactly like left-click

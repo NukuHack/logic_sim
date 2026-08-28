@@ -148,13 +148,23 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			} else {
 				v.prefs = desc;
 			}
-			close_all_overlays(v);
-			v.library_selection = LibrarySelection::None;
-			v.pending_wire = None;
-			// Fills the carry (a bus origin brings its linked terminus
-			// partner along) and cancels any selection drag in flight --
-			// see `chip_interaction::start_placing`.
-			chip_interaction::start_placing(v, &name);
+			// Shift-clicking a bottom-bar/collection chip while something
+			// is already being carried adds it to the carry instead of
+			// starting over -- and leaves the library/collection UI open
+			// (the caller is responsible for not closing the collection
+			// flyout in this case; see `viewer::events`), mirroring
+			// "shift-click adds without dismissing the picker".
+			if v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 && !v.pending_place.is_empty() {
+				chip_interaction::add_to_placing(v, &name);
+			} else {
+				close_all_overlays(v);
+				v.library_selection = LibrarySelection::None;
+				v.pending_wire = None;
+				// Fills the carry (a bus origin brings its linked terminus
+				// partner along) and cancels any selection drag in flight --
+				// see `chip_interaction::start_placing`.
+				chip_interaction::start_placing(v, &name);
+			}
 		}
 		EditorAction::ExitLibrary => {
 			let mut desc = v.prefs.clone();

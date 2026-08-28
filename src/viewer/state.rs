@@ -222,6 +222,15 @@ pub(crate) struct ViewerState {
 	pub(crate) last_cursor: Vec2,
 	pub(crate) camera_fitted: bool,
 
+	/// Shift+right-click-and-drag delete-drag in progress: components hit
+	/// along the drag path so far, in the order first touched, deduped by
+	/// id. `None` when no such drag is active. Nothing is actually
+	/// deleted (and no undo entry written) until the drag is released --
+	/// see `viewer::events::handle_right_mouse_button` -- so every
+	/// component swept up this way is removed and recorded as a single
+	/// batched undo action, mirroring the Delete-key multi-select batch.
+	pub(crate) delete_drag: Option<Vec<i32>>,
+
 	/// The project's saved prefs/collections, edited live by the
 	/// preferences/library overlays and written back to disk on Apply.
 	pub(crate) prefs: ProjectDescription,
@@ -416,6 +425,7 @@ impl ViewerState {
 			camera: Camera::new(viewport),
 			dragging: false,
 			last_cursor: Vec2::ZERO,
+			delete_drag: None,
 			camera_fitted: false,
 			prefs: ProjectDescription::default(),
 			unsaved_drafts: std::collections::HashSet::new(),

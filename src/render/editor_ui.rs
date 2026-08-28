@@ -261,6 +261,7 @@ pub const PIN_DISPLAY_OPTIONS: [&str; 3] = ["Always", "On Hover", "Tab to Toggle
 pub const GRID_DISPLAY_OPTIONS: [&str; 2] = ["Off", "On"];
 pub const SNAPPING_OPTIONS: [&str; 3] = ["Hold Ctrl", "If Grid Shown", "Always"];
 pub const STRAIGHT_WIRE_OPTIONS: [&str; 3] = ["Hold Shift", "If Grid Shown", "Always"];
+pub const WIRE_CONNECTION_CHECK_OPTIONS: [&str; 2] = ["On", "Off"];
 pub const SIM_STATUS_OPTIONS: [&str; 2] = ["Active", "Paused"];
 
 /// One of the preferences panel's numeric input fields (the C# menu's
@@ -311,7 +312,7 @@ struct PrefRow<'a> {
 ///
 /// Row order (and therefore each row's `CyclePref` index): show I/O pin
 /// names, show chip pin names, show grid, snap to grid, straight wires,
-/// sim status. Below those sit the SIMULATION value rows: steps-per-clock
+/// wire-connection width check, sim status. Below those sit the SIMULATION value rows: steps-per-clock
 /// and target-steps-per-second text fields plus the measured-speed
 /// readout, mirroring `PreferencesMenu.DrawMenu`'s lower half.
 pub fn build_preferences_panel(state: &PrefsPanelState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
@@ -331,6 +332,7 @@ pub fn build_preferences_panel(state: &PrefsPanelState, vw: f32, vh: f32, mouse:
 		PrefRow { label: "Show grid", options: &GRID_DISPLAY_OPTIONS, current: desc.prefs_grid_display_mode },
 		PrefRow { label: "Snap to grid", options: &SNAPPING_OPTIONS, current: desc.prefs_snapping },
 		PrefRow { label: "Straight wires", options: &STRAIGHT_WIRE_OPTIONS, current: desc.prefs_straight_wires },
+		PrefRow { label: "Wire connection check", options: &WIRE_CONNECTION_CHECK_OPTIONS, current: desc.prefs_can_complete_wire_connection },
 		PrefRow { label: "Sim status", options: &SIM_STATUS_OPTIONS, current: desc.prefs_sim_paused as i32 },
 	];
 

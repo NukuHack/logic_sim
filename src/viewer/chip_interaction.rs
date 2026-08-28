@@ -113,6 +113,45 @@ pub(crate) fn start_placing(v: &mut ViewerState, chip_name: &str) {
 	v.pending_place = carry;
 }
 
+/// Adds `chip_name` to the carry already in flight without disturbing
+/// what's picked up so far -- mirrors [`start_placing`], but appends
+/// instead of replacing (shift-clicking a chip in the bottom bar, or in
+/// an open collection flyout, while already carrying something). Falls
+/// back to a plain [`start_placing`] if nothing was being carried yet.
+/// The new entry is offset diagonally from whatever was carried last so
+/// it doesn't land exactly on top of it and the two can both actually be
+/// placed once dropped.
+pub(crate) fn add_to_placing(v: &mut ViewerState, chip_name: &str) {
+	if v.pending_place.is_empty() {
+		start_placing(v, chip_name);
+		return;
+	}
+	cancel_all(v);
+	v.pending_wire = None;
+
+	let last_offset = v.pending_place.last().map(|(pos, _)| *pos).unwrap_or(Vec2::ZERO);
+	let offset = last_offset + Vec2::new(layout::GRID_SIZE * 2.0, -layout::GRID_SIZE * 2.0);
+
+	let chip_type = v.library.try_get(chip_name).map(|d| d.chip_type);
+	v.pending_place.push((
+		offset,
+		PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() },
+	));
+
+	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus()) {
+		if let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type) {
+			let terminus_name = desc.name.clone();
+			let new_idx = v.pending_place.len() - 1;
+			let partner_offset = offset + Vec2::new(BUS_PAIR_SPACING, 0.0);
+			v.pending_place.push((
+				partner_offset,
+				PendingComponent { name: terminus_name, linked_bus_partner: Some(new_idx), duplicate_of: None, attached_wires: Vec::new() },
+			));
+			v.pending_place[new_idx].1.linked_bus_partner = Some(new_idx + 1);
+		}
+	}
+}
+
 /// A press landing on placed subchip `id`'s body: toggles it into/out of
 /// the selection (shift held -- "multi-mode"), or selects it alone, then
 /// starts carrying whatever ended up selected. Mirrors `Select` +
@@ -366,6 +405,64 @@ mod tests {
 
 	fn position_of(v: &ViewerState, id: i32) -> Vec2 {
 		v.library.get("ROOT").sub_chips.iter().find(|s| s.id == id).expect("component exists").position
+	}
+
+	#[test]
+	fn add_to_placing_appends_offset_instead_of_replacing() {
+		let mut v = viewer_with_builtins();
+
+		start_placing(&mut v, "NAND");
+		assert_eq!(v.pending_place.len(), 1);
+
+		add_to_placing(&mut v, "AND");
+		assert_eq!(v.pending_place.len(), 2, "adds without dropping the first pickup");
+		assert_eq!(v.pending_place[0].1.name, "NAND");
+		assert_eq!(v.pending_place[1].1.name, "AND");
+		assert_ne!(v.pending_place[1].0, v.pending_place[0].0, "offset so the two don't land on top of each other");
+
+		add_to_placing(&mut v, "OR");
+		assert_eq!(v.pending_place.len(), 3);
+		assert_ne!(v.pending_place[2].0, v.pending_place[1].0, "each addition offsets from the previous one");
+	}
+
+	#[test]
+	fn add_to_placing_with_nothing_carried_behaves_like_start_placing() {
+		let mut v = viewer_with_builtins();
+		assert!(v.pending_place.is_empty());
+
+		add_to_placing(&mut v, "NAND");
+
+		assert_eq!(v.pending_place.len(), 1);
+		assert_eq!(v.pending_place[0].0, Vec2::ZERO);
+		assert_eq!(v.pending_place[0].1.name, "NAND");
+	}
+
+	#[test]
+	fn add_to_placing_a_bus_still_carries_its_terminus_partner() {
+		let mut v = viewer_with_builtins();
+		start_placing(&mut v, "NAND");
+
+		add_to_placing(&mut v, "BUS-4");
+
+		assert_eq!(v.pending_place.len(), 3);
+		assert_eq!(v.pending_place[1].1.name, "BUS-4");
+		assert_eq!(v.pending_place[2].1.name, "BUS-TERMINUS-4");
+		assert_eq!(v.pending_place[1].1.linked_bus_partner, Some(2));
+		assert_eq!(v.pending_place[2].1.linked_bus_partner, Some(1));
+	}
+
+	#[test]
+	fn add_to_placing_reverts_an_inflight_move_but_keeps_the_carry() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		begin_drag_on_component(&mut v, a, Vec2::ZERO);
+		update_move_to_cursor(&mut v, Vec2::new(4.0, 0.0));
+
+		start_placing(&mut v, "NAND");
+		add_to_placing(&mut v, "AND");
+
+		assert_eq!(position_of(&v, a), Vec2::ZERO, "the earlier in-flight move was reverted");
+		assert_eq!(v.pending_place.len(), 2, "the carry itself survives");
 	}
 
 	#[test]

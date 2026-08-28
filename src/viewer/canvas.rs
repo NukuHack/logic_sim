@@ -112,7 +112,9 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		// drive or tap it (its origin merges bitwise). Bus-to-bus and
 		// plain-pin-to-plain-pin completions keep the original's strict rule
 		// (`CanCompleteWireConnection`'s `endPin.bitCount != startPin.bitCount`):
-		// a mismatched pair would silently change one side's width.
+		// a mismatched pair would silently change one side's width. Gated on
+		// `Prefs_CanCompleteWireConnection` (default on) so it can be turned
+		// off from the preferences UI to allow mismatched-width connections.
 		let start_is_bus = match pending_ref.start {
 			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
 				bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type())
@@ -120,7 +122,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			PendingWireEnd::WireTap { .. } => false,
 		};
 		let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(|t| t.is_bus_type());
-		if pending_ref.bit_count != hit.bit_count && start_is_bus == end_is_bus {
+		if v.prefs.prefs_can_complete_wire_connection == 0 && pending_ref.bit_count != hit.bit_count && start_is_bus == end_is_bus {
 			*status = Some(format!("Can't connect {}-bit to {}-bit pins", pending_ref.bit_count.to_int(), hit.bit_count.to_int()));
 			return;
 		}
