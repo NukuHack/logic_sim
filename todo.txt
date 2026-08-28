@@ -6,7 +6,7 @@ TODO LIST:
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 
-make everything inside costumize a dragging stuff, so the displays and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
+make everything inside costumize a dragging stuff, so the displays pozition and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
 FUTURE PLANS (can be ignored now) :
 

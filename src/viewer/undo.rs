@@ -95,6 +95,15 @@ struct ElementExistenceAction {
 	/// Wires added alongside elements (duplication). Stored for atomic
 	/// undo: the entire element+wire group is one undo entry.
 	wires: Vec<(WireDescription, usize)>,
+	/// Standalone wires deleted alongside the components in a batch
+	/// delete (e.g. a shift+right-drag sweep), identified by their own
+	/// endpoints rather than an index -- unlike `wires` above, these
+	/// aren't attached to any of `subchips`/`pins` (those come back for
+	/// free via `wire_state`, the same way a plain component delete
+	/// restores its own wiring). Only ever populated when `is_delete`;
+	/// redoing the delete re-removes each by identity via
+	/// [`same_endpoints`], matching `WireExistenceAction`'s redo.
+	deleted_wires: Vec<WireDescription>,
 }
 
 struct WireExistenceAction {
@@ -197,7 +206,7 @@ pub(crate) fn record_add_elements(v: &mut ViewerState, subchips: Vec<SubChipDesc
 	if subchips.is_empty() && pins.is_empty() {
 		return;
 	}
-	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false, wires: Vec::new() }));
+	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false, wires: Vec::new(), deleted_wires: Vec::new() }));
 }
 
 /// Records a combined element + wire addition (duplication drop) as a
@@ -212,7 +221,7 @@ pub(crate) fn record_add_elements_with_wires(
 	if subchips.is_empty() && pins.is_empty() && wires.is_empty() {
 		return;
 	}
-	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false, wires }));
+	record(v, UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: None, is_delete: false, wires, deleted_wires: Vec::new() }));
 }
 
 /// Deletes every id produced by `ids` from the current root chip,
@@ -247,10 +256,108 @@ pub(crate) fn delete_components_with_undo(v: &mut ViewerState, ids: impl Iterato
 	let wire_state = capture_full_wire_state(v, &[], &all_ids);
 	record(
 		v,
-		UndoAction::ElementExistence(ElementExistenceAction { subchips, pins, wire_state: Some(wire_state), is_delete: true, wires: Vec::new() }),
+		UndoAction::ElementExistence(ElementExistenceAction {
+			subchips,
+			pins,
+			wire_state: Some(wire_state),
+			is_delete: true,
+			wires: Vec::new(),
+			deleted_wires: Vec::new(),
+		}),
 	);
 	canvas::apply_component_deletion(v, &all_ids);
 	v.rebuild_sim();
+}
+
+/// Deletes components (`ids`, bus-partner-expanded exactly like
+/// [`delete_components_with_undo`]) *and* standalone wires
+/// (`wire_indices`, "Delete Part" semantics -- detach rather than
+/// cascade, matching [`delete_wire_segment_with_undo`]) as a single undo
+/// entry. This is what lets a shift+right-drag delete sweep -- which can
+/// eat through several components and wires before the button comes back
+/// up -- collapse to exactly one undo step, instead of one step per item
+/// swept.
+///
+/// A wire index that also belongs to one of the deleted components (its
+/// source or target owner is in `ids`) is harmless to pass here too: it
+/// gets removed once, either way, since `wire_indices` are resolved to
+/// `WireDescription`s up front and applied by identity, and
+/// `apply_component_deletion` skips wires that are already gone.
+pub(crate) fn delete_batch_with_undo(v: &mut ViewerState, ids: impl Iterator<Item = i32>, wire_indices: impl Iterator<Item = usize>) {
+	let root_chip_name = v.root_chip_name.clone();
+
+	let mut all_ids: Vec<i32> = Vec::new();
+	for id in ids {
+		// Stale ids (already gone by the time the mouse came up) must not
+		// produce empty no-op history entries.
+		let exists = {
+			let chip = v.library.get(&root_chip_name);
+			chip.sub_chips.iter().any(|s| s.id == id) || chip.input_pins.iter().any(|p| p.id == id) || chip.output_pins.iter().any(|p| p.id == id)
+		};
+		if !exists {
+			continue;
+		}
+		for expanded in compute_component_delete_set(v, id) {
+			if !all_ids.contains(&expanded) {
+				all_ids.push(expanded);
+			}
+		}
+	}
+
+	// Resolve wire indices to descriptions/identities up front, before
+	// anything below starts mutating the chip and invalidating indices.
+	let mut flagged_wire_indices: Vec<usize> = Vec::new();
+	let mut deleted_wires: Vec<WireDescription> = Vec::new();
+	{
+		let chip = v.library.get(&root_chip_name);
+		for idx in wire_indices {
+			if flagged_wire_indices.contains(&idx) {
+				continue;
+			}
+			if let Some(wire) = chip.wires.get(idx) {
+				flagged_wire_indices.push(idx);
+				deleted_wires.push(wire.clone());
+			}
+		}
+	}
+
+	if all_ids.is_empty() && deleted_wires.is_empty() {
+		return;
+	}
+
+	let (subchips, pins) = capture_elements(v, &all_ids);
+	let wire_state = capture_full_wire_state(v, &flagged_wire_indices, &all_ids);
+	record(
+		v,
+		UndoAction::ElementExistence(ElementExistenceAction {
+			subchips,
+			pins,
+			wire_state: Some(wire_state),
+			is_delete: true,
+			wires: Vec::new(),
+			deleted_wires: deleted_wires.clone(),
+		}),
+	);
+
+	canvas::apply_component_deletion(v, &all_ids);
+	delete_wires_by_identity(v, &root_chip_name, &deleted_wires);
+	v.rebuild_sim();
+}
+
+/// Removes each wire in `wires` from `chip_name`'s wire list by matching
+/// endpoints ("Delete Part" semantics -- detach dependents rather than
+/// cascading), tolerating ones already gone as a side effect of an
+/// earlier removal in the same batch (e.g. a bus-wire cascade that also
+/// swept up a wire the drag had separately hit).
+fn delete_wires_by_identity(v: &mut ViewerState, chip_name: &str, wires: &[WireDescription]) {
+	for wire in wires {
+		let index = { v.library.get(chip_name).wires.iter().position(|existing| same_endpoints(existing, wire)) };
+		if let Some(index) = index {
+			let library = v.library.clone();
+			let chip = v.library.get_mut(chip_name);
+			scene::delete_wire_old(chip, index, &library);
+		}
+	}
 }
 
 /// Clones the placed subchip + boundary dev-pin descriptions for `ids`.
@@ -406,6 +513,9 @@ fn apply_element_existence(v: &mut ViewerState, action: &ElementExistenceAction,
 		}
 		if !all_ids.is_empty() {
 			canvas::apply_component_deletion(v, &all_ids);
+		}
+		if !action.deleted_wires.is_empty() {
+			delete_wires_by_identity(v, &root_chip_name, &action.deleted_wires);
 		}
 	}
 
@@ -925,5 +1035,39 @@ mod edge_case_tests {
 		delete_components_with_undo(&mut v, [a + 500].into_iter());
 		assert_eq!(v.undo.history_len(), history_before, "no history entry for a missing id");
 		assert!(v.library.get("ROOT").sub_chips.iter().any(|s| s.id == a), "the real component is untouched");
+	}
+
+	/// A shift+right-drag delete sweep -- some components AND a standalone
+	/// wire (not attached to either deleted component) -- collapses to
+	/// exactly one undo entry, and a single undo brings back everything:
+	/// the components, their own wiring, and the standalone wire.
+	#[test]
+	fn batch_delete_of_components_and_a_standalone_wire_is_one_undo_step() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let b = place_nand(&mut v, Vec2::new(4.0, 0.0));
+		let c = place_nand(&mut v, Vec2::new(8.0, 0.0));
+		let d = place_nand(&mut v, Vec2::new(12.0, 0.0));
+
+		// A standalone wire between b and c, unrelated to a and d, which
+		// are the ones about to be swept by id.
+		v.library.get_mut("ROOT").wires.push(WireDescription::new(PinAddress::new(b, 2), PinAddress::new(c, 0)));
+		assert_eq!(wire_count(&v), 1);
+
+		let history_before = v.undo.history_len();
+		delete_batch_with_undo(&mut v, [a, d].into_iter(), [0usize].into_iter());
+
+		assert_eq!(v.undo.history_len(), history_before + 1, "components + standalone wire recorded as ONE entry");
+		assert!(!v.library.get("ROOT").sub_chips.iter().any(|s| s.id == a || s.id == d), "both swept components are gone");
+		assert_eq!(wire_count(&v), 0, "the standalone wire is gone too");
+
+		try_undo(&mut v);
+		assert_eq!(v.library.get("ROOT").sub_chips.len(), 2, "both components came back in the single undo");
+		assert_eq!(wire_count(&v), 1, "the standalone wire came back too");
+		assert_eq!(endpoints(&v, 0).0, PinAddress::new(b, 2), "the restored wire kept its identity");
+
+		try_redo(&mut v);
+		assert!(!v.library.get("ROOT").sub_chips.iter().any(|s| s.id == a || s.id == d), "redo re-deletes the components");
+		assert_eq!(wire_count(&v), 0, "redo re-deletes the standalone wire too");
 	}
 }

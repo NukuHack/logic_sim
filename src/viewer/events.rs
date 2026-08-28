@@ -112,11 +112,13 @@ impl ApplicationHandler for App {
 					}
 					v.last_cursor = cursor;
 					// Shift+right-drag delete in progress: whatever's newly
-					// under the cursor is deleted right away (one undo
-					// entry per swept item) so the drag visibly eats
-					// through the circuit as the mouse moves, instead of
-					// only showing the damage once the button is released
-					// -- see `Self::delete_drag_sweep`.
+					// under the cursor is added to the sweep (dimmed for
+					// visual feedback elsewhere) so the drag visibly eats
+					// through the circuit as the mouse moves, but nothing
+					// is actually deleted until the button is released --
+					// see `Self::delete_drag_hit` and
+					// `handle_right_mouse_button`'s release branch, which
+					// applies the whole sweep as a single undo step.
 					if v.delete_drag.is_some() {
 						Self::delete_drag_hit(v, cursor)
 					}
@@ -251,11 +253,10 @@ impl App {
 
 		if v.delete_drag.is_some() && btn_state == ElementState::Released {
 			if let Some(sweep) = v.delete_drag.take() {
-				crate::viewer::undo::delete_components_with_undo(v, sweep.components.into_iter());
-				for wire_id in sweep.wires {
-					crate::viewer::undo::delete_wire_segment_with_undo(v, "a" /*guess */, wire_id);
-				}
-				// should be made into a big SINGLE delte, that would contin all the wires and components
+				// Everything the drag swept over -- components and wires
+				// alike -- goes in as ONE undo entry, so a single undo
+				// after releasing the mouse brings the whole sweep back.
+				crate::viewer::undo::delete_batch_with_undo(v, sweep.components.into_iter(), sweep.wires.into_iter());
 			}
 			return;
 		}
@@ -433,14 +434,22 @@ impl App {
 	}
 
 	/// What a shift+right-drag delete step's cursor position landed on.
+	/// Only *records* the hit into `v.delete_drag` -- nothing is actually
+	/// deleted here. The whole sweep is applied in one shot as a single
+	/// undo entry once the button comes back up (see
+	/// `handle_right_mouse_button`'s release branch, which hands the
+	/// accumulated sweep to `undo::delete_batch_with_undo`). Dimming
+	/// already-swept elements while the drag is in progress is handled
+	/// elsewhere, reading `v.delete_drag` directly.
 	fn delete_drag_hit(v: &mut ViewerState, mouse_pos: Vec2) {
 		if v.delete_drag.is_none() {
-			v.delete_drag = Some(DeleteDragSweep::default())
+			v.delete_drag = Some(DeleteDragSweep::default());
 		}
 		if !v.can_edit_viewed_chip() {
 			return;
 		}
-		if let Some(id) = {
+
+		let component_hit = {
 			let displayed_chip_name = match v.resolve_scene_target() {
 				crate::viewer::state::SceneTarget::EditRoot => v.root_chip_name.clone(),
 				crate::viewer::state::SceneTarget::Viewed { name, .. } => name,
@@ -449,20 +458,27 @@ impl App {
 			let displayed_desc = v.library.get(&displayed_chip_name);
 			let placed = place_sub_chips(displayed_desc, &v.library);
 			hit_test_sub_chip(&placed, world_pos).map(|sub| sub.id)
-		} {
-			crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id));
+		};
+		if let Some(id) = component_hit {
+			let sweep = v.delete_drag.as_mut().expect("ensured Some above");
+			if !sweep.components.contains(&id) {
+				sweep.components.push(id);
+			}
 		}
+
 		let root_chip_name = v.root_chip_name.clone();
 		let world_pos = v.camera.screen_to_world(mouse_pos);
 		let max_dist = wire_click_tolerance(&v.camera);
-		let hit = {
+		let wire_hit = {
 			let root_desc = v.library.get(&root_chip_name);
 			hit_test_wire(root_desc, &v.library, world_pos, max_dist)
 		};
-		if let Some(wire_idx) = hit {
-			crate::viewer::undo::delete_wire_segment_with_undo(v, &root_chip_name, wire_idx);
+		if let Some(wire_idx) = wire_hit {
+			let sweep = v.delete_drag.as_mut().expect("ensured Some above");
+			if !sweep.wires.contains(&wire_idx) {
+				sweep.wires.push(wire_idx);
+			}
 		}
-		//let del = v.delete_drag;
 	}
 
 	/// Middle-click handling: drags/pans the camera, exactly like left-click
