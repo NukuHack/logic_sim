@@ -10,7 +10,7 @@ use crate::render::scene::{hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, p
 use crate::render::ui_stack::{InputResult, LayerId};
 use crate::structs::Vec2;
 use crate::viewer::app::{App, Screen};
-use crate::viewer::state::{sync_stack_with_state, ViewerAction, ViewerState};
+use crate::viewer::state::{sync_stack_with_state, DeleteDragSweep, ViewerAction, ViewerState};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -111,17 +111,14 @@ impl ApplicationHandler for App {
 						v.camera.pan(Vec2::new(before.x - after.x, before.y - after.y));
 					}
 					v.last_cursor = cursor;
-					// Shift+right-drag delete in progress: sweep up
-					// whatever's newly under the cursor (deduped) --
-					// nothing is deleted or recorded until release, see
-					// `handle_right_mouse_button`.
+					// Shift+right-drag delete in progress: whatever's newly
+					// under the cursor is deleted right away (one undo
+					// entry per swept item) so the drag visibly eats
+					// through the circuit as the mouse moves, instead of
+					// only showing the damage once the button is released
+					// -- see `Self::delete_drag_sweep`.
 					if v.delete_drag.is_some() {
-						if let Some(id) = Self::delete_drag_hit(v, cursor) {
-							let ids = v.delete_drag.as_mut().unwrap();
-							if !ids.contains(&id) {
-								ids.push(id);
-							}
-						}
+						Self::delete_drag_hit(v, cursor)
 					}
 				}
 			}
@@ -186,7 +183,7 @@ impl App {
 							// A row inside an open starred-collection flyout acts *and* closes the
 							// flyout; the flyout's own capture region swallows everything else.
 							Some(LayerId::BottomBarFlyout) => {
-								let shift_add = v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 && !v.pending_place.is_empty();
+								let shift_add = v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0;
 								if let Some(ViewerAction::Editor(action)) = dispatch.button.map(|b| b.action.clone()) {
 									apply_editor_action(v, &self.paths, &mut self.status, action);
 								}
@@ -244,46 +241,21 @@ impl App {
 	}
 
 	/// Right-click handling:
-	///  - always first cancels whatever popup / pending wire / pending
-	///    chip was in progress (the standard "cancel" gesture, same as
-	///    Escape);
-	///  - over a modal overlay panel other than the library, nothing
-	///    sensible to attach to -- leaves everything closed;
-	///  - on a library chip row (the panel itself), a starred bottom-bar
-	///    chip button, or a row of an open bar flyout -- all found via
-	///    `UiStack::topmost_button`, i.e. "whatever row is visibly on
-	///    top" -- opens the generic context-menu popup from
-	///    `render::context_menu` with whichever rows apply;
-	///  - on a placed component on the canvas, a dev-pin of the current
-	///    root chip, opens that same popup (`context_menu_items_for_component`);
-	///  - on a wire, deletes it immediately (no popup -- see
-	///    `scene::hit_test_wire`/`delete_wire`'s docs for the "shortest
-	///    possible section" semantics);
-	///  - anywhere else, just closes whatever popup was already open.
-	///
 	/// Hit-tests run in the same order things are actually drawn on top
-	/// of each other (library row > flyout row > bottom bar > dev-pin >
-	/// component > wire), so a click that could plausibly land on more
+	/// of each other (component > wire), so a click that could plausibly land on more
 	/// than one resolves to whichever one the player can actually see --
 	/// with UI-surface lookups now delegated to the stack instead of
 	/// hand-rolled per list.
-	///
-	/// Shift held throughout takes an entirely different path: press
-	/// starts (and release commits) a delete-drag instead of any of the
-	/// above -- see [`Self::delete_drag_hit`].
 	fn handle_right_mouse_button(&mut self, btn_state: ElementState) {
 		let Screen::Viewer(v) = &mut self.screen else { return };
 
-		// Shift+right-click-and-drag deletes every placed component the
-		// cursor passes over while held, batched into a single undo entry
-		// on release -- kept entirely separate from the click-once popup
-		// flow below (which shift never touches). Checked by drag state
-		// (not just the live shift key) on release too, so letting go of
-		// Shift a moment before the mouse button doesn't strand the drag
-		// un-applied.
 		if v.delete_drag.is_some() && btn_state == ElementState::Released {
-			if let Some(ids) = v.delete_drag.take() {
-				crate::viewer::undo::delete_components_with_undo(v, ids.into_iter());
+			if let Some(sweep) = v.delete_drag.take() {
+				crate::viewer::undo::delete_components_with_undo(v, sweep.components.into_iter());
+				for wire_id in sweep.wires {
+					crate::viewer::undo::delete_wire_segment_with_undo(v, "a" /*guess */, wire_id);
+				}
+				// should be made into a big SINGLE delte, that would contin all the wires and components
 			}
 			return;
 		}
@@ -292,11 +264,7 @@ impl App {
 			match btn_state {
 				ElementState::Pressed => {
 					v.context_menu = None;
-					let mut ids = Vec::new();
-					if let Some(id) = Self::delete_drag_hit(v, mouse_pos) {
-						ids.push(id);
-					}
-					v.delete_drag = Some(ids);
+					Self::delete_drag_hit(v, mouse_pos);
 					return;
 				}
 				ElementState::Released => return, // handled above
@@ -464,23 +432,37 @@ impl App {
 		}
 	}
 
-	/// The placed-component id (if any) under `mouse_pos` on whatever
-	/// chip is currently displayed -- the single hit-test a
-	/// shift+right-drag delete step needs; used both to seed the drag on
-	/// press and to extend it on every `CursorMoved` while it's active.
-	/// Edited-chip territory only, same as every other delete path.
-	fn delete_drag_hit(v: &mut ViewerState, mouse_pos: Vec2) -> Option<i32> {
-		if !v.can_edit_viewed_chip() {
-			return None;
+	/// What a shift+right-drag delete step's cursor position landed on.
+	fn delete_drag_hit(v: &mut ViewerState, mouse_pos: Vec2) {
+		if v.delete_drag.is_none() {
+			v.delete_drag = Some(DeleteDragSweep::default())
 		}
-		let displayed_chip_name = match v.resolve_scene_target() {
-			crate::viewer::state::SceneTarget::EditRoot => v.root_chip_name.clone(),
-			crate::viewer::state::SceneTarget::Viewed { name, .. } => name,
-		};
+		if !v.can_edit_viewed_chip() {
+			return;
+		}
+		if let Some(id) = {
+			let displayed_chip_name = match v.resolve_scene_target() {
+				crate::viewer::state::SceneTarget::EditRoot => v.root_chip_name.clone(),
+				crate::viewer::state::SceneTarget::Viewed { name, .. } => name,
+			};
+			let world_pos = v.camera.screen_to_world(mouse_pos);
+			let displayed_desc = v.library.get(&displayed_chip_name);
+			let placed = place_sub_chips(displayed_desc, &v.library);
+			hit_test_sub_chip(&placed, world_pos).map(|sub| sub.id)
+		} {
+			crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id));
+		}
+		let root_chip_name = v.root_chip_name.clone();
 		let world_pos = v.camera.screen_to_world(mouse_pos);
-		let displayed_desc = v.library.get(&displayed_chip_name);
-		let placed = place_sub_chips(displayed_desc, &v.library);
-		hit_test_sub_chip(&placed, world_pos).map(|sub| sub.id)
+		let max_dist = wire_click_tolerance(&v.camera);
+		let hit = {
+			let root_desc = v.library.get(&root_chip_name);
+			hit_test_wire(root_desc, &v.library, world_pos, max_dist)
+		};
+		if let Some(wire_idx) = hit {
+			crate::viewer::undo::delete_wire_segment_with_undo(v, &root_chip_name, wire_idx);
+		}
+		//let del = v.delete_drag;
 	}
 
 	/// Middle-click handling: drags/pans the camera, exactly like left-click
@@ -569,8 +551,7 @@ impl App {
 		// never get stuck "on".
 		if let Some(c) = crate::viewer::input::char_for_key_event(&event) {
 			if let Screen::Viewer(v) = &mut self.screen {
-				if pressed && v.stack.keyboard_stop()
-					&& c.is_ascii_alphanumeric() {
+				if pressed && v.stack.keyboard_stop() && c.is_ascii_alphanumeric() {
 					match pressed {
 						true => v.sim.held_key_press(c),
 						false => v.sim.held_key_release(c),

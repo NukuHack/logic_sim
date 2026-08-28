@@ -24,10 +24,17 @@ use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
 
-use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, PENDING_PLACEMENT_ALPHA};
+use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, DELETE_DRAG_ALPHA, PENDING_PLACEMENT_ALPHA};
 use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};
 use crate::viewer::save_flow::save_chip_mode;
 use crate::viewer::state::{editor_action, NamingPurpose, Overlay, SceneTarget, ViewerAction, ViewerState};
+
+/// Camera zoom used for a chip with no geometry to fit to (a brand-new blank
+/// chip, before anything's been placed on it). Chips are laid out in grid
+/// units of ~0.125 (see `layout::GRID_SIZE`), so this is picked to show a
+/// comfortable handful of grid squares on a typical window rather than the
+/// vast, empty expanse a leftover/default zoom of 1.0 would show.
+const DEFAULT_EMPTY_CHIP_ZOOM: f32 = 96.0;
 
 /// Builds the transient status/error toast (`LayerId::StatusToast`): a small dark strip with the
 /// message centred in it, floating just above the bottom bar in the viewer (`above_y`) or near
@@ -252,10 +259,45 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		}
 	}
 
+	// A shift+right-drag delete sweep in progress: every component and
+	// bare wire it's crossed so far fades out immediately (nothing is
+	// actually deleted yet -- that happens once as a single undo entry
+	// when the drag ends, see `App::handle_right_mouse_button`), so the
+	// sweep still *reads* as an instant delete as the cursor moves.
+	// `touching` (not `fully_within`) is used for the swept components'
+	// wires so a wire with only one end swept still vanishes with it.
+	if let Some(sweep) = &v.delete_drag {
+		for &id in &sweep.components {
+			if let Some(span) = component_spans.get(id) {
+				fade_component(&mut chip_scene, span, DELETE_DRAG_ALPHA);
+			}
+		}
+		let swept_ids: std::collections::HashSet<i32> = sweep.components.iter().copied().collect();
+		for wire in wire_spans.touching(&swept_ids) {
+			fade_wire(&mut chip_scene, wire, DELETE_DRAG_ALPHA);
+		}
+		for &wire_idx in &sweep.wires {
+			if let Some(span) = wire_spans.get(wire_idx) {
+				fade_wire(&mut chip_scene, span, DELETE_DRAG_ALPHA);
+			}
+		}
+	}
+
 	if !v.camera_fitted {
 		let bounds = bounding_box(&chip_scene).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
-		if let Some((min, max)) = bounds {
-			v.camera.fit_to_bounds(min, max, 0.15);
+		match bounds {
+			Some((min, max)) => v.camera.fit_to_bounds(min, max, 0.15),
+			// No geometry at all -- e.g. a brand-new blank chip has no
+			// components/wires yet, so there's nothing to fit to. Fall back to
+			// a fixed, comfortable default instead of leaving whatever zoom the
+			// camera previously had (which is usually the untouched construction
+			// default of 1.0 -- since chips are sized in grid units of ~0.125,
+			// that reads as "zoomed all the way out" rather than a sane starting
+			// view of an empty canvas).
+			None => {
+				v.camera.position = Vec2::ZERO;
+				v.camera.zoom = DEFAULT_EMPTY_CHIP_ZOOM;
+			}
 		}
 		v.camera_fitted = true;
 	}

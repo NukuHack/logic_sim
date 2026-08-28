@@ -8,13 +8,6 @@ TODO LIST:
 
 make everything inside costumize a dragging stuff, so the displays and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
-shift-clicking on a component in the bottom bar should not close the collections (rn that only works after one selected)
-make sure to offset the newest relative to the last position (asume the height of the chip isn ot 0, makse it so they can be placed and will not collide )
-
-- Ctrl+right-click drag delete: nearly perfect, make sure visually the things get deleted as i move the mouse
-  make sure the dragged wires get a "delete-part" (not only the components)
-
-
 FUTURE PLANS (can be ignored now) :
 
 the chip search should be similar to the library, defualt click should just select it and show the "open" "delete" "use" and "star" buttons (if it is stared as is, so not with collection make it an "un-star" button)

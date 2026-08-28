@@ -133,10 +133,8 @@ pub(crate) fn add_to_placing(v: &mut ViewerState, chip_name: &str) {
 	let offset = last_offset + Vec2::new(layout::GRID_SIZE * 2.0, -layout::GRID_SIZE * 2.0);
 
 	let chip_type = v.library.try_get(chip_name).map(|d| d.chip_type);
-	v.pending_place.push((
-		offset,
-		PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() },
-	));
+	v.pending_place
+		.push((offset, PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() }));
 
 	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus()) {
 		if let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type) {

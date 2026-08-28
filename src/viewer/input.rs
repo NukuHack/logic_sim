@@ -157,9 +157,7 @@ pub(crate) fn handle_viewer_key(
 		Key::Named(NamedKey::Enter) if target == Some(LayerId::UnsavedChanges) => {
 			confirm_unsaved_changes_popup(v, paths, status);
 		}
-		Key::Named(NamedKey::Enter)
-			if target == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) =>
-		{
+		Key::Named(NamedKey::Enter) if target == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) => {
 			apply_editor_action(v, paths, status, EditorAction::ConfirmCollectionName);
 		}
 		Key::Named(NamedKey::Enter) if target == Some(LayerId::RomEditor) => {
@@ -171,8 +169,7 @@ pub(crate) fn handle_viewer_key(
 		// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"
 		// action) -- when both "Save As" and "Rename" are on offer, that choice needs a click.
 		Key::Named(NamedKey::Enter)
-			if target == Some(LayerId::SaveChip)
-				&& save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
+			if target == Some(LayerId::SaveChip) && save_chip_mode(v, &v.overlay_text_input) != editor_ui::SaveChipMode::SaveAsOrRename =>
 		{
 			confirm_save_chip_popup(v, paths, status);
 		}
@@ -183,8 +180,7 @@ pub(crate) fn handle_viewer_key(
 		}
 		Key::Character(s)
 			if matches!(target, Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))
-				|| (matches!(target, Some(LayerId::Library))
-					&& (v.library_creating_collection || v.library_renaming_collection)) =>
+				|| (matches!(target, Some(LayerId::Library)) && (v.library_creating_collection || v.library_renaming_collection)) =>
 		{
 			if v.overlay_text_input.chars().count() < 64 {
 				v.overlay_text_input.push_str(s);
@@ -243,9 +239,7 @@ pub(crate) fn handle_viewer_key(
 			}
 			apply_prefs_field_text(v);
 		}
-		Key::Character(s)
-			if target == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() && prefs_field_accepts(v, s) =>
-		{
+		Key::Character(s) if target == Some(LayerId::Preferences) && v.prefs_field_focus.is_some() && prefs_field_accepts(v, s) => {
 			match v.prefs_field_focus {
 				Some(PrefValueField::ClockSpeed) => v.prefs_clock_text.push_str(s),
 				Some(PrefValueField::TargetRate) => v.prefs_rate_text.push_str(s),
@@ -288,9 +282,7 @@ pub(crate) fn handle_viewer_key(
 		Key::Character(s) if target.is_none() && modifiers.control_key() && s.eq_ignore_ascii_case("f") => v.camera_fitted = !v.camera_fitted,
 		// Ctrl+L opens the chip library panel (`KeyboardShortcuts`'s
 		// LibraryShortcutTriggered).
-		Key::Character(s)
-			if target.is_none() && modifiers.control_key() && !modifiers.shift_key() && s.eq_ignore_ascii_case("l") =>
-		{
+		Key::Character(s) if target.is_none() && modifiers.control_key() && !modifiers.shift_key() && s.eq_ignore_ascii_case("l") => {
 			open_library_panel(v);
 		}
 		// Toggle grid: the Ctrl+G form mirrors `KeyboardShortcuts.ToggleGridShortcutTriggered`
@@ -308,42 +300,22 @@ pub(crate) fn handle_viewer_key(
 		Key::Named(NamedKey::Space) if target.is_none() && !modifiers.control_key() && v.prefs.prefs_sim_paused => {
 			v.request_single_sim_step();
 		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("f") =>
-		{
+		Key::Character(s) if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() && s.eq_ignore_ascii_case("f") => {
 			open_search(v);
 		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("s") =>
-		{
+		Key::Character(s) if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() && s.eq_ignore_ascii_case("s") => {
 			open_save_chip(v);
 		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("n") =>
-		{
+		Key::Character(s) if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() && s.eq_ignore_ascii_case("n") => {
 			request_start_new_chip(v, paths, status);
 		}
 		// Ctrl+Z undo / Ctrl+Shift+Z redo (`KeyboardShortcuts.UndoShortcutTriggered`
 		// / `.RedoShortcutTriggered`), replaying the edited chip's recorded
 		// actions -- see `viewer::undo`.
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("y") =>
-		{
+		Key::Character(s) if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() && s.eq_ignore_ascii_case("y") => {
 			crate::viewer::undo::try_redo(v);
 		}
-		Key::Character(s)
-			if (target.is_none() || target == Some(LayerId::Library))
-				&& modifiers.control_key()
-				&& s.eq_ignore_ascii_case("z") =>
-		{
+		Key::Character(s) if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() && s.eq_ignore_ascii_case("z") => {
 			crate::viewer::undo::try_undo(v);
 		}
 		Key::Named(NamedKey::Tab) if target.is_none() => {
@@ -375,9 +347,7 @@ pub(crate) fn handle_viewer_key(
 		// ---- Pending wire placement: Backspace/Delete removes the last
 		// placed bend, cancelling only when none remain
 		// (`WireInstance.RemoveLastPoint`) ----
-		Key::Named(NamedKey::Delete)
-			if v.pending_wire.is_some() && v.pending_wire.as_ref().is_some_and(|p| !p.bend_points.is_empty()) =>
-		{
+		Key::Named(NamedKey::Delete) if v.pending_wire.is_some() && v.pending_wire.as_ref().is_some_and(|p| !p.bend_points.is_empty()) => {
 			if let Some(pending) = v.pending_wire.as_mut() {
 				pending.bend_points.pop();
 			}

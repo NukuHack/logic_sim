@@ -572,6 +572,14 @@ pub(crate) fn build_pending_place_scene(
 /// "in the hand" state read identically.
 pub(crate) const PENDING_PLACEMENT_ALPHA: f32 = 0.75;
 
+/// Alpha a shift+right-drag delete sweep fades its swept-over elements to
+/// -- effectively invisible, since the sweep is previewing an actual
+/// deletion rather than a carried placement (contrast
+/// [`PENDING_PLACEMENT_ALPHA`], which stays translucent). The real
+/// deletion only happens once the drag ends; see
+/// `crate::viewer::events::App::handle_right_mouse_button`.
+pub(crate) const DELETE_DRAG_ALPHA: f32 = 0.2;
+
 /// Draws the in-progress wire preview: a line from its start endpoint,
 /// through any turn points placed so far, to the cursor's current world
 /// position -- so the player can see what they're about to connect

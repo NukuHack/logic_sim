@@ -207,6 +207,16 @@ pub(crate) struct SimPacing {
 	pub(crate) avg_ticks_per_sec: f64,
 }
 
+/// Ids/indices swept over by an in-progress shift+right-drag delete (see
+/// [`ViewerState::delete_drag`]). Deliberately dumb data -- the drag just
+/// grows these two lists as the cursor sweeps across new elements; nothing
+/// here performs a deletion.
+#[derive(Default)]
+pub(crate) struct DeleteDragSweep {
+	pub(crate) components: Vec<i32>,
+	pub(crate) wires: Vec<usize>,
+}
+
 /// State specific to viewing/simulating one open project's chip, split out
 /// so [`crate::viewer::app::App`] can hold either this or the menu depending on `Screen`.
 pub(crate) struct ViewerState {
@@ -222,14 +232,8 @@ pub(crate) struct ViewerState {
 	pub(crate) last_cursor: Vec2,
 	pub(crate) camera_fitted: bool,
 
-	/// Shift+right-click-and-drag delete-drag in progress: components hit
-	/// along the drag path so far, in the order first touched, deduped by
-	/// id. `None` when no such drag is active. Nothing is actually
-	/// deleted (and no undo entry written) until the drag is released --
-	/// see `viewer::events::handle_right_mouse_button` -- so every
-	/// component swept up this way is removed and recorded as a single
-	/// batched undo action, mirroring the Delete-key multi-select batch.
-	pub(crate) delete_drag: Option<Vec<i32>>,
+	/// Shift+right-click-and-drag delete-drag in progress
+	pub(crate) delete_drag: Option<DeleteDragSweep>,
 
 	/// The project's saved prefs/collections, edited live by the
 	/// preferences/library overlays and written back to disk on Apply.

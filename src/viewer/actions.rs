@@ -11,8 +11,8 @@ use crate::viewer::library::{
 	sync_library_collections,
 };
 use crate::viewer::popups::{
-	apply_prefs_field_text, apply_rom_editor, clear_rom_field, confirm_key_select_popup, confirm_led_colour_popup, confirm_naming_popup, confirm_pin_edit_popup,
-	confirm_rom_cell, copy_rom_editor, cycle_pref, paste_rom_editor, reset_rom_editor,
+	apply_prefs_field_text, apply_rom_editor, clear_rom_field, confirm_key_select_popup, confirm_led_colour_popup, confirm_naming_popup,
+	confirm_pin_edit_popup, confirm_rom_cell, copy_rom_editor, cycle_pref, paste_rom_editor, reset_rom_editor,
 };
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
@@ -148,13 +148,12 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			} else {
 				v.prefs = desc;
 			}
-			// Shift-clicking a bottom-bar/collection chip while something
-			// is already being carried adds it to the carry instead of
-			// starting over -- and leaves the library/collection UI open
-			// (the caller is responsible for not closing the collection
-			// flyout in this case; see `viewer::events`), mirroring
-			// "shift-click adds without dismissing the picker".
-			if v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 && !v.pending_place.is_empty() {
+			// Shift-clicking a bottom-bar/collection chip adds it to the
+			// carry instead of starting over -- and
+			// leaves the library/collection UI open, mirroring "shift-click adds
+			// without dismissing the picker". `add_to_placing` falls back
+			// to a plain pickup on its own when the carry is empty.
+			if v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 {
 				chip_interaction::add_to_placing(v, &name);
 			} else {
 				close_all_overlays(v);

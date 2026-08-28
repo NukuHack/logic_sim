@@ -34,7 +34,7 @@ pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
 pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
 pub use placed::{place_sub_chips, PlacedSubChip};
 pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};
-pub use wires::{delete_wire, delete_wire_segment, delete_wire_old};
+pub use wires::{delete_wire, delete_wire_old, delete_wire_segment};
 
 /// Finds whichever placed subchip's body (as laid out by
 /// [`place_sub_chips`]) contains `world_pos`, if any -- used to resolve a
@@ -117,11 +117,29 @@ impl WireSpans {
 		self.spans.insert(wire_idx, span);
 	}
 
+	/// The span for one specific wire, by its index in the chip's wire
+	/// list -- for a delete-drag's directly-hit bare wires (as opposed to
+	/// [`Self::touching`], which finds wires via a swept *component*).
+	pub fn get(&self, wire_idx: usize) -> Option<&WireEndpoints> {
+		self.spans.get(&wire_idx)
+	}
+
 	/// Every wire whose *both* endpoints belong to `owner_ids` -- i.e. a
 	/// wire fully internal to a set of carried components, which should
 	/// fade with them rather than stay opaque while it stretches.
 	pub fn fully_within<'a>(&'a self, owner_ids: &'a std::collections::HashSet<i32>) -> impl Iterator<Item = &'a WireEndpoints> {
 		self.spans.values().filter(move |w| owner_ids.contains(&w.owners.0) && owner_ids.contains(&w.owners.1))
+	}
+
+	/// Every wire with *either* endpoint belonging to `owner_ids` -- unlike
+	/// [`Self::fully_within`], this also catches a wire that only has one
+	/// end swept up by a delete-drag (the other end's component is
+	/// untouched but the wire itself still vanishes with whichever
+	/// component it's attached to). Used to preview a delete-drag: every
+	/// wire that release would actually remove fades out along with its
+	/// component(s), rather than just the ones fully internal to the set.
+	pub fn touching<'a>(&'a self, owner_ids: &'a std::collections::HashSet<i32>) -> impl Iterator<Item = &'a WireEndpoints> {
+		self.spans.values().filter(move |w| owner_ids.contains(&w.owners.0) || owner_ids.contains(&w.owners.1))
 	}
 }
 
