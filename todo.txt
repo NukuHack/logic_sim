@@ -1,8 +1,5 @@
 TODO LIST:
 
-- Show wire during placement: while dragging duplicated components,
-  wires connecting them should be visible at the same alpha as the ghost components.
-
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 

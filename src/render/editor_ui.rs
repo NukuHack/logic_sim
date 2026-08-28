@@ -1003,7 +1003,15 @@ fn build_search_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: Ui
 	};
 
 	if state.confirming_delete {
-		add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 30.0), inner_w, state.delete_confirm_message, [0.95, 0.8, 0.4, 1.0], FONT_SIZE * 0.85);
+		add_label(
+			frame,
+			ui,
+			Vec2::new(inner_x + inner_w / 2.0, y + 30.0),
+			inner_w,
+			state.delete_confirm_message,
+			[0.95, 0.8, 0.4, 1.0],
+			FONT_SIZE * 0.85,
+		);
 		y += 90.0;
 		button_row(
 			frame,

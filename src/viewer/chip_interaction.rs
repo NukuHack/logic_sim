@@ -834,9 +834,8 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 	// wires outside the group degrade to plain pin connections. Bend
 	// points re-anchor relative to the centroid.
 	let old_wires = v.library.get(&root_chip_name).wires.clone();
-	let existing_len = old_wires.len();
 	let mut attached_wires: Vec<WireDescription> = Vec::new();
-	let mut wire_index_map: HashMap<usize, usize> = HashMap::new(); // old wire idx -> new wire idx
+	let mut wire_index_map: HashMap<usize, usize> = HashMap::new(); // old wire idx -> new local idx
 	for (old_idx, wire) in old_wires.iter().enumerate() {
 		let (Some(src_new), Some(dst_new)) = (id_map.get(&wire.source_pin_address.pin_owner_id), id_map.get(&wire.target_pin_address.pin_owner_id))
 		else {
@@ -859,7 +858,7 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 				}
 			}
 		}
-		wire_index_map.insert(old_idx, existing_len + attached_wires.len());
+		wire_index_map.insert(old_idx, attached_wires.len());
 		attached_wires.push(copy);
 	}
 
@@ -921,6 +920,40 @@ mod duplicate_tests {
 		let new_wire = &chip.wires[1];
 		assert_eq!(new_wire.source_pin_address.pin_owner_id, chip.sub_chips[2].id);
 		assert_eq!(new_wire.target_pin_address.pin_owner_id, chip.sub_chips[3].id);
+	}
+
+	/// A wire tapped onto another duplicated wire (`ToWireSource`/`ToWireTarget`,
+	/// not a plain pin-to-pin connection)
+	#[test]
+	fn duplicating_a_wire_tapped_onto_another_duplicated_wire_keeps_the_tap() {
+		let mut v = viewer_with_builtins();
+		let a = place_nand(&mut v, Vec2::ZERO);
+		let b = place_nand(&mut v, Vec2::new(8.0, 0.0));
+		let c = place_nand(&mut v, Vec2::new(16.0, 0.0));
+		{
+			let chip = v.library.get_mut("ROOT");
+			// wire 0: a -> b (plain). wire 1: taps onto wire 0's source, running to c.
+			chip.wires.push(WireDescription::new(PinAddress::new(a, 2), PinAddress::new(b, 1)));
+			chip.wires.push(WireDescription::new_tapped_source(PinAddress::new(a, 2), PinAddress::new(c, 1), 0, 0, Vec2::ZERO));
+		}
+
+		v.selected_ids = vec![a, b, c];
+		assert!(duplicate_selection(&mut v));
+
+		let wires = &v.pending_place[0].1.attached_wires;
+		assert_eq!(wires.len(), 2, "both the base wire and its tap come along");
+		let tap = wires.iter().find(|w| w.connection_type != crate::WireConnectionType::ToPins).expect("the tap survives duplication");
+		assert_eq!(tap.connected_wire_index, 0, "tap resolves to a LOCAL index within the carried batch, matching the ghost's own wires list");
+
+		// Drop onto a chip that already has its own 2 wires, so the real
+		// placement index (2) differs from the local index (0) -- this is
+		// exactly the case the local-index remap has to survive.
+		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::new(40.0, 40.0), &mut None);
+		let chip = v.library.get("ROOT");
+		assert_eq!(chip.wires.len(), 4, "original 2 plus duplicated base wire and its tap");
+		let placed_tap = &chip.wires[3];
+		assert_ne!(placed_tap.connection_type, crate::WireConnectionType::ToPins);
+		assert_eq!(placed_tap.connected_wire_index, 2, "re-offset to the duplicated base wire's real position (index 2) in the full list");
 	}
 
 	#[test]

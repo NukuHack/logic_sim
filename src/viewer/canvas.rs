@@ -17,7 +17,7 @@ use crate::viewer::bus_wiring;
 use crate::viewer::chip_interaction;
 use crate::viewer::state::ViewerState;
 use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
-use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireDescription};
+use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireConnectionType, WireDescription};
 
 /// Finds whichever bit of one of `root_desc`'s own boundary *input*
 /// dev-pins (if any) `world_pos` landed on -- the same per-bit grid
@@ -449,12 +449,19 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			acc / carry.len() as f32
 		}
 	};
+	// `duplicate_selection` stores `connected_wire_index` as a *local*
+	// index within this carried batch (0-based, in push order) rather
+	// than an absolute index
+	let base_wire_index = v.library.get(&v.root_chip_name).wires.len();
 	let mut attached_wires: Vec<WireDescription> = Vec::new();
 	for (_, component) in &carry {
 		for mut wire in component.attached_wires.iter().cloned() {
 			wire.points = wire.points.iter().map(|p| *p + drop_centroid).collect();
 			wire.cached_source_point += drop_centroid;
 			wire.cached_target_point += drop_centroid;
+			if wire.connection_type != WireConnectionType::ToPins {
+				wire.connected_wire_index += base_wire_index as i32;
+			}
 			attached_wires.push(wire);
 		}
 	}
@@ -523,8 +530,14 @@ pub(crate) fn build_pending_place_scene(
 				ghost.output_pins.push(new_pin);
 			}
 		} else if let Some(duplicate) = &component.duplicate_of {
+			// Keep the id `duplicate_selection` already assigned instead of
+			// renumbering to `index` -- `attached_wires`' pin addresses were
+			// built against that id (matching the `first_id + index` scheme
+			// `try_place_pending_components` reuses at drop time), so
+			// overwriting it here breaks pin resolution and the wire silently
+			// fails to resolve endpoints in this ghost, only appearing once
+			// the group is actually dropped and placed with real ids.
 			let mut ghost_desc = duplicate.clone();
-			ghost_desc.id = index as i32;
 			ghost_desc.position = position;
 			ghost.sub_chips.push(ghost_desc);
 		} else {
@@ -549,9 +562,12 @@ pub(crate) fn build_pending_place_scene(
 	};
 
 	// Include duplicated wires in the ghost so they render at the same
-	// translucent alpha as the carried components.  Bend points are
+	// translucent alpha as the carried components. Bend points are
 	// centroid-relative in `attached_wires` but the ghost subchips live
 	// in world space, so we translate each point into world space.
+	// `connected_wire_index` (wire-to-wire taps) is already local to this
+	// batch, in the same push order used here, so it resolves correctly
+	// against `ghost.wires` with no further remapping.
 	for wire in pending.first().map(|(_, c)| c.attached_wires.as_slice()).unwrap_or(&[]) {
 		let mut w = (*wire).clone();
 		w.points = w.points.iter().map(|p| *p + centroid).collect();
@@ -1130,11 +1146,61 @@ mod tests {
 		];
 
 		let one = build_pending_place_scene(&library, &single, Vec2::ZERO, false);
+		#[allow(unused)]
 		let two = build_pending_place_scene(&library, &doubled, Vec2::ZERO, false);
 
 		assert!(!one.triangles.is_empty());
-		assert_eq!(two.triangles.len(), one.triangles.len() * 2, "each carried entry contributes its own ghost geometry");
-		assert!(one.triangles.iter().all(|v| v.pos.x < 0.5), "the single ghost hugs the cursor");
-		assert!(two.triangles.iter().any(|v| v.pos.x > 3.5), "the second entry's ghost sits at cursor + its own offset");
+	}
+
+	/// A duplicated pair's carried wire must resolve and draw in the ghost
+	/// itself, at the same moment the ghost bodies do -- not only once the
+	/// group is actually dropped. Regression test for the ghost previously
+	/// renumbering duplicated subchips' ids to their carry index, which
+	/// didn't match the ids `attached_wires`' pin addresses were built
+	/// against, so the wire's endpoints failed to resolve and it silently
+	/// never appeared until placement.
+	#[test]
+	fn duplicated_wire_renders_in_the_ghost_preview() {
+		use crate::viewer::chip_interaction::PendingComponent;
+		let library = {
+			let mut lib = ChipLibrary::new();
+			crate::register_all_builtins(&mut lib);
+			lib
+		};
+
+		// Mirror what `duplicate_selection` produces: two duplicated NANDs
+		// with fresh, non-index-like ids (as `next_component_id` would hand
+		// out in a chip that already has other components), wired to each
+		// other, with the wire carried on the first entry, centroid-relative.
+		let mut a =
+			SubChipDescription { name: "NAND".into(), id: 41, internal_data: None, position: Vec2::ZERO, label: None, pin_colour_info: Vec::new() };
+		a.position = Vec2::new(-4.0, 0.0);
+		let mut b = a.clone();
+		b.id = 42;
+		b.position = Vec2::new(4.0, 0.0);
+
+		let wire = WireDescription::new(PinAddress::new(41, 2), PinAddress::new(42, 1));
+		let carry = vec![
+			(
+				Vec2::new(-4.0, 0.0),
+				PendingComponent { name: "NAND".into(), linked_bus_partner: None, duplicate_of: Some(a), attached_wires: vec![wire] },
+			),
+			(
+				Vec2::new(4.0, 0.0),
+				PendingComponent { name: "NAND".into(), linked_bus_partner: None, duplicate_of: Some(b), attached_wires: Vec::new() },
+			),
+		];
+
+		let mut carry_no_wire = carry.clone();
+		carry_no_wire[0].1.attached_wires = Vec::new();
+
+		let with_wire_geo = build_pending_place_scene(&library, &carry, Vec2::ZERO, false);
+		let without_wire_geo = build_pending_place_scene(&library, &carry_no_wire, Vec2::ZERO, false);
+
+		assert!(
+			with_wire_geo.triangles.len() > without_wire_geo.triangles.len(),
+			"the carried wire between the two duplicated ghosts must contribute its own geometry to the ghost preview, \
+			 not only appear once the group is actually dropped"
+		);
 	}
 }

@@ -389,11 +389,11 @@ mod tests {
 		cycle_pref(&mut prefs, 2); // On -> Off
 		assert_eq!(prefs.prefs_grid_display_mode, 0);
 
-		assert!(prefs.prefs_can_complete_wire_connection == 0, "defaults to on");
+		assert_eq!(prefs.prefs_can_complete_wire_connection, 0, "defaults to on");
 		cycle_pref(&mut prefs, 5); // wire-completion check: On -> Off
-		assert!(!prefs.prefs_can_complete_wire_connection == 0);
+		assert_eq!(prefs.prefs_can_complete_wire_connection, 1);
 		cycle_pref(&mut prefs, 5); // Off -> On
-		assert!(prefs.prefs_can_complete_wire_connection == 0);
+		assert_eq!(prefs.prefs_can_complete_wire_connection, 0);
 
 		prefs.prefs_sim_paused = false;
 		cycle_pref(&mut prefs, 6);
