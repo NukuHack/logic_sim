@@ -8,8 +8,8 @@ use logic_sim::render::context_menu::{build_context_menu, ContextMenuAction, Con
 use logic_sim::render::editor_ui::{
 	build_chip_library_panel, build_key_select_popup, build_pin_edit_popup, build_preferences_panel, build_rom_editor_popup, build_save_chip_popup,
 	build_search_popup, build_simple_naming_popup, build_starred_bottom_bar, build_starred_collection_popup, build_unsaved_changes_popup,
-	ChipLibraryState, EditorAction, LibrarySelection, PrefValueField, PrefsPanelState, SaveChipMode, BOTTOM_BAR_HEIGHT, KEY_SELECT_ALLOWED_CHARS,
-	ROM_WORD_COUNT,
+	ChipLibraryState, EditorAction, LibrarySelection, PrefValueField, PrefsPanelState, SaveChipMode, SearchPopupState, BOTTOM_BAR_HEIGHT,
+	KEY_SELECT_ALLOWED_CHARS, ROM_WORD_COUNT,
 };
 use logic_sim::render::menu_ui::{build, build_popup_frame, build_screen, status_label, UiAction};
 use logic_sim::render::ui_kit::{hovered_button, text_field_row, Button, Frame, FONT_SIZE};
@@ -417,28 +417,60 @@ fn chip_library_panel_shows_open_and_delete_for_the_selected_chip() {
 	assert!(delete_btn.enabled);
 }
 
+fn sample_search_state<'a>(names: &'a [String], query: &'a str, selected: Option<&'a str>) -> SearchPopupState<'a> {
+	SearchPopupState {
+		all_names: names,
+		query,
+		selected,
+		selected_is_starred: false,
+		selected_is_custom: true,
+		selected_would_cycle: false,
+		confirming_delete: false,
+		delete_confirm_message: "",
+	}
+}
+
 #[test]
 fn search_popup_filters_case_insensitively() {
 	let names = vec!["AND".to_string(), "OR".to_string(), "NAND".to_string()];
-	let frame = build_search_popup(&names, "an", 1280.0, 800.0, Vec2::ZERO);
-	let shown: Vec<_> = frame.buttons.iter().filter_map(|b| if let EditorAction::UseChip(n) = &b.action { Some(n.clone()) } else { None }).collect();
+	let state = sample_search_state(&names, "an", None);
+	let frame = build_search_popup(&state, 1280.0, 800.0, Vec2::ZERO);
+	let shown: Vec<_> =
+		frame.buttons.iter().filter_map(|b| if let EditorAction::SelectSearchResult(n) = &b.action { Some(n.clone()) } else { None }).collect();
 	assert_eq!(shown, vec!["AND".to_string(), "NAND".to_string()]);
 }
 
 #[test]
 fn search_popup_with_empty_query_lists_everything() {
 	let names = vec!["AND".to_string(), "OR".to_string()];
-	let frame = build_search_popup(&names, "", 1280.0, 800.0, Vec2::ZERO);
-	assert_eq!(frame.buttons.len(), 2);
+	let state = sample_search_state(&names, "", None);
+	let frame = build_search_popup(&state, 1280.0, 800.0, Vec2::ZERO);
+	let select_count = frame.buttons.iter().filter(|b| matches!(b.action, EditorAction::SelectSearchResult(_))).count();
+	assert_eq!(select_count, 2);
 	assert!(frame.text_field.is_some());
 }
 
 #[test]
 fn search_popup_shows_a_message_when_nothing_matches() {
 	let names = vec!["AND".to_string()];
-	let frame = build_search_popup(&names, "zzz", 1280.0, 800.0, Vec2::ZERO);
-	assert!(frame.buttons.iter().all(|b| !matches!(b.action, EditorAction::UseChip(_))));
+	let state = sample_search_state(&names, "zzz", None);
+	let frame = build_search_popup(&state, 1280.0, 800.0, Vec2::ZERO);
+	assert!(frame.buttons.iter().all(|b| !matches!(b.action, EditorAction::SelectSearchResult(_))));
 	assert!(frame.geometry.labels.iter().any(|l| l.text.contains("No matching")));
+}
+
+#[test]
+fn search_popup_selection_shows_open_use_delete_and_star_buttons() {
+	let names = vec!["AND".to_string(), "OR".to_string()];
+	let state = sample_search_state(&names, "", Some("AND"));
+	let frame = build_search_popup(&state, 1280.0, 800.0, Vec2::ZERO);
+	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::OpenSelectedChip("AND".to_string())));
+	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::RequestDeleteSearchChip("AND".to_string())));
+	assert!(frame.buttons.iter().any(|b| b.action == EditorAction::PlaceChip("AND".to_string())));
+	assert!(frame
+		.buttons
+		.iter()
+		.any(|b| b.action == EditorAction::ToggleStarred { name: "AND".to_string(), is_collection: false }));
 }
 
 #[test]

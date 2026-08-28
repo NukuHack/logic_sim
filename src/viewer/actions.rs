@@ -179,11 +179,24 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.bottom_bar_open_collection = if v.bottom_bar_open_collection.as_deref() == Some(name.as_str()) { None } else { Some(name) };
 		}
 		EditorAction::CloseStarredCollectionPopup => v.bottom_bar_open_collection = None,
-		EditorAction::UseChip(name) => {
-			// Same unsaved-changes gate as every other "open this chip"
-			// path; `true` = the search popup's open also leaves whatever
-			// overlays it was stacked above.
-			request_open_chip(v, paths, status, &name, true);
+		EditorAction::SelectSearchResult(name) => {
+			v.search_selected = Some(name);
+		}
+		EditorAction::RequestDeleteSearchChip(name) => {
+			v.search_delete_message = chip_delete_confirm_message(v, &name);
+			v.search_confirming_delete = true;
+		}
+		EditorAction::ConfirmSearchDelete => {
+			if let Some(name) = v.search_selected.clone() {
+				delete_chip_from_library(v, paths, status, &name);
+			}
+			v.search_confirming_delete = false;
+			v.search_delete_message.clear();
+			v.search_selected = None;
+		}
+		EditorAction::CancelSearchDeleteConfirm => {
+			v.search_confirming_delete = false;
+			v.search_delete_message.clear();
 		}
 		EditorAction::ConfirmName => confirm_naming_popup(v, status),
 		EditorAction::ChooseKey(c) => v.overlay_key_choice = Some(c),

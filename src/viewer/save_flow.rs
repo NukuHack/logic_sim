@@ -582,24 +582,13 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 /// "open this chip" -- if it's a custom chip in `v.library`. This used to
 /// be exactly what left-clicking a chip in the library sidebar did (via
 /// `EditorAction::SelectChip`); it's now reached only through that row's
-/// right-click "Open" popup, the search popup's `UseChip`, and
-/// `viewer::actions`' own `EditorAction::UseChip`, so a left click alone
+/// right-click "Open" popup and the library/search detail panels' own
+/// `EditorAction::OpenSelectedChip` OPEN button, so a left click alone
 /// no longer jumps the viewer away from whatever chip is currently open.
 /// Builtins are refused (see `is_custom_chip`) -- their "Open" row is
 /// greyed out in the popup, so reaching this arm for one at all would
 /// mean the disabled-row guard in `context_menu::build_context_menu` was
 /// bypassed somehow.
-///
-/// On an actual switch (`name` differs from the chip currently open),
-/// first discards any unsaved edits to the chip being left via
-/// `discard_unsaved_changes` -- so `v.library`'s in-memory copy of it
-/// reverts to whatever's actually on disk, and navigating back to it
-/// later shows that saved state rather than the draft you were mid-edit
-/// on. Persisting those edits instead is `Ctrl+S`'s job (see
-/// `confirm_save_chip_popup`) and must happen *before* switching away.
-/// Also only re-fits the camera on an actual switch, never on an
-/// in-place edit of the chip already on screen (that's `rebuild_sim`'s
-/// job to *not* do -- see its own doc comment).
 pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
 	let switching = name != v.root_chip_name;
 

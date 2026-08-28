@@ -10,8 +10,6 @@ make everything inside costumize a dragging stuff, so the displays and the resiz
 
 FUTURE PLANS (can be ignored now) :
 
-the chip search should be similar to the library, defualt click should just select it and show the "open" "delete" "use" and "star" buttons (if it is stared as is, so not with collection make it an "un-star" button)
-
 if i create e new chip (ctrl n) and i use save on it (ctrl s) it show us as the "save as | rename" not as "save" making it not starred if i do rename - sine i obv. don't want to save my custom chip as "New Chip <n>"
 
 make sure opening a new chip (ctrl+n) always opens "New Chip" if it is not in the library already

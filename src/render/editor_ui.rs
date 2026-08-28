@@ -98,8 +98,22 @@ pub enum EditorAction {
 	/// Bottom bar: close whatever starred-collection flyout is open,
 	/// without opening a different one -- a click outside it, or Esc.
 	CloseStarredCollectionPopup,
-	/// Search popup: pick a chip from the filtered results (by name).
-	UseChip(String),
+	/// Search popup: select a chip in the filtered results (by name) --
+	/// mirrors the chip library's `SelectChipRow`/`SelectStarredRow`,
+	/// just choosing it rather than immediately using it. Reveals the
+	/// detail panel's Open/Delete/Use/Star buttons for it.
+	SelectSearchResult(String),
+	/// Search popup: ask to delete the selected chip -- opens the same
+	/// inline confirmation panel shape as [`EditorAction::RequestDeleteChip`],
+	/// just tracked in the search overlay's own state instead of the
+	/// library's.
+	RequestDeleteSearchChip(String),
+	/// Search popup: confirm the pending deletion opened by
+	/// [`EditorAction::RequestDeleteSearchChip`].
+	ConfirmSearchDelete,
+	/// Search popup: back out of the DELETE confirmation without
+	/// deleting anything, keeping the chip selected.
+	CancelSearchDeleteConfirm,
 	ConfirmName,
 	/// Key select: choose this key (already upper-cased, alphanumeric).
 	ChooseKey(char),
@@ -479,6 +493,32 @@ pub struct ChipLibraryState<'a> {
 	/// Precomputed by the host (it needs `ChipLibrary` access this
 	/// module deliberately doesn't have -- see `CreateDeleteConfirmationMessage`
 	/// in the original) -- shown verbatim above the DELETE confirmation buttons.
+	pub delete_confirm_message: &'a str,
+}
+
+/// Everything [`build_search_popup`] needs to draw the fullscreen
+/// chip-search overlay -- the filtered list on the left plus, once a
+/// result is selected, a Library-style detail panel on the right with
+/// Open/Delete/Use/Star(/Un-star) buttons for it. Mirrors
+/// [`ChipLibraryState`]'s shape for the parts the two panels share.
+pub struct SearchPopupState<'a> {
+	/// Every searchable chip name, unfiltered -- filtered against
+	/// `query` internally, same as the previous `build_search_popup`.
+	pub all_names: &'a [String],
+	pub query: &'a str,
+	/// The currently-selected result, if any (kept by name so it
+	/// survives re-filtering as `query` changes).
+	pub selected: Option<&'a str>,
+	/// Whether `selected` is currently starred -- flips the star
+	/// button between "ADD TO STARRED" and "REMOVE FROM STARRED".
+	pub selected_is_starred: bool,
+	/// Whether `selected` is a player-authored chip -- gates OPEN/DELETE,
+	/// same meaning as [`ChipLibraryState::selected_chip_is_custom`].
+	pub selected_is_custom: bool,
+	/// Whether placing `selected` would create a recursive cycle --
+	/// gates USE, same meaning as [`ChipLibraryState::selected_chip_would_cycle`].
+	pub selected_would_cycle: bool,
+	pub confirming_delete: bool,
 	pub delete_confirm_message: &'a str,
 }
 
@@ -865,43 +905,146 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 // Search popup (`SearchPopup`)
 // ---------------------------------------------------------------------
 
-/// Builds the fullscreen chip-search overlay: a text field plus a
-/// scrollable (here: simply clipped-to-viewport) list of chip names
-/// containing `query` as a case-insensitive substring, matching
-/// `SearchPopup`'s filtering.
-pub fn build_search_popup(all_chip_names: &[String], query: &str, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+/// Builds the fullscreen chip-search overlay: a filtered, clickable list
+/// of chip names on the left (matching `query` as a case-insensitive
+/// substring, same filtering `SearchPopup` used) and, once a result is
+/// selected, a Library-style detail panel on the right showing
+/// Open/Delete/Use/Star(/Un-star) for it -- clicking a row just selects
+/// it, mirroring the chip library's own list-then-detail shape rather
+/// than acting immediately.
+pub fn build_search_popup(state: &SearchPopupState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
-	let panel_w = 420.0_f32.min(vw - 80.0);
-	let cx = vw / 2.0;
-	let top = vh * 0.07;
+	panel_bg(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
 
-	let field_rect = UiRect::new(cx - panel_w / 2.0, top, panel_w, 36.0);
-	ui_kit::text_field_row(&mut frame, ui, field_rect, query, "Search...", FONT_SIZE, 16.0);
+	let pad = 24.0;
+	let top = 20.0;
+	let total_w = (600.0_f32.max(vw * 0.6)).min(vw - pad * 2.0);
+	let panel_h = (vh - top - 20.0).min(560.0);
+	let list_w = total_w * 0.6;
+	let detail_w = total_w - list_w - LIBRARY_PANEL_GAP;
 
-	let needle = query.to_lowercase();
-	let filtered: Vec<&String> = all_chip_names.iter().filter(|n| needle.is_empty() || n.to_lowercase().contains(&needle)).collect();
+	let list_x = vw / 2.0 - total_w / 2.0;
+	let detail_x = list_x + list_w + LIBRARY_PANEL_GAP;
 
-	let list_top = top + 36.0 + 10.0;
-	let list_bottom = vh * 0.9;
+	build_search_list_panel(&mut frame, vw, vh, UiRect::new(list_x, top, list_w, panel_h), state, mouse);
+	build_search_detail_panel(&mut frame, vw, vh, UiRect::new(detail_x, top, detail_w, panel_h), state, mouse);
+
+	finish(frame, ui)
+}
+
+/// The search overlay's left-hand panel: the search field plus the
+/// filtered, clickable result rows -- selecting one (rather than acting
+/// on it immediately) mirrors `build_collections_panel`/
+/// `build_starred_panel`'s row click.
+fn build_search_list_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &SearchPopupState, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
+	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
+	let header_h = 30.0;
+	library_panel_header(frame, ui, UiRect::new(rect.x, rect.y, rect.w, header_h), "SEARCH");
+
+	let field_rect = UiRect::new(rect.x + 8.0, rect.y + header_h + 8.0, rect.w - 16.0, 34.0);
+	ui_kit::text_field_row(frame, ui, field_rect, state.query, "Search...", FONT_SIZE, 12.0);
+
+	let needle = state.query.to_lowercase();
+	let filtered: Vec<&String> = state.all_names.iter().filter(|n| needle.is_empty() || n.to_lowercase().contains(&needle)).collect();
+
+	let list_top = field_rect.y + field_rect.h + 10.0;
+	let bottom = rect.y + rect.h;
+	let row_w = rect.w - 16.0;
 	let mut y = list_top;
 	for name in &filtered {
-		if y + ROW_H > list_bottom {
-			break; // rest is scrolled off; not represented since there's no scroll offset state to port yet
+		if y + ROW_H > bottom {
+			break; // rest is scrolled off; no scroll offset state ported yet, matches the library panel's lists
 		}
-		let row_rect = UiRect::new(cx - panel_w / 2.0, y, panel_w, ROW_H - 4.0);
-		let bg = if row_rect.contains(mouse) { [0.32, 0.32, 0.36, 1.0] } else { [0.22, 0.22, 0.25, 1.0] };
-		ui_kit::fill_rect(&mut frame, ui, row_rect, bg);
-		add_label(&mut frame, ui, row_rect.centre(), row_rect.w - 16.0, name, theme::text_colour_for_background(bg), FONT_SIZE * 0.9);
-		frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::UseChip((*name).clone()), enabled: true });
+		let row_rect = UiRect::new(rect.x + 8.0, y, row_w, ROW_H - 4.0);
+		let is_selected = state.selected == Some(name.as_str());
+		let bg = if is_selected {
+			[0.35, 0.45, 0.6, 1.0]
+		} else if row_rect.contains(mouse) {
+			[0.32, 0.32, 0.36, 1.0]
+		} else {
+			[0.22, 0.22, 0.25, 1.0]
+		};
+		panel_bg(frame, ui, row_rect, bg);
+		add_label(frame, ui, row_rect.centre(), row_rect.w - 12.0, name, theme::text_colour_for_background(bg), FONT_SIZE * 0.85);
+		frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::SelectSearchResult((*name).clone()), enabled: true });
 		y += ROW_H;
 	}
 
 	if filtered.is_empty() {
-		add_label(&mut frame, ui, Vec2::new(cx, list_top + 20.0), panel_w, "No matching chips", [0.7, 0.7, 0.7, 1.0], FONT_SIZE * 0.9);
+		add_label(frame, ui, Vec2::new(rect.x + rect.w / 2.0, list_top + 20.0), row_w, "No matching chips", [0.7, 0.7, 0.7, 1.0], FONT_SIZE * 0.9);
+	}
+}
+
+/// The search overlay's right-hand detail panel: same button shapes as
+/// the chip library's [`LibrarySelection::Chip`] branch of
+/// `build_detail_panel` (star/un-star, USE, OPEN, DELETE), plus its own
+/// inline DELETE confirmation -- just without the reorder/collection
+/// buttons that don't apply to a flat search result.
+fn build_search_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &SearchPopupState, mouse: Vec2) {
+	let ui = UiCtx::new(vw, vh, mouse);
+	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
+	let inner_x = rect.x + 12.0;
+	let inner_w = rect.w - 24.0;
+	let mut y = rect.y + 12.0;
+
+	let Some(name) = state.selected else {
+		add_label(
+			frame,
+			ui,
+			Vec2::new(inner_x + inner_w / 2.0, rect.y + rect.h / 2.0),
+			inner_w,
+			"Select a chip",
+			[0.6, 0.6, 0.6, 1.0],
+			FONT_SIZE * 0.85,
+		);
+		return;
+	};
+
+	if state.confirming_delete {
+		add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 30.0), inner_w, state.delete_confirm_message, [0.95, 0.8, 0.4, 1.0], FONT_SIZE * 0.85);
+		y += 90.0;
+		button_row(
+			frame,
+			ui,
+			inner_x,
+			y,
+			inner_w,
+			&[("CANCEL", EditorAction::CancelSearchDeleteConfirm, true), ("DELETE", EditorAction::ConfirmSearchDelete, true)],
+			&[None, Some(theme::DANGEROUS_ACTION_COL)],
+		);
+		return;
 	}
 
-	finish(frame, ui)
+	add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 14.0), inner_w, name, [1.0, 1.0, 1.0, 1.0], TITLE_FONT_SIZE * 0.75);
+	y += 34.0;
+
+	let star_label = if state.selected_is_starred { "REMOVE FROM STARRED" } else { "ADD TO STARRED" };
+	y = button_row(
+		frame,
+		ui,
+		inner_x,
+		y,
+		inner_w,
+		&[(star_label, EditorAction::ToggleStarred { name: name.to_string(), is_collection: false }, true)],
+		&[],
+	);
+
+	y = button_row(frame, ui, inner_x, y, inner_w, &[("USE", EditorAction::PlaceChip(name.to_string()), !state.selected_would_cycle)], &[]);
+
+	button_row(
+		frame,
+		ui,
+		inner_x,
+		y,
+		inner_w,
+		&[
+			("OPEN", EditorAction::OpenSelectedChip(name.to_string()), state.selected_is_custom),
+			("DELETE", EditorAction::RequestDeleteSearchChip(name.to_string()), state.selected_is_custom),
+		],
+		&[],
+	);
 }
 
 // ---------------------------------------------------------------------

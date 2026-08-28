@@ -514,7 +514,18 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			// termini) out of the results -- see `is_listed_in_current_build`.
 			let mut names: Vec<String> = v.library.iter().map(|d| d.name.clone()).filter(|n| is_listed_in_current_build(&v.library, n)).collect();
 			names.sort();
-			editor_ui::build_search_popup(&names, &v.search_query, vw, vh, mouse)
+			let selected = v.search_selected.as_deref();
+			let state = editor_ui::SearchPopupState {
+				all_names: &names,
+				query: &v.search_query,
+				selected,
+				selected_is_starred: selected.is_some_and(|n| v.prefs.is_starred(n, false)),
+				selected_is_custom: selected.is_some_and(|n| is_custom_chip(&v.library, n)),
+				selected_would_cycle: selected.is_some_and(|n| would_create_cycle(&v.library, &v.root_chip_name, n)),
+				confirming_delete: v.search_confirming_delete,
+				delete_confirm_message: &v.search_delete_message,
+			};
+			editor_ui::build_search_popup(&state, vw, vh, mouse)
 		}
 		Overlay::Preferences => {
 			let state = PrefsPanelState {

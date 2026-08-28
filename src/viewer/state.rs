@@ -274,6 +274,19 @@ pub(crate) struct ViewerState {
 	/// shared `overlay_text_input`, which a Library collection-name field
 	/// underneath a popped-open Search must keep owning).
 	pub(crate) search_query: String,
+	/// The Search overlay's currently-selected result, if any -- kept by
+	/// name (rather than by list index) so it survives the list being
+	/// re-filtered as `search_query` changes. Drives the detail panel's
+	/// Open/Delete/Use/Star buttons, mirroring the chip-selected side of
+	/// [`ChipLibraryState`](crate::render::editor_ui::ChipLibraryState).
+	pub(crate) search_selected: Option<String>,
+	/// Whether the Search overlay's inline DELETE confirmation is open
+	/// for `search_selected`.
+	pub(crate) search_confirming_delete: bool,
+	/// Message shown above the Search overlay's DELETE confirmation
+	/// buttons -- built the same way as the library panel's
+	/// (`chip_delete_confirm_message`).
+	pub(crate) search_delete_message: String,
 	/// Shared text buffer for whichever *top-most* text-field overlay is
 	/// currently open (the naming popup, ROM cell editor, save-chip name,
 	/// or the library's inline new/rename-collection field).
@@ -440,6 +453,9 @@ impl ViewerState {
 			prefs_rate_text: String::new(),
 			overlays: Vec::new(),
 			search_query: String::new(),
+			search_selected: None,
+			search_confirming_delete: false,
+			search_delete_message: String::new(),
 			overlay_text_input: String::new(),
 			overlay_key_choice: None,
 			naming_purpose: Default::default(),
@@ -725,6 +741,9 @@ pub(crate) fn open_overlay(v: &mut ViewerState, overlay: Overlay) {
 pub(crate) fn open_search(v: &mut ViewerState) {
 	open_overlay(v, Overlay::Search);
 	v.search_query.clear();
+	v.search_selected = None;
+	v.search_confirming_delete = false;
+	v.search_delete_message.clear();
 }
 
 /// Ctrl+S: opens (or re-focuses) the save-chip popup pre-filled with the chip's current name.
@@ -760,7 +779,12 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 		Overlay::Naming => v.naming_purpose = NamingPurpose::default(),
 		Overlay::KeySelect => v.key_select_purpose = KeySelectPurpose::default(),
 		Overlay::RomEditor => v.rom_editor = None,
-		Overlay::Search => v.search_query.clear(),
+		Overlay::Search => {
+			v.search_query.clear();
+			v.search_selected = None;
+			v.search_confirming_delete = false;
+			v.search_delete_message.clear();
+		}
 		// The pin-edit draft dies with the popup, success or not (the
 		// confirm path writes its values onto the pin *before* closing).
 		Overlay::PinEdit => v.pin_edit = None,
