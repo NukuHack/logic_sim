@@ -9,8 +9,7 @@ FUTURE PLANS (can be ignored now) :
 
 - full dirty-tracking / partial re-render (React-style reconciliation): would
 	mean per-component change detection + keyed diffing + invalidation
-	plumbed through every mutation path. Bigger commitment than the project
-	currently wants; only worth it if A-D above still leave frame time short.
+	plumbed through every mutation path.
 
 if i create e new chip (ctrl n) and i use save on it (ctrl s) it show us as the "save as | rename" not as "save" making it not starred if i do rename - sine i obv. don't want to save my custom chip as "New Chip <n>"
 
@@ -21,14 +20,18 @@ going into edit mode should make the entire wire network in edit mode, so everyt
 separate the rendering from logic (rn lagging logic laggs the ui too)
 
 speedup : 
-add a checkbox into the customization menu (default off) like "make lut"
-add an optional lut in every circuit (only in memory, so no serialization), and in simulation just do an "is_some() then use lookup" - important use key, and values as more compressed variables
-	rn even one bit of value is 16 bit (so it's a really big lut uselessly) - example : most of the circuits don't care about the input being "off or disabled" so if possible minimize the lut
-add a pattern maching or something like that to the customization menu, that would make it so some pre-defined lookup tables mach the lut generated lut by the circuit
-	so it would use real math in the code instead of lut : like 8 bit adder would be 2x8+1 bit in, 8+1 bit out so a lot, but addition with pure math is insainly fast
+add a checkbox into the customization menu (default off) like "optimize"
+
+// i could not decide what to put in "_" since it might be a bool, or it might be something bigger than u128 so obv. it can't be set, it has to be generalized
+// firstly we have to make the wiredata storage better, current "always 16 bit" is awful, space inefficient
+// in some circuits the off can be the same as disabled
+pub enum Optimized {
+	None, // nothign, likely so small that any overhead would make it faster, ot it just can't be translated to something stateless
+	LUT(HashMap<_,_>), // a big lut, just precomputed values - purely deterministic on input
+	Native(fn(_) -> _), // the best, for example : a not gate would be really nice in here
+	NativeList(Vec<fn(_) -> _>) // this would do multiple operations on the input to get the desired output, this would need a really smart parser but it could make complex things really fast
+}
 
 add components or some form of input that can run rust code (like toggling a setting with your own circuits)
 
 nicer documentation : in game features, keybinds, maybe some educational stuff like how to use x-y, or maybe to help make complex circuits (or atleast links to real help)
-
-maybe a custom "View" for a nand with transistors, grounding and such (just 4 fun)
