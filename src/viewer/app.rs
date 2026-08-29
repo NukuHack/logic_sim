@@ -68,6 +68,12 @@ pub(crate) struct App {
 	pub(crate) audio: crate::audio::SharedAudioState,
 	#[allow(dead_code)] // held (not read) purely to keep the stream playing
 	pub(crate) audio_player: Option<crate::audio::AudioPlayer>,
+
+	// --- bare-bones FPS counter: just counts frames and dumps a rate to
+	// stdout every few seconds. Not exact (first print is a few seconds
+	// of startup jitter included) -- good enough for eyeballing perf.
+	pub(crate) fps_frames: u32,
+	pub(crate) fps_since: std::time::Instant,
 }
 
 use crate::render::menu_ui::UiAction;
@@ -100,6 +106,8 @@ impl App {
 			menu_stack: UiStack::new(),
 			audio,
 			audio_player,
+			fps_frames: 0,
+			fps_since: std::time::Instant::now(),
 		}
 	}
 

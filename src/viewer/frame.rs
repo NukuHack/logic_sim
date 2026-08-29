@@ -15,7 +15,7 @@ use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
 use crate::render::layout::{self, force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
 use crate::render::scene::{
-	bounding_box, build_grid, build_scene, build_scene_with_spans, fade_component, fade_wire, AllLow, SceneGeometry, SimulatorPinState,
+	bounding_box, build_grid, build_scene, build_scene_with_spans_into, fade_component, fade_wire, AllLow, SceneGeometry, SimulatorPinState,
 };
 use crate::render::theme;
 use crate::render::ui_kit::{pin_geometry_to_screen, to_world, Button, UiCtx, UiRect};
@@ -222,11 +222,12 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		SceneTarget::EditRoot => v.root_chip_name.clone(),
 		SceneTarget::Viewed { name, .. } => name.clone(),
 	};
-	let root_desc = v.library.get(&scene_chip_name).clone();
 	// The scene reads pin states straight out of the shared arena under a
 	// short-lived lock -- the read half of the original's per-frame
 	// `ViewedChip.UpdateStateFromSim` sync.
-	let (mut chip_scene, component_spans, wire_spans) = {
+	// Builds into `v.chip_scene_buf` (cleared, not reallocated) rather than
+	// a fresh `SceneGeometry` -- see that field's docs.
+	let (component_spans, wire_spans) = {
 		let sim_guard = v.sim.lock();
 		let scope = match scene_target {
 			SceneTarget::EditRoot => sim_guard.root(),
@@ -234,7 +235,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		};
 		let root_ref = v.library.get(&scene_chip_name);
 		let lookup = SimulatorPinState { sim: &sim_guard, scope };
-		build_scene_with_spans(root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
+		build_scene_with_spans_into(&mut v.chip_scene_buf, root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
 	};
 
 	// A selection being dragged renders translucently -- deliberately the
@@ -250,12 +251,12 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	if let CanvasInteraction::MovingSelection { originals, .. } = &v.canvas_interaction {
 		for &(id, _) in originals {
 			if let Some(span) = component_spans.get(id) {
-				fade_component(&mut chip_scene, span, PENDING_PLACEMENT_ALPHA);
+				fade_component(&mut v.chip_scene_buf, span, PENDING_PLACEMENT_ALPHA);
 			}
 		}
 		let carried_ids: std::collections::HashSet<i32> = originals.iter().map(|&(id, _)| id).collect();
 		for wire in wire_spans.fully_within(&carried_ids) {
-			fade_wire(&mut chip_scene, wire, PENDING_PLACEMENT_ALPHA);
+			fade_wire(&mut v.chip_scene_buf, wire, PENDING_PLACEMENT_ALPHA);
 		}
 	}
 
@@ -269,22 +270,28 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	if let Some(sweep) = &v.delete_drag {
 		for &id in &sweep.components {
 			if let Some(span) = component_spans.get(id) {
-				fade_component(&mut chip_scene, span, DELETE_DRAG_ALPHA);
+				fade_component(&mut v.chip_scene_buf, span, DELETE_DRAG_ALPHA);
 			}
 		}
 		let swept_ids: std::collections::HashSet<i32> = sweep.components.iter().copied().collect();
 		for wire in wire_spans.touching(&swept_ids) {
-			fade_wire(&mut chip_scene, wire, DELETE_DRAG_ALPHA);
+			fade_wire(&mut v.chip_scene_buf, wire, DELETE_DRAG_ALPHA);
 		}
 		for &wire_idx in &sweep.wires {
 			if let Some(span) = wire_spans.get(wire_idx) {
-				fade_wire(&mut chip_scene, span, DELETE_DRAG_ALPHA);
+				fade_wire(&mut v.chip_scene_buf, span, DELETE_DRAG_ALPHA);
 			}
 		}
 	}
 
 	if !v.camera_fitted {
-		let bounds = bounding_box(&chip_scene).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
+		// Cold path (first frame / just switched chips): only clone the
+		// description here, since bounding_box's fallback is the sole
+		// consumer -- cloning it unconditionally every frame (as before)
+		// meant a full deep-copy of every pin/subchip/wire/display Vec in
+		// the chip purely to serve this once-in-a-while branch.
+		let bounds = bounding_box(&v.chip_scene_buf)
+			.or_else(|| bounding_box(&build_scene(&v.library.get(&scene_chip_name).clone(), &v.library, &AllLow, None)));
 		match bounds {
 			Some((min, max)) => v.camera.fit_to_bounds(min, max, 0.15),
 			// No geometry at all -- e.g. a brand-new blank chip has no
@@ -303,8 +310,12 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	}
 
 	let mut scene_geo = if v.show_grid() { build_grid(&v.camera, theme::GRID_COL) } else { SceneGeometry::default() };
-	scene_geo.triangles.extend(chip_scene.triangles);
-	scene_geo.labels.extend(chip_scene.labels);
+	// `.drain(..)` rather than moving `v.chip_scene_buf` outright: leaves
+	// its `Vec`s empty-but-with-capacity in place on `v`, ready to be
+	// filled again (no realloc) at the top of next frame's
+	// `build_scene_with_spans_into` call.
+	scene_geo.triangles.append(&mut v.chip_scene_buf.triangles);
+	scene_geo.labels.append(&mut v.chip_scene_buf.labels);
 	// Previews apply exactly the same snap/straighten transform a click
 	// would (see `canvas::handle_canvas_click`), so what follows the cursor
 	// is precisely what landing there would place.

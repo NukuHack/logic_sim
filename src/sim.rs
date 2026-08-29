@@ -800,16 +800,7 @@ impl Simulator {
 		// config (written only by the player through an editor popup, never
 		// by `process_builtin_chip` at runtime) versus genuine volatile
 		// memory a rebuild should carry over (RAM/ROM cell contents, pulse
-		// countdowns, display buffers -- see `capture_internal_states`'s
-		// docs). Blindly restoring a config slot from the pre-edit capture
-		// means the edit that triggered this very rebuild -- a key rebind,
-		// an LED colour, a ROM word, a bus link/flip, a Pulse's configured
-		// length -- gets silently reverted back to its stale value, and
-		// only "sticks" once something reloads the chip from scratch
-		// (`open_chip_by_name`'s `restart_sim_fresh`, which skips restore
-		// entirely). `usize::MAX` means "skip restoring this chip
-		// altogether" for types that are 100% config with no runtime slots
-		// at all.
+		// countdowns, display buffers
 		let skip_leading = match chip_type {
 			// `[0]` is the bound key char (`E::Key` only ever reads it).
 			ChipType::Key => usize::MAX,
@@ -841,9 +832,11 @@ impl Simulator {
 				}
 			}
 		}
-		let sub_chips = self.chips[idx.0].sub_chips.clone();
-		for sub in sub_chips {
+		let mut i = 0;
+		while i < self.chips[idx.0].sub_chips.len() {
+			let sub = self.chips[idx.0].sub_chips[i];
 			self.restore_internal_states_at(sub, &key, map);
+			i += 1;
 		}
 	}
 

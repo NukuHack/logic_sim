@@ -164,6 +164,28 @@ pub fn build_scene_with_spans(
 	labels_visible: bool,
 ) -> (SceneGeometry, ComponentSpans, WireSpans) {
 	let mut geo = SceneGeometry::default();
+	let (spans, wire_spans) = build_scene_with_spans_into(&mut geo, chip, library, pin_state, hover_world_pos, labels_visible);
+	(geo, spans, wire_spans)
+}
+
+/// Same as [`build_scene_with_spans`], but writes into a caller-owned `geo`
+/// instead of returning a freshly allocated one. `geo` is `.clear()`ed
+/// first -- callers who rebuild every frame (e.g. `viewer::frame`) should
+/// keep one persistent `SceneGeometry` around and pass it in here each
+/// time: `Vec::clear()` keeps its backing allocation, so a steady-state
+/// frame (same rough vertex/label count as last frame) does zero heap
+/// allocation for the geometry itself, only reallocating if the scene
+/// actually grows past its previous high-water mark.
+pub fn build_scene_with_spans_into(
+	geo: &mut SceneGeometry,
+	chip: &ChipDescription,
+	library: &ChipLibrary,
+	pin_state: &dyn PinStateLookup,
+	hover_world_pos: Option<Vec2>,
+	labels_visible: bool,
+) -> (ComponentSpans, WireSpans) {
+	geo.triangles.clear();
+	geo.labels.clear();
 	let placed = place_sub_chips(chip, library);
 
 	// owner_id -> index into `placed`, for resolving wire endpoints that
@@ -179,22 +201,22 @@ pub fn build_scene_with_spans(
 	// shows the pin. Components and their displays draw interleaved (rather
 	// than as two whole layers) purely so each component's triangles land in
 	// one contiguous span.
-	let wire_spans = wires::draw_wires(&mut geo, chip, &placed, &owner_to_placed, pin_state);
+	let wire_spans = wires::draw_wires(geo, chip, &placed, &owner_to_placed, pin_state);
 	let effective_hover = if labels_visible { hover_world_pos } else { None };
-	let hovered_pin_name = pins::draw_pins(&mut geo, chip, &placed, pin_state, effective_hover);
+	let hovered_pin_name = pins::draw_pins(geo, chip, &placed, pin_state, effective_hover);
 	let mut spans = ComponentSpans::default();
 	for sub in &placed {
 		let triangle_start = geo.triangles.len();
 		let label_start = geo.labels.len();
-		components::draw_component(&mut geo, sub, pin_state, effective_hover, hovered_pin_name.is_some());
-		displays::draw_placed_displays_for(&mut geo, sub, library, pin_state);
+		components::draw_component(geo, sub, pin_state, effective_hover, hovered_pin_name.is_some());
+		displays::draw_placed_displays_for(geo, sub, library, pin_state);
 		spans.insert(sub.id, ComponentSpan { triangles: triangle_start..geo.triangles.len(), labels: label_start..geo.labels.len() });
 	}
 	if let Some((pos, name)) = hovered_pin_name {
-		push_hover_label(&mut geo, pos, name);
+		push_hover_label(geo, pos, name);
 	}
 
-	(geo, spans, wire_spans)
+	(spans, wire_spans)
 }
 
 /// Pushes a small hover-triggered name label just above `pos`. Shared by

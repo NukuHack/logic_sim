@@ -201,10 +201,7 @@ pub fn create_input_or_output_pin(chip_type: ChipType) -> ChipDescription {
 	let name = if is_input { "IN" } else { "OUT" };
 	let p = pin(name, 0, num_bits);
 
-	let inputs = if is_input { vec![p.clone()] } else { vec![] };
-	let outputs = if is_output { vec![p] } else { vec![] };
-
-	builtin(chip_type, inputs, outputs)
+	builtin(chip_type, if is_input { vec![p.clone()] } else { vec![] }, if is_output { vec![p] } else { vec![] })
 }
 
 /// `(is_input, template_pin)` for `chip_type` if it's one of the boundary

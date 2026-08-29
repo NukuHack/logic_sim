@@ -193,7 +193,8 @@ impl MainMenu {
 	pub fn open_selected(&self) -> Option<MenuOutcome> {
 		let project = self.selected_project()?;
 		if can_open_project(project).is_ok() {
-			Some(MenuOutcome::OpenProject { name: project.project_name.clone() })
+			let name = project.project_name.clone();
+			Some(MenuOutcome::OpenProject { name })
 		} else {
 			None
 		}

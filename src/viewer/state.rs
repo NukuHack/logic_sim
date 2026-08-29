@@ -5,6 +5,7 @@
 use crate::render::camera::Camera;
 use crate::render::context_menu::{ContextMenuAction, ContextMenuState};
 use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
+use crate::render::scene::SceneGeometry;
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::key_mods_bits;
 use crate::sim::{ChipIdx, Simulator};
@@ -327,6 +328,18 @@ pub(crate) struct ViewerState {
 	/// Toggled by Tab; defaults to `true` (labels shown on hover).
 	pub(crate) labels_visible: bool,
 
+	/// Persistent scratch buffer for the canvas's main chip scene, rebuilt
+	/// every frame via `render::scene::build_scene_with_spans_into`. Kept
+	/// here (rather than a fresh `SceneGeometry` per frame) so the
+	/// triangle/label `Vec`s are `.clear()`ed and reused instead of
+	/// reallocated -- a steady-state frame (roughly the same amount of
+	/// on-screen geometry as last frame) then costs zero heap allocation
+	/// for the scene itself. Named distinctly from `viewer::frame`'s local
+	/// `scene_geo` (the grid + this + overlays, merged fresh each frame
+	/// for the UI stack layer) to keep the two buffers' lifetimes obviously
+	/// separate.
+	pub(crate) chip_scene_buf: SceneGeometry,
+
 	/// The viewer's UI stack as of the *last drawn* frame -- every
 	/// visible surface is a layer in here (canvas at the bottom, popups
 	/// on top), rebuilt from live state each frame by `viewer::frame`. All
@@ -467,6 +480,7 @@ impl ViewerState {
 			exit_requested: false,
 			customize: None,
 			labels_visible: true,
+			chip_scene_buf: SceneGeometry::default(),
 			stack: UiStack::new(),
 			bottom_bar_scroll_x: 0.0,
 			bottom_bar_scroll_max: 0.0,
