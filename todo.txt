@@ -5,34 +5,6 @@ TODO LIST:
 
 make everything inside costumize a dragging stuff, so the displays pozition and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
-RENDER PERF (scene rebuilds every frame -- fine to keep, but cut incidental allocation) :
-
-- ChipLibrary::get -> store chips as Arc<ChipDescription> internally so any
-	remaining "need an owned copy to dodge the borrow checker" spot becomes a
-	pointer clone instead of a deep Vec-of-Vecs clone. Low risk, fixes this
-	class of bug everywhere at once instead of one call site at a time.
-
-- place_sub_chips (render/scene/placed.rs) is the biggest remaining cost:
-	per subchip, per frame it currently allocates input_bits/output_bits Vecs,
-	recomputes calculate_min_chip_size/calculate_default_pin_layout from font
-	metrics, and clones label/pin_colour_info/internal_data.
-	  a) cache size + pin-y layout per chip TYPE (keyed by chip name),
-	     invalidated only when that chip's own definition changes -- it does
-	     not depend on per-instance placement, so recomputing it every frame
-	     for every instance is pure waste.
-	  b) make PlacedSubChip borrow label/pin_colour_info/internal_data
-	     (&'a Option<String>, &'a [(i32,Color)], &'a [u32]) instead of owning
-	     clones, same lifetime story it already uses for `desc: &'a ChipDescription`.
-	  c) pass place_sub_chips a reusable `&mut Vec<PlacedSubChip>` (clear +
-	     refill) instead of returning a freshly allocated Vec each call.
-
-- capture_pin_states / capture_internal_states build a fresh heap-allocated
-	Vec<i32> id-path per pin/chip as a HashMap key (clone + push + push).
-	Only matters if these run on the per-frame render path rather than just
-	on rebuild-after-edit -- if so, replace the Vec<i32> key with a packed
-	numeric key (u64, bit-packed path+id+is_input) to drop both the
-	allocation and the Vec-hashing cost.
-
 FUTURE PLANS (can be ignored now) :
 
 - full dirty-tracking / partial re-render (React-style reconciliation): would

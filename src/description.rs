@@ -568,21 +568,10 @@ pub struct ChipDescription {
 	pub name_location: NameLocation,
 	/// The `DLSVersion_LastSaved` string this chip's own save file declared,
 	/// as parsed from disk (`None` when absent, e.g. for chips built up in
-	/// code rather than loaded). Only consumed by the save-format upgrade
-	/// pass (see `save_system::upgrade`) to decide whether a freshly-loaded
-	/// chip needs pre-2.1.5 migrations applied; re-stamped with the current
-	/// version on every save (see `json::serialize_chip_description`).
+	/// code rather than loaded).
 	pub dls_version: Option<String>,
 	/// This chip's body footprint as saved on disk (`Size`), in world/grid
-	/// units. The original computes this at save time via
-	/// `SubChipHelper.CalculateMinChipSize`, which folds in the actual
-	/// rendered width of the chip's name label (real font metrics) as
-	/// well as its pins -- info this crate can't recompute exactly since
-	/// it has no font-metrics access outside `render::gpu`. `(0, 0)` (the
-	/// default) means "not saved" (e.g. a chip built up in code rather
-	/// than loaded from disk); renderers should fall back to computing a
-	/// pins/name-estimate size in that case, e.g.
-	/// `render::layout::calculate_min_chip_size`.
+	/// units.
 	pub size: Vec2,
 }
 
@@ -608,7 +597,7 @@ impl ChipDescription {
 /// case-insensitive name. Mirrors DLS.Game.ChipLibrary, minus editor concerns.
 #[derive(Debug, Default, Clone)]
 pub struct ChipLibrary {
-	by_name: std::collections::HashMap<String, ChipDescription>,
+	by_name: std::collections::HashMap<String, std::sync::Arc<ChipDescription>>,
 }
 
 impl ChipLibrary {
@@ -617,22 +606,31 @@ impl ChipLibrary {
 	}
 
 	pub fn add(&mut self, desc: ChipDescription) {
-		self.by_name.insert(desc.name.to_ascii_lowercase(), desc);
+		self.by_name.insert(desc.name.to_ascii_lowercase(), std::sync::Arc::new(desc));
 	}
 
 	pub fn get(&self, name: &str) -> &ChipDescription {
-		self.by_name.get(&name.to_ascii_lowercase()).unwrap_or_else(|| panic!("Chip not found in library: {name}"))
+		self.by_name.get(&name.to_ascii_lowercase()).map(std::sync::Arc::as_ref).unwrap_or_else(|| panic!("Chip not found in library: {name}"))
+	}
+
+	/// Cheap-clone counterpart to `get`
+	pub fn get_arc(&self, name: &str) -> std::sync::Arc<ChipDescription> {
+		self.by_name.get(&name.to_ascii_lowercase()).cloned().unwrap_or_else(|| panic!("Chip not found in library: {name}"))
 	}
 
 	/// Mutable counterpart to `get` -- used by the viewer for in-place
 	/// edits to a chip's description (deleting components/wires, renaming
-	/// pins, applying customization drafts, undo/redo restores).
+	/// pins, applying customization drafts, undo/redo restores). Note this
+	/// still deep-clones if the entry's `Arc` is shared (e.g. someone is
+	/// mid-`get_arc`), same as it always has -- that's `Arc::make_mut`'s
+	/// normal copy-on-write behaviour, not a regression.
 	pub fn get_mut(&mut self, name: &str) -> &mut ChipDescription {
-		self.by_name.get_mut(&name.to_ascii_lowercase()).unwrap_or_else(|| panic!("Chip not found in library: {name}"))
+		let entry = self.by_name.get_mut(&name.to_ascii_lowercase()).unwrap_or_else(|| panic!("Chip not found in library: {name}"));
+		std::sync::Arc::make_mut(entry)
 	}
 
 	pub fn try_get(&self, name: &str) -> Option<&ChipDescription> {
-		self.by_name.get(&name.to_ascii_lowercase())
+		self.by_name.get(&name.to_ascii_lowercase()).map(std::sync::Arc::as_ref)
 	}
 
 	/// Removes a chip from the library (by name, same case-insensitive
@@ -643,13 +641,13 @@ impl ChipLibrary {
 	/// overwritten by a `Replace`, or an old identity that's being
 	/// renamed away entirely.
 	pub fn remove(&mut self, name: &str) -> Option<ChipDescription> {
-		self.by_name.remove(&name.to_ascii_lowercase())
+		self.by_name.remove(&name.to_ascii_lowercase()).map(|arc| std::sync::Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone()))
 	}
 
 	/// Iterate over every chip currently in the library (builtin + custom).
 	/// Used by tooling (e.g. the viewer) that needs to pick a sensible
 	/// default chip to display rather than assuming a fixed name exists.
 	pub fn iter(&self) -> impl Iterator<Item = &ChipDescription> {
-		self.by_name.values()
+		self.by_name.values().map(std::sync::Arc::as_ref)
 	}
 }

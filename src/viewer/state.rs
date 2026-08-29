@@ -5,7 +5,7 @@
 use crate::render::camera::Camera;
 use crate::render::context_menu::{ContextMenuAction, ContextMenuState};
 use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
-use crate::render::scene::SceneGeometry;
+use crate::render::scene::{PlacedBuf, SceneGeometry};
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::key_mods_bits;
 use crate::sim::{ChipIdx, Simulator};
@@ -340,6 +340,11 @@ pub(crate) struct ViewerState {
 	/// separate.
 	pub(crate) chip_scene_buf: SceneGeometry,
 
+	/// Persistent scratch buffer for that same per-frame scene build's
+	/// resolved subchip placements -- the other half of the allocation
+	/// this exists to avoid; see `render::scene::PlacedBuf`.
+	pub(crate) placed_buf: PlacedBuf,
+
 	/// The viewer's UI stack as of the *last drawn* frame -- every
 	/// visible surface is a layer in here (canvas at the bottom, popups
 	/// on top), rebuilt from live state each frame by `viewer::frame`. All
@@ -445,7 +450,7 @@ impl ViewerState {
 		viewport: Vec2,
 		audio: crate::audio::SharedAudioState,
 	) -> Self {
-		let root_desc = library.get(&root_chip_name).clone();
+		let root_desc = library.get_arc(&root_chip_name);
 		let sim = Simulator::build(&root_desc, &library);
 		let mut v = Self {
 			project_name: project_name.to_string(),
@@ -481,6 +486,7 @@ impl ViewerState {
 			customize: None,
 			labels_visible: true,
 			chip_scene_buf: SceneGeometry::default(),
+			placed_buf: PlacedBuf::new(),
 			stack: UiStack::new(),
 			bottom_bar_scroll_x: 0.0,
 			bottom_bar_scroll_max: 0.0,
@@ -527,7 +533,7 @@ impl ViewerState {
 	/// `open_chip_by_name` resets `camera_fitted` itself, only when the
 	/// root chip is actually changing.
 	pub(crate) fn rebuild_sim(&mut self) {
-		let root_desc = self.library.get(&self.root_chip_name).clone();
+		let root_desc = self.library.get_arc(&self.root_chip_name);
 		// Carry the player-driven transient input state across the swap so
 		// an in-place edit doesn't drop held keys / modifiers / toggled
 		// switches (see `SimHandle::take_transient_input_state`).
@@ -558,7 +564,7 @@ impl ViewerState {
 	/// shouldn't inherit whatever the previous circuit's RAM happened to
 	/// hold.
 	pub(crate) fn restart_sim_fresh(&mut self) {
-		let root_desc = self.library.get(&self.root_chip_name).clone();
+		let root_desc = self.library.get_arc(&self.root_chip_name);
 		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
 		let mut sim = Simulator::build(&root_desc, &self.library);
 		sim.held_keys = held_keys;

@@ -18,17 +18,6 @@ use crate::structs::Vec2;
 /// `build_scene_with_spans`, which brackets each call between recorded
 /// vertex indices -- the spans the viewer uses to fade exactly the carried
 /// components while they're being dragged.
-///
-/// The name label is hover-gated: it's only added when `hover_world_pos`
-/// lands on this subchip's body rect *and* `pin_already_hovered` is
-/// false (a pin sitting on/near the component's edge takes precedence --
-/// see `build_scene`'s doc comment), and even then only if the chip's own
-/// `NameLocation` isn't `Hidden` (e.g. display/bus/pin chips, whose body
-/// is the visualisation, never show a name). Mirrors
-/// `DevSceneDrawer.DrawSubChip`'s "if (... desc.NameLocation !=
-/// NameDisplayLocation.Hidden)" gate; the `isKeyChip` special case (which
-/// shows a keybinding string even when hidden) isn't ported here since it
-/// needs live key-binding state this module doesn't have.
 pub(crate) fn draw_component(
 	geo: &mut SceneGeometry,
 	sub: &PlacedSubChip,
@@ -162,6 +151,7 @@ mod tests {
 	/// function (they only use `id`/`centre`/`size`), so any placeholder
 	/// `ChipDescription` reference is fine.
 	fn test_placed_sub_chip(desc: &ChipDescription, id: i32, centre: Vec2, size: Vec2) -> PlacedSubChip<'_> {
+		const NO_LABEL: Option<String> = None;
 		PlacedSubChip {
 			id,
 			desc,
@@ -169,9 +159,9 @@ mod tests {
 			size,
 			input_pin_y: vec![],
 			output_pin_y: vec![],
-			label: None,
-			pin_colour_info: vec![],
-			internal_data: vec![],
+			label: &NO_LABEL,
+			pin_colour_info: &[],
+			internal_data: &[],
 		}
 	}
 

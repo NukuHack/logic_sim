@@ -32,7 +32,7 @@ pub use displays::{display_base_size, is_display_type};
 pub use grid::build_grid;
 pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
 pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
-pub use placed::{place_sub_chips, PlacedSubChip};
+pub use placed::{clear_type_layout_cache, place_sub_chips, place_sub_chips_into, PlacedBuf, PlacedSubChip};
 pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};
 pub use wires::{delete_wire, delete_wire_old, delete_wire_segment};
 
@@ -164,20 +164,26 @@ pub fn build_scene_with_spans(
 	labels_visible: bool,
 ) -> (SceneGeometry, ComponentSpans, WireSpans) {
 	let mut geo = SceneGeometry::default();
-	let (spans, wire_spans) = build_scene_with_spans_into(&mut geo, chip, library, pin_state, hover_world_pos, labels_visible);
+	let mut placed_buf = PlacedBuf::new();
+	let (spans, wire_spans) = build_scene_with_spans_into(&mut geo, &mut placed_buf, chip, library, pin_state, hover_world_pos, labels_visible);
 	(geo, spans, wire_spans)
 }
 
 /// Same as [`build_scene_with_spans`], but writes into a caller-owned `geo`
-/// instead of returning a freshly allocated one. `geo` is `.clear()`ed
-/// first -- callers who rebuild every frame (e.g. `viewer::frame`) should
-/// keep one persistent `SceneGeometry` around and pass it in here each
-/// time: `Vec::clear()` keeps its backing allocation, so a steady-state
-/// frame (same rough vertex/label count as last frame) does zero heap
-/// allocation for the geometry itself, only reallocating if the scene
-/// actually grows past its previous high-water mark.
+/// instead of returning a freshly allocated one, and lays out subchips
+/// into a caller-owned `placed_buf` instead of allocating a fresh
+/// `Vec<PlacedSubChip>` every call. `geo` is `.clear()`ed first and
+/// `placed_buf` is refilled from scratch (see [`PlacedBuf::fill`]) --
+/// callers who rebuild every frame (e.g. `viewer::frame`) should keep one
+/// persistent `SceneGeometry` and one persistent `PlacedBuf` around and
+/// pass both in here each time: `Vec::clear()` keeps its backing
+/// allocation, so a steady-state frame (same rough vertex/label/subchip
+/// count as last frame) does zero heap allocation for either buffer, only
+/// reallocating if the scene actually grows past its previous high-water
+/// mark.
 pub fn build_scene_with_spans_into(
 	geo: &mut SceneGeometry,
+	placed_buf: &mut PlacedBuf,
 	chip: &ChipDescription,
 	library: &ChipLibrary,
 	pin_state: &dyn PinStateLookup,
@@ -186,7 +192,7 @@ pub fn build_scene_with_spans_into(
 ) -> (ComponentSpans, WireSpans) {
 	geo.triangles.clear();
 	geo.labels.clear();
-	let placed = place_sub_chips(chip, library);
+	let placed = placed_buf.fill(chip, library);
 
 	// owner_id -> index into `placed`, for resolving wire endpoints that
 	// land on a subchip (as opposed to one of this chip's own dev-pins).
@@ -201,11 +207,11 @@ pub fn build_scene_with_spans_into(
 	// shows the pin. Components and their displays draw interleaved (rather
 	// than as two whole layers) purely so each component's triangles land in
 	// one contiguous span.
-	let wire_spans = wires::draw_wires(geo, chip, &placed, &owner_to_placed, pin_state);
+	let wire_spans = wires::draw_wires(geo, chip, placed.as_slice(), &owner_to_placed, pin_state);
 	let effective_hover = if labels_visible { hover_world_pos } else { None };
-	let hovered_pin_name = pins::draw_pins(geo, chip, &placed, pin_state, effective_hover);
+	let hovered_pin_name = pins::draw_pins(geo, chip, placed.as_slice(), pin_state, effective_hover);
 	let mut spans = ComponentSpans::default();
-	for sub in &placed {
+	for sub in placed.iter() {
 		let triangle_start = geo.triangles.len();
 		let label_start = geo.labels.len();
 		components::draw_component(geo, sub, pin_state, effective_hover, hovered_pin_name.is_some());

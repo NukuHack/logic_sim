@@ -235,7 +235,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		};
 		let root_ref = v.library.get(&scene_chip_name);
 		let lookup = SimulatorPinState { sim: &sim_guard, scope };
-		build_scene_with_spans_into(&mut v.chip_scene_buf, root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
+		build_scene_with_spans_into(&mut v.chip_scene_buf, &mut v.placed_buf, root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
 	};
 
 	// A selection being dragged renders translucently -- deliberately the
@@ -285,13 +285,9 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	}
 
 	if !v.camera_fitted {
-		// Cold path (first frame / just switched chips): only clone the
-		// description here, since bounding_box's fallback is the sole
-		// consumer -- cloning it unconditionally every frame (as before)
-		// meant a full deep-copy of every pin/subchip/wire/display Vec in
-		// the chip purely to serve this once-in-a-while branch.
-		let bounds = bounding_box(&v.chip_scene_buf)
-			.or_else(|| bounding_box(&build_scene(&v.library.get(&scene_chip_name).clone(), &v.library, &AllLow, None)));
+		// Cold path
+		let root_desc = v.library.get_arc(&scene_chip_name);
+		let bounds = bounding_box(&v.chip_scene_buf).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
 		match bounds {
 			Some((min, max)) => v.camera.fit_to_bounds(min, max, 0.15),
 			// No geometry at all -- e.g. a brand-new blank chip has no

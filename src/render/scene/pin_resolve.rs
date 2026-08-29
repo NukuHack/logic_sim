@@ -188,16 +188,17 @@ mod tests {
 		sub_desc.input_pins.push(PinDescription::new("A", 10, PinBitCount::Bit1));
 		sub_desc.input_pins.push(PinDescription::new("B", 11, PinBitCount::Bit1));
 		sub_desc.output_pins.push(PinDescription::new("OUT", 20, PinBitCount::Bit1));
+		const NO_LABEL: Option<String> = None;
 		let sub = PlacedSubChip {
 			id: 1,
 			desc: &sub_desc,
 			centre: Vec2::new(2.0, 0.0),
 			size: Vec2::new(1.0, 1.0),
 			input_pin_y: vec![0.25, -0.25],
-			label: None,
+			label: &NO_LABEL,
 			output_pin_y: vec![0.0],
-			pin_colour_info: Vec::new(),
-			internal_data: Vec::new(),
+			pin_colour_info: &[],
+			internal_data: &[],
 		};
 		let placed = vec![sub];
 		let mut owner_to_placed = HashMap::new();
