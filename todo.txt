@@ -1,11 +1,11 @@
-TODO LIST:
+TODO LIST :
 
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 
 make everything inside costumize a dragging stuff, so the displays pozition and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
-FUTURE PLANS (can be ignored now) :
+FUTURE PLANS :
 
 - full dirty-tracking / partial re-render (React-style reconciliation): would
 	mean per-component change detection + keyed diffing + invalidation
@@ -18,19 +18,6 @@ make sure opening a new chip (ctrl+n) always opens "New Chip" if it is not in th
 going into edit mode should make the entire wire network in edit mode, so everything that the wire is connected to
 
 separate the rendering from logic (rn lagging logic laggs the ui too)
-
-speedup : 
-add a checkbox into the customization menu (default off) like "optimize"
-
-// i could not decide what to put in "_" since it might be a bool, or it might be something bigger than u128 so obv. it can't be set, it has to be generalized
-// firstly we have to make the wiredata storage better, current "always 16 bit" is awful, space inefficient
-// in some circuits the off can be the same as disabled
-pub enum Optimized {
-	None, // nothign, likely so small that any overhead would make it faster, ot it just can't be translated to something stateless
-	LUT(HashMap<_,_>), // a big lut, just precomputed values - purely deterministic on input
-	Native(fn(_) -> _), // the best, for example : a not gate would be really nice in here
-	NativeList(Vec<fn(_) -> _>) // this would do multiple operations on the input to get the desired output, this would need a really smart parser but it could make complex things really fast
-}
 
 add components or some form of input that can run rust code (like toggling a setting with your own circuits)
 

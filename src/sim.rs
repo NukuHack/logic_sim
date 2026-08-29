@@ -46,7 +46,7 @@ impl SimPin {
 			id,
 			parent_chip,
 			is_input,
-			state: PinState::default(),
+			state: PinState::DISCONNECTED,
 			connected_target_pins: Vec::new(),
 			last_updated_frame_index: 0,
 			latest_source_id: -1,
