@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod builtins;
 pub mod description;
+pub mod gate_op;
 pub mod json;
 pub mod pin_state;
 pub mod render;
