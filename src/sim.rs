@@ -4,7 +4,7 @@
 //! instead of `Rc<RefCell<..>>` everywhere this uses a flat-arena design: all pins live in one `Vec<SimPin>`
 //! and all chips in one `Vec<SimChip>`, indexed rather than referenced, keeping the hot loop allocation-free.
 
-use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
+use crate::description::{CacheKind, ChipDescription, ChipLibrary, ChipType, PinAddress};
 use crate::gate_op::CachingState;
 use crate::pin_state::PinState;
 use rand::rngs::StdRng;
@@ -66,22 +66,18 @@ pub struct SimChip {
 	pub id: i32,
 	/// This chip's name, as declared by its `ChipDescription` (e.g. "NAND",
 	/// "7-Segment Driver", a player's custom chip name). Shared -- an
-	/// `Arc<str>` clone is a refcount bump, not a fresh allocation -- via
-	/// the per-build interner in [`build_recursive`], so every instance of
-	/// the same chip type (there can be hundreds in a busy project) points
-	/// at the exact same heap allocation instead of each carrying its own
-	/// owned `String`. Primarily exists for [`crate::gate_op::caching`],
-	/// which keys its combinational-chip LUT cache by name.
+	/// `Arc<str>` clone is a refcount bump, not a fresh allocation
 	pub name: Arc<str>,
-	/// Mirrored from `ChipDescription::should_be_cached` at build time
-	/// (same pattern as `is_builtin`): whether this chip has opted into
-	/// caching above the automatic input-bit budget. See
-	/// [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`].
-	pub should_be_cached: bool,
 	/// Some builtin chips (RAM, ROM, displays...) need internal state for
 	/// memory; also used for other arbitrary chip-specific data.
 	pub internal_state: Vec<u32>,
 	pub is_builtin: bool,
+	/// Copied from `ChipDescription::cache_kind` (the "real chip", i.e. the
+	/// library/description-level source of truth) each time this `SimChip`
+	/// is (re)built by `build_recursive`. Kept as a plain copy here --
+	/// rather than having `gate_op::caching` reach back into a
+	/// `ChipDescription`/`ChipLibrary` on every lookup
+	pub cache_kind: CacheKind,
 
 	pub input_pins: Vec<PinIdx>,
 	pub output_pins: Vec<PinIdx>,
@@ -149,13 +145,6 @@ pub struct Simulator {
 	/// flip `caching.use_caching` directly through the shared-simulator
 	/// lock, same as every other prefs-driven field on this struct.
 	pub caching: CachingState,
-	/// Small log of cache-build events (`"Cached chip 'Foo': N rows"`),
-	/// appended to by [`crate::gate_op::recalculate_cached_luts`]
-	/// and drained once per frame by the main thread -- terminal logging
-	/// via `println!` happens right where it's pushed; this is the
-	/// separate copy that ends up as the in-game status toast (see
-	/// `viewer::sim_thread::SimHandle::drain_cache_log`).
-	pub cache_log: Vec<String>,
 }
 
 impl Default for Simulator {
@@ -163,7 +152,7 @@ impl Default for Simulator {
 		Self {
 			pins: Vec::new(),
 			chips: Vec::new(),
-			root: ChipIdx::default(), // assuming ChipIdx has Default
+			root: ChipIdx::default(),
 
 			simulation_frame: 0,
 			steps_per_clock_transition: 0,
@@ -174,15 +163,14 @@ impl Default for Simulator {
 			pcg_rng_state: 0,
 			rng: StdRng::from_entropy(), // or StdRng::seed_from_u64(0) for deterministic
 
-			start_time: Instant::now(), // or Instant::now() for current time
+			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
 
 			held_keys: HashSet::new(),
 			key_modifiers: 0,
 			driven_inputs: HashMap::new(),
 
-			caching: CachingState::default(), // assuming CachingState has Default
-			cache_log: Vec::new(),
+			caching: CachingState::default(),
 		}
 	}
 }
@@ -226,7 +214,6 @@ impl Simulator {
 			key_modifiers: 0,
 			driven_inputs: HashMap::new(),
 			caching: CachingState::default(),
-			cache_log: Vec::new(),
 		}
 	}
 
@@ -412,7 +399,7 @@ impl Simulator {
 		if self.caching.use_caching {
 			let name = Arc::clone(&self.chips[chip_idx.0].name);
 
-			if self.caching.combinational_chip_caches.contains_key(name.as_ref()) {
+			if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {
 				let caching = std::mem::take(&mut self.caching);
 				let hit = crate::gate_op::process_cached_chip(self, &caching, chip_idx);
 				self.caching = caching;
@@ -421,14 +408,12 @@ impl Simulator {
 				}
 				// A tri-state input declined the lookup (never enumerated
 				// into the table) -- fall through to a real step below.
-			} else if !self.caching.chips_known_to_not_be_combinational.contains(name.as_ref()) {
+			} else if !self.caching.not_combinational_chip_cache.contains(name.as_ref()) {
 				let mut caching = std::mem::take(&mut self.caching);
-				let mut log = std::mem::take(&mut self.cache_log);
-				crate::gate_op::recalculate_cached_luts(self, &mut caching, chip_idx, &mut log);
+				crate::gate_op::recalculate_cached_luts(self, &mut caching, chip_idx);
 				self.caching = caching;
-				self.cache_log = log;
 
-				if self.caching.combinational_chip_caches.contains_key(name.as_ref()) {
+				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {
 					let caching = std::mem::take(&mut self.caching);
 					let hit = crate::gate_op::process_cached_chip(self, &caching, chip_idx);
 					self.caching = caching;
@@ -1056,11 +1041,11 @@ fn build_recursive(
 		chip_type: desc.chip_type,
 		id: sub_chip_id,
 		name,
-		should_be_cached: desc.should_be_cached,
 		internal_state,
 		is_builtin,
 		input_pins: Vec::new(),
 		output_pins: Vec::new(),
+		cache_kind: desc.cache_kind,
 		sub_chips: sub_chip_indices,
 		num_connected_inputs: 0,
 		num_inputs_ready: 0,

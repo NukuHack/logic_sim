@@ -22,11 +22,12 @@ use crate::{SavePaths, Saver};
 
 /// Applies a click on one of the editor overlays.
 pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, action: EditorAction) {
+	use EditorAction as EA;
 	match action {
-		EditorAction::ClosePopup => close_top_overlay(v),
-		EditorAction::CyclePref(i) => cycle_pref(&mut v.prefs, i),
-		EditorAction::SelectPrefsField(field) => v.prefs_field_focus = Some(field),
-		EditorAction::ApplyPreferences => {
+		EA::ClosePopup => close_top_overlay(v),
+		EA::CyclePref(i) => cycle_pref(&mut v.prefs, i),
+		EA::SelectPrefsField(field) => v.prefs_field_focus = Some(field),
+		EA::ApplyPreferences => {
 			apply_prefs_field_text(v);
 			v.sync_sim_clock_pref();
 			let mut desc = v.prefs.clone();
@@ -37,40 +38,40 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.overlays.retain(|o| *o != Overlay::Preferences);
 			reset_preferences_draft(v);
 		}
-		EditorAction::SelectCollection(i) => {
+		EA::SelectCollection(i) => {
 			v.library_selection = LibrarySelection::Collection(i);
 			if let Some(c) = v.prefs.chip_collections.get_mut(i) {
 				c.is_toggled_open = !c.is_toggled_open;
 			}
 		}
-		EditorAction::SelectChipRow { collection, chip } => {
+		EA::SelectChipRow { collection, chip } => {
 			v.library_selection = LibrarySelection::Chip(collection, chip);
 		}
-		EditorAction::SelectStarredRow(i) => {
+		EA::SelectStarredRow(i) => {
 			v.library_selection = LibrarySelection::Starred(i);
 		}
-		EditorAction::ToggleStarred { name, is_collection } => {
+		EA::ToggleStarred { name, is_collection } => {
 			let now_starred = !v.prefs.is_starred(&name, is_collection);
 			v.prefs.set_starred(&name, now_starred, is_collection);
 		}
-		EditorAction::MoveSelectedStep(down) => move_selected_library_row(v, down, false),
-		EditorAction::MoveSelectedJump(down) => move_selected_library_row(v, down, true),
-		EditorAction::OpenSelectedChip(name) => {
+		EA::MoveSelectedStep(down) => move_selected_library_row(v, down, false),
+		EA::MoveSelectedJump(down) => move_selected_library_row(v, down, true),
+		EA::OpenSelectedChip(name) => {
 			// Gated behind the unsaved-changes prompt while the current
 			// chip has in-memory-only edits; the `true` mirrors this
 			// site's leave-the-library cleanup on an ordinary open.
 			request_open_chip(v, paths, status, &name, true);
 		}
-		EditorAction::RequestDeleteChip(name) => {
+		EA::RequestDeleteChip(name) => {
 			v.library_delete_message = chip_delete_confirm_message(v, &name);
 			v.library_confirming_chip_delete = true;
 		}
-		EditorAction::BeginNewCollection => {
+		EA::BeginNewCollection => {
 			v.library_creating_collection = true;
 			v.library_renaming_collection = false;
 			v.overlay_text_input.clear();
 		}
-		EditorAction::BeginRenameCollection => {
+		EA::BeginRenameCollection => {
 			if let LibrarySelection::Collection(i) = v.library_selection {
 				if let Some(c) = v.prefs.chip_collections.get(i) {
 					v.overlay_text_input = c.name.clone();
@@ -79,7 +80,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				}
 			}
 		}
-		EditorAction::RequestDeleteCollection => {
+		EA::RequestDeleteCollection => {
 			if let LibrarySelection::Collection(i) = v.library_selection {
 				if v.prefs.chip_collections.get(i).is_some_and(|c| c.chips.is_empty()) {
 					delete_collection(&mut v.prefs, i);
@@ -90,7 +91,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				}
 			}
 		}
-		EditorAction::ConfirmCollectionName => {
+		EA::ConfirmCollectionName => {
 			let new_name = v.overlay_text_input.trim().to_string();
 			if !new_name.is_empty() {
 				if v.library_creating_collection {
@@ -112,8 +113,8 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			}
 			reset_library_popup_state(v);
 		}
-		EditorAction::CancelLibraryPopup => reset_library_popup_state(v),
-		EditorAction::ConfirmDelete => {
+		EA::CancelLibraryPopup => reset_library_popup_state(v),
+		EA::ConfirmDelete => {
 			if v.library_confirming_chip_delete {
 				let name = match v.library_selection {
 					LibrarySelection::Chip(ci, chi) => v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).cloned(),
@@ -131,7 +132,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			}
 			reset_library_popup_state(v);
 		}
-		EditorAction::PlaceChip(name) => {
+		EA::PlaceChip(name) => {
 			// Placement writes into the *edited* chip; while a view-only
 			// chip is on screen that would be invisible to the player
 			// (mirrors the original restricting editing to
@@ -165,7 +166,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				chip_interaction::start_placing(v, &name);
 			}
 		}
-		EditorAction::ExitLibrary => {
+		EA::ExitLibrary => {
 			let mut desc = v.prefs.clone();
 			if let Err(e) = Saver::save_project_description(paths, &mut desc) {
 				*status = Some(format!("Failed to save chip library: {e}"));
@@ -175,18 +176,18 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			close_all_overlays(v);
 			v.library_selection = LibrarySelection::None;
 		}
-		EditorAction::ToggleStarredCollectionPopup(name) => {
+		EA::ToggleStarredCollectionPopup(name) => {
 			v.bottom_bar_open_collection = if v.bottom_bar_open_collection.as_deref() == Some(name.as_str()) { None } else { Some(name) };
 		}
-		EditorAction::CloseStarredCollectionPopup => v.bottom_bar_open_collection = None,
-		EditorAction::SelectSearchResult(name) => {
+		EA::CloseStarredCollectionPopup => v.bottom_bar_open_collection = None,
+		EA::SelectSearchResult(name) => {
 			v.search_selected = Some(name);
 		}
-		EditorAction::RequestDeleteSearchChip(name) => {
+		EA::RequestDeleteSearchChip(name) => {
 			v.search_delete_message = chip_delete_confirm_message(v, &name);
 			v.search_confirming_delete = true;
 		}
-		EditorAction::ConfirmSearchDelete => {
+		EA::ConfirmSearchDelete => {
 			if let Some(name) = v.search_selected.clone() {
 				delete_chip_from_library(v, paths, status, &name);
 			}
@@ -194,53 +195,58 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.search_delete_message.clear();
 			v.search_selected = None;
 		}
-		EditorAction::CancelSearchDeleteConfirm => {
+		EA::CancelSearchDeleteConfirm => {
 			v.search_confirming_delete = false;
 			v.search_delete_message.clear();
 		}
-		EditorAction::ConfirmName => confirm_naming_popup(v, status),
-		EditorAction::ChooseKey(c) => v.overlay_key_choice = Some(c),
-		EditorAction::ConfirmKey => confirm_key_select_popup(v, status),
-		EditorAction::RomSelectCell(idx) => {
+		EA::ConfirmName => confirm_naming_popup(v, status),
+		EA::ChooseKey(c) => v.overlay_key_choice = Some(c),
+		EA::ConfirmKey => confirm_key_select_popup(v, status),
+		EA::RomSelectCell(idx) => {
 			if let Some(editor) = v.rom_editor.as_mut() {
 				editor.selected = idx.min(crate::render::editor_ui::ROM_WORD_COUNT - 1);
 				v.overlay_text_input = editor.data[editor.selected].to_string();
 			}
 		}
-		EditorAction::RomConfirmCell => confirm_rom_cell(v, status),
-		EditorAction::RomApply => apply_rom_editor(v, status),
-		EditorAction::RomClearField => clear_rom_field(v),
-		EditorAction::RomResetAll => reset_rom_editor(v),
-		EditorAction::RomCopy => copy_rom_editor(v, status),
-		EditorAction::RomPaste => paste_rom_editor(v, status),
-		EditorAction::SaveChipConfirm => confirm_save_chip_popup(v, paths, status),
-		EditorAction::SaveChipSaveAs => confirm_save_chip_as(v, paths, status),
-		EditorAction::SaveChipRename => confirm_save_chip_rename(v, paths, status),
-		EditorAction::OpenChipCustomize => customize_flow::open_customize(v),
-		EditorAction::CustomizeCancel => customize_flow::cancel_customize(v),
-		EditorAction::CustomizeConfirm => customize_flow::confirm_customize(v, status),
-		EditorAction::CustomizeCycleNameLocation => customize_flow::cycle_name_location(v),
-		EditorAction::CustomizePickColour(i) => customize_flow::pick_colour(v, i),
-		EditorAction::CustomizeToggleForceCache => customize_flow::toggle_force_cache(v),
-		EditorAction::CustomizeGrabDisplayMove(i) => customize_flow::start_move_display(v, i),
-		EditorAction::CustomizeGrabDisplayScale(i) => customize_flow::start_scale_display(v, i),
-		EditorAction::CustomizeResizeStart(corner) => customize_flow::start_resize(v, corner),
-		EditorAction::CustomizePlaceEntry(entry) => customize_flow::place_list_entry(v, entry),
-		EditorAction::ConfirmPinEdit => confirm_pin_edit_popup(v),
-		EditorAction::PinEditSetDisplayMode(i) => {
+		EA::RomConfirmCell => confirm_rom_cell(v, status),
+		EA::RomApply => apply_rom_editor(v, status),
+		EA::RomClearField => clear_rom_field(v),
+		EA::RomResetAll => reset_rom_editor(v),
+		EA::RomCopy => copy_rom_editor(v, status),
+		EA::RomPaste => paste_rom_editor(v, status),
+		EA::SaveChipConfirm => confirm_save_chip_popup(v, paths, status),
+		EA::SaveChipSaveAs => confirm_save_chip_as(v, paths, status),
+		EA::SaveChipRename => confirm_save_chip_rename(v, paths, status),
+		EA::OpenChipCustomize => customize_flow::open_customize(v),
+		EA::CustomizeCancel => customize_flow::cancel_customize(v),
+		EA::CustomizeConfirm => customize_flow::confirm_customize(v, status),
+		EA::CustomizeCycleNameLocation => customize_flow::cycle_name_location(v),
+		EA::CustomizePickColour(i) => customize_flow::pick_colour(v, i),
+		EA::CustomizeGrabDisplayMove(i) => customize_flow::start_move_display(v, i),
+		EA::CustomizeGrabDisplayScale(i) => customize_flow::start_scale_display(v, i),
+		EA::CustomizeResizeStart(corner) => customize_flow::start_resize(v, corner),
+		EA::CustomizePlaceEntry(entry) => customize_flow::place_list_entry(v, entry),
+		EA::ConfirmPinEdit => confirm_pin_edit_popup(v),
+		EA::CustomizeToggleCache => {
+			// "Caching" checkbox
+			let Some(customize) = v.customize.as_mut() else { return };
+			customize.draft.cache_kind.toggle();
+			v.cache_toggle_touched.insert(v.root_chip_name.to_ascii_lowercase());
+		}
+		EA::PinEditSetDisplayMode(i) => {
 			if let Some(edit) = v.pin_edit.as_mut() {
 				edit.display_mode_index = i;
 			}
 		}
-		EditorAction::PinEditSetColour(i) => {
+		EA::PinEditSetColour(i) => {
 			if let Some(edit) = v.pin_edit.as_mut() {
 				edit.colour = crate::description::Color::from_int(i as i32);
 			}
 		}
-		EditorAction::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
-		EditorAction::ExitViewedChip => v.return_to_previous_viewed_chip(),
-		EditorAction::LedColourConfirm => confirm_led_colour_popup(v),
-		EditorAction::LedColourSetColour(i) => {
+		EA::UnsavedChangesConfirm => confirm_unsaved_changes_popup(v, paths, status),
+		EA::ExitViewedChip => v.return_to_previous_viewed_chip(),
+		EA::LedColourConfirm => confirm_led_colour_popup(v),
+		EA::LedColourSetColour(i) => {
 			if let Some(edit) = v.led_colour.as_mut() {
 				edit.colour_index = i;
 			}

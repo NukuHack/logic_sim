@@ -5,8 +5,8 @@
 //! are kept as plain structs so a chip file can be re-saved without losing editor layout data.
 
 use crate::description::{
-	ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, NameLocation, PinAddress, PinBitCount, PinDescription, SubChipDescription,
-	ValueDisplayMode, WireConnectionType, WireDescription,
+	CacheKind, ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, NameLocation, PinAddress, PinBitCount, PinDescription,
+	SubChipDescription, ValueDisplayMode, WireConnectionType, WireDescription,
 };
 use crate::structs::Vec2;
 use serde::{Deserialize, Serialize};
@@ -112,6 +112,7 @@ macro_rules! impl_serde_via_int {
 impl_serde_via_int!(ChipType);
 impl_serde_via_int!(ValueDisplayMode);
 impl_serde_via_int!(NameLocation);
+impl_serde_via_int!(CacheKind);
 impl_serde_via_int!(PinBitCount);
 impl_serde_via_int!(Color);
 impl_serde_via_int!(WireConnectionType);
@@ -150,8 +151,8 @@ struct JsonChipDescription {
 	wires: Vec<JsonWireDescription>,
 	#[serde(rename = "Displays", default)]
 	displays: Option<Vec<JsonDisplayDescription>>,
-	#[serde(rename = "ChipCaching", default)]
-	should_be_cached: bool,
+	#[serde(rename = "CacheKind", default)]
+	cache_kind: CacheKind,
 }
 
 /// Parse a single chip's JSON text (the contents of e.g. `Chips/NOT.json`)
@@ -168,7 +169,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 	desc.name_location = raw.name_location;
 	desc.size = raw.size;
 	desc.dls_version = raw.dls_version.clone();
-	desc.should_be_cached = raw.should_be_cached;
+	desc.cache_kind = raw.cache_kind;
 
 	desc.input_pins = raw
 		.input_pins
@@ -257,7 +258,7 @@ fn serialize_chip_description_impl(desc: &ChipDescription, library: Option<&Chip
 		// *is* current-format data. Writing anything older would make the
 		// loader re-apply the one-shot migrations on every load.
 		dls_version: Some(crate::DLS_VERSION.to_string()),
-		should_be_cached: desc.should_be_cached,
+		cache_kind: desc.cache_kind,
 		name: desc.name.clone(),
 		name_location: desc.name_location,
 		chip_type: desc.chip_type,

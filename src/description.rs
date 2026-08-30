@@ -81,6 +81,16 @@ impl ChipType {
 		self.is_bus_origin_type() || self.is_bus_terminus_type()
 	}
 
+	pub fn is_merge_type(self) -> bool {
+		use ChipType as CT;
+		matches!(self, CT::Merge1To4Bit | CT::Merge1To8Bit | CT::Merge4To8Bit | CT::Split4To1Bit | CT::Split8To4Bit | CT::Split8To1Bit)
+	}
+
+	pub fn is_io_type(self) -> bool {
+		use ChipType as CT;
+		matches!(self, CT::In1Bit | CT::In4Bit | CT::In8Bit | CT::Out1Bit | CT::Out4Bit | CT::Out8Bit)
+	}
+
 	/// Dev-facing builtins (`dev.RAM-8` and the BUS-TERMINUS trio) that
 	/// release builds keep out of every player-facing list -- palette
 	/// defaults, collection syncing/rows, the bottom bar, and search (see
@@ -179,6 +189,56 @@ impl NameLocation {
 
 	pub fn to_int(&self) -> i32 {
 		(*self).into()
+	}
+}
+
+/// Simplified, informational summary of what caching a chip ends up with
+/// once Save resolves `ChipDescription::should_be_cached`
+/// (`viewer::save_flow::resolve_should_cache`). This is *not* the actual
+/// lookup table -- that's still only ever built lazily at simulation time
+/// (`gate_op::caching::recalculate_cached_luts`) and never touches disk --
+/// just a label describing what kind of caching this chip is set up for,
+/// so a save file (or a human skimming it) can tell at a glance without
+/// re-running the combinational/tri-state analysis itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[repr(i32)]
+pub enum CacheKind {
+	/// Not cached: either the chip isn't combinational, or
+	/// `should_be_cached` came out false.
+	#[default]
+	Off = 0,
+	None = 1,
+
+	// native can easily have methods what would collapse the input disabled or off to a same internal value
+	// so no need for different kinds, LUT only needs it because memory size
+	Lut = 2,
+	LutTristateOutput = 3,
+	LutTristateInput = 4,
+	LutTristateBoth = 5,
+	Native = 6,
+	NativeList = 7,
+}
+
+impl CacheKind {
+	/// `CacheKind` as stored on disk: a plain integer, same shape as
+	/// `NameLocation::from_int`/`to_int` above.
+	pub fn from_int(v: i32) -> Self {
+		Self::try_from(v).unwrap_or_default()
+	}
+
+	pub fn to_int(&self) -> i32 {
+		(*self).into()
+	}
+
+	pub fn is_off(&self) -> bool {
+		matches!(self, Self::Off)
+	}
+
+	pub fn toggle(&mut self) {
+		*self = match self {
+			Self::Off => Self::None,
+			_ => Self::Off,
+		};
 	}
 }
 
@@ -573,15 +633,8 @@ pub struct ChipDescription {
 	/// This chip's body footprint as saved on disk (`Size`), in world/grid
 	/// units.
 	pub size: Vec2,
-	/// The "Chip Caching: On/Off" opt-in flag (`ChipCaching` on disk). Only
-	/// matters once a chip's total input width climbs past
-	/// [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING`]
-	/// (below that, combinational chips are always cached automatically);
-	/// setting this lets a bigger combinational chip opt into caching up
-	/// to [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`]
-	/// bits, at the cost of the memory/build-time a bigger truth table
-	/// needs. Defaults to `false`.
-	pub should_be_cached: bool,
+	/// Simplified indicator of what caching this chip is set up for.
+	pub cache_kind: CacheKind,
 }
 
 impl ChipDescription {
@@ -598,7 +651,7 @@ impl ChipDescription {
 			name_location: NameLocation::default(),
 			dls_version: None,
 			size: Vec2::default(),
-			should_be_cached: false,
+			cache_kind: CacheKind::Off,
 		}
 	}
 }

@@ -78,7 +78,7 @@ pub(crate) fn confirm_customize(v: &mut ViewerState, status: &mut Option<String>
 		chip.name_location = customize.draft.name_location;
 		chip.size = customize.draft.size;
 		chip.displays = customize.draft.displays.clone();
-		chip.should_be_cached = customize.draft.should_be_cached;
+		chip.cache_kind = customize.draft.cache_kind;
 	}
 	v.rebuild_sim();
 	v.overlay_text_input = customize.saved_save_text;
@@ -114,18 +114,6 @@ pub(crate) fn pick_colour(v: &mut ViewerState, palette_index: usize) {
 	let Some(customize) = v.customize.as_mut() else { return };
 	customize.draft.colour = [colour[0], colour[1], colour[2], 1.0];
 	v.overlay_text_input = hex_of(customize.draft.colour);
-}
-
-/// "Force chip caching" checkbox: flips the draft's opt-in flag
-/// (`ChipDescription::should_be_cached`). Only takes effect once
-/// Confirm writes it through onto the library entry -- the actual LUT
-/// is never built here; that stays the lazy job of
-/// `gate_op::recalculate_cached_luts`, which every subchip already
-/// running (or about to run, on the next open/save) will trigger on its
-/// own the first time it's stepped with `caching.use_caching` on.
-pub(crate) fn toggle_force_cache(v: &mut ViewerState) {
-	let Some(customize) = v.customize.as_mut() else { return };
-	customize.draft.should_be_cached = !customize.draft.should_be_cached;
 }
 
 /// Re-parses whatever's typed in the hex field (typed chars were filtered
@@ -415,31 +403,6 @@ mod tests {
 		d.output_pins.push(PinDescription::new("Q", 2, PinBitCount::Bit1));
 		d.size = Vec2::new(2.0, 2.0);
 		d
-	}
-
-	#[test]
-	fn force_cache_toggle_round_trips_through_confirm() {
-		use crate::viewer::state::ViewerState;
-
-		let mut library = crate::ChipLibrary::new();
-		library.add(sized_draft());
-
-		let mut v = ViewerState::new("", library, "D".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
-		assert!(!v.library.get("D").should_be_cached, "starts off");
-
-		open_customize(&mut v);
-		assert!(!v.customize.as_ref().unwrap().draft.should_be_cached);
-
-		toggle_force_cache(&mut v);
-		assert!(v.customize.as_ref().unwrap().draft.should_be_cached, "checkbox flips the draft");
-
-		toggle_force_cache(&mut v);
-		assert!(!v.customize.as_ref().unwrap().draft.should_be_cached, "flips back off");
-
-		toggle_force_cache(&mut v);
-		let mut status = None;
-		confirm_customize(&mut v, &mut status);
-		assert!(v.library.get("D").should_be_cached, "Confirm writes the flag through onto the library entry");
 	}
 
 	#[test]

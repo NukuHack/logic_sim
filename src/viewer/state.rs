@@ -250,6 +250,16 @@ pub(crate) struct ViewerState {
 	/// `viewer::save_flow`).
 	pub(crate) unsaved_drafts: std::collections::HashSet<String>,
 
+	/// Names (lower-cased) of chips whose caching checkbox
+	/// (`ChipDescription::should_be_cached`, toggled via
+	/// `customize::toggle_force_cache`) has been manually flipped by the
+	/// user this session. Consulted at Save time
+	/// (`viewer::save_flow::resolve_should_cache`): a touched chip keeps
+	/// whatever the user landed on; an untouched one has its caching
+	/// flag re-derived from the auto-cache rules instead, so caching
+	/// never silently turns itself on for a chip nobody asked to cache.
+	pub(crate) cache_toggle_touched: std::collections::HashSet<String>,
+
 	/// Pacing/throughput readouts fed back from the background simulation
 	/// thread each frame (see [`SimPacing`]).
 	pub(crate) sim_pacing: SimPacing,
@@ -392,9 +402,7 @@ pub(crate) struct ViewerState {
 
 	/// The wire currently being placed by clicking one endpoint then
 	/// another, if any -- see [`PendingWire`]'s docs. Cleared (`None`)
-	/// whenever the root chip changes, since a pending endpoint's
-	/// `wire_index`/subchip id would otherwise silently refer to
-	/// whatever now happens to sit at that index in the new chip.
+	/// whenever the root chip changes
 	pub(crate) pending_wire: Option<PendingWire>,
 
 	/// The components currently picked up for placement (the library's
@@ -437,12 +445,6 @@ pub(crate) struct ViewerState {
 	/// Undo/redo history for the edited chip (`DevChipInstance`'s
 	/// `UndoController`). Cleared wherever the edited root changes.
 	pub(crate) undo: crate::viewer::undo::UndoController,
-
-	/// Latest "combinational chip cached" message drained from the sim
-	/// thread's [`crate::gate_op::caching`] log, waiting to be surfaced as
-	/// the transient status toast (see `viewer::frame::update_viewer_sim`
-	/// and `viewer::events::App::redraw`). `None` most frames.
-	pub(crate) pending_cache_status: Option<String>,
 }
 
 impl ViewerState {
@@ -471,6 +473,7 @@ impl ViewerState {
 			camera_fitted: false,
 			prefs: ProjectDescription::default(),
 			unsaved_drafts: std::collections::HashSet::new(),
+			cache_toggle_touched: std::collections::HashSet::new(),
 			sim_pacing: SimPacing::default(),
 			paused_step_counter: 0,
 			prefs_field_focus: None,
@@ -512,7 +515,6 @@ impl ViewerState {
 			wire_edit: None,
 			view_stack: Vec::new(),
 			undo: Default::default(),
-			pending_cache_status: None,
 		};
 		v.sync_sim_clock_pref();
 		v

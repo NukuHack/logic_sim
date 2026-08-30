@@ -339,21 +339,15 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 	list_rect
 }
 
-/// "Force chip caching" checkbox row -- a small tick box plus label,
-/// mirroring `ChipCustomizationMenu`'s caching checkbox. Bound to
-/// `ChipDescription::should_be_cached` (only meaningful once this chip's
-/// combined input width climbs past the always-cached auto budget); a
-/// hint line underneath spells out roughly what ticking it will cost, so
-/// the choice isn't blind. Always shown, even under the auto-cache
-/// budget, so a chip that later grows a wider input keeps its opt-in
-/// intact from the start.
+/// "Caching" checkbox row -- a small tick box plus label, mirroring
+/// `ChipCustomizationMenu`'s caching checkbox.
 fn build_force_cache_row(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, inner_x: f32, inner_w: f32, y: f32) -> f32 {
 	use crate::gate_op::{MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
 
 	let box_size: f32 = 18.0;
 	let row_h: f32 = box_size.max(18.0);
 	let box_rect = UiRect::new(inner_x, y, box_size, box_size);
-	let checked = ctx.draft.should_be_cached;
+	let checked = !ctx.draft.cache_kind.is_off();
 
 	ui_kit::fill_rect(frame, ui, box_rect, [0.09, 0.09, 0.1, 1.0]);
 	frame.geometry.add_rect(ui_kit::to_world(box_rect.centre(), ui.vw, ui.vh), Vec2::new(box_size - 3.0, box_size - 3.0), [0.4, 0.4, 0.45, 1.0]);
@@ -371,14 +365,14 @@ fn build_force_cache_row(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx,
 		ui,
 		Vec2::new(label_x + (inner_w - box_size - 8.0) / 2.0, box_rect.centre().y),
 		inner_w - box_size - 8.0,
-		"Force chip caching",
+		"Caching",
 		[0.9, 0.9, 0.92, 1.0],
 		14.0,
 	);
 
 	// The whole row toggles, not just the tick box itself.
 	let hit_rect = UiRect::new(inner_x, y, inner_w, row_h);
-	frame.buttons.push(EditorButton { rect: hit_rect, action: EditorAction::CustomizeToggleForceCache, enabled: true });
+	frame.buttons.push(EditorButton { rect: hit_rect, action: EditorAction::CustomizeToggleCache, enabled: true });
 
 	let mut next_y = y + row_h + 4.0;
 

@@ -5,10 +5,50 @@
 //! Also the unsaved-changes gate (`UnsavedChangesPopup`): detecting that
 //! the open chip has in-memory-only edits and prompting before any flow
 //! would walk away from them.
+use crate::gate_op::{calculate_num_input_bits, is_combinational, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
 use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
 use crate::viewer::library::{is_custom_chip, DEFAULT_LIBRARY_COLLECTION_NAME};
 use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, Overlay, PendingUnsavedAction, ViewerState};
-use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver};
+use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver, Simulator};
+
+/// Resolves `desc.should_be_cached`/`desc.cache_kind` right before they're
+/// written to disk -- the one place the "was the caching checkbox actually
+/// touched?" rule from `ViewerState::cache_toggle_touched` gets applied.
+///
+/// `desc.cache_kind` coming in already holds whatever the customize
+/// checkbox last landed on (`customize::confirm_customize` writes it
+/// straight onto the library entry `desc` is cloned from), so a *touched*
+/// chip's job here is just to validate that choice against the wider
+/// user-caching budget, not to re-derive it from scratch -- overwriting it
+/// unconditionally is what used to silently turn a user's "on" back to
+/// "off" on every save.
+pub(crate) fn resolve_should_cache(v: &ViewerState, desc: &mut ChipDescription, touched_as: &str) {
+	let sim = Simulator::build(desc, &v.library);
+	let root = sim.root();
+
+	if !is_combinational(&sim, root) {
+		desc.cache_kind = crate::description::CacheKind::Off;
+		return;
+	}
+
+	if v.cache_toggle_touched.contains(&touched_as.to_ascii_lowercase()) {
+		// User explicitly set this via the customize checkbox -- keep it,
+		// only forcing it off if it no longer fits even the wider
+		// user-caching budget (e.g. a live edit widened an input pin).
+		if !desc.cache_kind.is_off() && calculate_num_input_bits(&sim, root) > MAX_NUM_INPUT_BITS_WHEN_USER_CACHING {
+			desc.cache_kind = crate::description::CacheKind::Off;
+		}
+		return;
+	}
+
+	// Untouched: re-derive from the auto-cache rule every time, so caching
+	// never silently turns itself on for a chip nobody asked to cache.
+	desc.cache_kind = if calculate_num_input_bits(&sim, root) <= MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING {
+		crate::description::CacheKind::None
+	} else {
+		crate::description::CacheKind::Off
+	};
+}
 
 /// Determines which buttons `Overlay::SaveChip` should show for the
 /// currently-typed name, by comparing it against `v.root_chip_name` (the
@@ -199,7 +239,9 @@ fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 	if was_draft {
 		stamp_first_save_defaults(v, &name);
 	}
-	let desc = v.library.get(&name).clone();
+	let mut desc = v.library.get(&name).clone();
+	resolve_should_cache(v, &mut desc, &name);
+	v.library.get_mut(&name).cache_kind = desc.cache_kind;
 	match Saver::save_chip(paths, &v.project_name, &v.library, &desc) {
 		Ok(()) => {
 			v.mark_saved(&name);
@@ -231,6 +273,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 	let old_name = v.root_chip_name.clone();
 	let mut new_desc = v.library.get(&old_name).clone();
 	new_desc.name = new_name.to_string();
+	resolve_should_cache(v, &mut new_desc, &old_name);
 
 	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
 		Ok(()) => {
@@ -291,6 +334,7 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 	let removed_pins = removed_boundary_pin_ids(v, paths, &old_name, v.library.get(&old_name));
 	let mut new_desc = v.library.get(&old_name).clone();
 	new_desc.name = new_name.to_string();
+	resolve_should_cache(v, &mut new_desc, &old_name);
 
 	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
 		Ok(()) => {

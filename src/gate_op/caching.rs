@@ -18,16 +18,17 @@
 use crate::pin_state::PinState;
 use crate::sim::{ChipIdx, PinIdx, Simulator};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Mirrors `MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING`: a combinational chip at or
-/// under this many input bits is always cached (2^12 rows is cheap enough to
-/// just always build).
+/// under this many input bits is cheap enough (2^12 rows) that Save turns
+/// caching on for it automatically, as long as the user hasn't manually set
+/// the checkbox themselves (see `viewer::save_flow::resolve_should_cache`).
+/// Purely a Save-time decision -- nothing at runtime auto-caches anymore.
 pub const MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING: u32 = 12;
 
-/// Mirrors `MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`: above the auto-cache limit,
-/// caching is opt-in (`SimChip::should_be_cached`, mirroring
-/// `ChipDescription::should_be_cached`) up to this many bits (2^24 rows);
-/// beyond it, a chip is never cached.
+/// Mirrors `MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`
+/// will make it inf when i implement Native and NativeList
 pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
 /// One row per input combination, keyed by chip name. Matches the original's
@@ -35,28 +36,25 @@ pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 /// chip's raw packed `PinState` word (bits + tri-state flags) per output
 /// pin, in output-pin order -- not just the bit values -- so a cache hit can
 /// reproduce a tri-state output exactly, not just a settled 0/1.
-///
-/// Keying by name means every instance of the same custom chip shares one LUT
-/// -- correct only because the LUT is a pure function of the chip's own wiring,
-/// independent of where an instance sits in the outer graph.
-pub type CombinationalChipCache = HashMap<String, Vec<Vec<u32>>>;
+pub type CombinationalChipCache = HashMap<Arc<str>, Vec<Vec<u32>>>;
 
 /// Chip names already proven non-combinational (or too big to cache), so
 /// `recalculate_cached_luts` doesn't re-derive the same answer every call.
-pub type NonCombinationalSet = HashSet<String>;
+/// Same interned-`Arc<str>` sharing as [`CombinationalChipCache`].
+pub type NonCombinationalSet = HashSet<Arc<str>>;
 
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
 #[derive(Debug)]
 pub struct CachingState {
-	pub combinational_chip_caches: CombinationalChipCache,
-	pub chips_known_to_not_be_combinational: NonCombinationalSet,
+	pub combinational_chip_cache: CombinationalChipCache,
+	pub not_combinational_chip_cache: NonCombinationalSet,
 	pub use_caching: bool,
 }
 
 impl Default for CachingState {
 	fn default() -> Self {
-		Self { combinational_chip_caches: HashMap::new(), chips_known_to_not_be_combinational: HashSet::new(), use_caching: true }
+		Self { combinational_chip_cache: HashMap::new(), not_combinational_chip_cache: HashSet::new(), use_caching: true }
 	}
 }
 
@@ -72,24 +70,16 @@ pub fn calculate_num_input_bits(sim: &Simulator, chip: ChipIdx) -> u32 {
 }
 
 /// Mirrors `SimChip.IsCombinational`: true iff this chip's outputs depend only
-/// on its current inputs (no memory, no feedback loop). Same three checks as
-/// the original, in order:
-///  1. Builtins are hardcoded (NAND/tristate/merge/split == yes; clock, pulse,
-///     RAM, ROM, displays, key, buzzer == no -- they carry state or react to
-///     something other than their input pins).
-///  2. Every subchip input pin has at most one incoming wire (more would mean
-///     a race condition, i.e. non-deterministic), and every subchip is itself
-///     recursively combinational.
-///  3. The subchip dependency graph is acyclic (topological sort) -- catches
-///     things like an SR latch built from two "combinational" NANDs.
+/// on its current inputs (no memory, no feedback loop). Same three checks as the original
 pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 	use crate::description::ChipType as E;
 
 	let chip_type = sim.chip(chip).chip_type;
+	if chip_type.is_merge_type() || chip_type.is_bus_type() || chip_type.is_io_type() {
+		return true;
+	}
 	match chip_type {
-		E::Nand | E::TriStateBuffer | E::Merge1To4Bit | E::Merge1To8Bit | E::Merge4To8Bit | E::Split4To1Bit | E::Split8To4Bit | E::Split8To1Bit => {
-			return true
-		}
+		E::Nand | E::TriStateBuffer => return true,
 		E::Clock
 		| E::Pulse
 		| E::DevRam8Bit
@@ -99,8 +89,11 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 		| E::DisplayDot
 		| E::DisplayLed
 		| E::Key
-		| E::Buzzer => return false,
-		_ => {} // Custom (or a bus/io pin type) -- fall through to the structural check below.
+		| E::Buzzer
+		| E::KeyMods => {
+			return false;
+		}
+		_ => {}
 	}
 
 	for &sub in &sim.chip(chip).sub_chips {
@@ -177,35 +170,27 @@ pub fn reset_received_flags_on_all_pins(sim: &mut Simulator, chip: ChipIdx) {
 /// Mirrors `Simulator.RecalculateCachedLUTs`: recursively tries to build a LUT
 /// for `chip` and every subchip, skipping anything already resolved either
 /// way. A chip qualifies iff it's custom (builtins already run at O(1) via
-/// `process_builtin_chip`), it's combinational, and its input width fits the
-/// auto-cache budget, or the user opted in (`SimChip::should_be_cached`) and
-/// it fits the larger budget.
-///
-/// `log` collects a short human-readable line per LUT actually built --
-/// consumed once a frame by `viewer::sim_thread::SimHandle::drain_cache_log`
-/// and shown as the transient status toast; every decision (including
-/// "won't be cached") is also always printed straight to the terminal.
-pub fn recalculate_cached_luts(sim: &mut Simulator, caching: &mut CachingState, chip: ChipIdx, log: &mut Vec<String>) {
+/// `process_builtin_chip`)
+pub fn recalculate_cached_luts(sim: &mut Simulator, caching: &mut CachingState, chip: ChipIdx) {
 	let name = sim.chip(chip).name.clone();
 
-	if caching.combinational_chip_caches.contains_key(name.as_ref()) || caching.chips_known_to_not_be_combinational.contains(name.as_ref()) {
+	if caching.combinational_chip_cache.contains_key(name.as_ref()) || caching.not_combinational_chip_cache.contains(name.as_ref()) {
 		return;
 	}
 
 	let subs: Vec<ChipIdx> = sim.chip(chip).sub_chips.clone();
 	for sub in subs {
-		recalculate_cached_luts(sim, caching, sub, log);
+		recalculate_cached_luts(sim, caching, sub);
 	}
 
 	let num_input_bits = calculate_num_input_bits(sim, chip);
-	let should_be_cached = sim.chip(chip).should_be_cached;
-	let within_budget =
-		num_input_bits <= MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING || (should_be_cached && num_input_bits <= MAX_NUM_INPUT_BITS_WHEN_USER_CACHING);
+	let should_be_cached = !sim.chip(chip).cache_kind.is_off();
+	let within_budget = should_be_cached && num_input_bits <= MAX_NUM_INPUT_BITS_WHEN_USER_CACHING;
 
 	let is_custom = sim.chip(chip).chip_type == crate::description::ChipType::Custom;
 	if !is_custom || !within_budget || !is_combinational(sim, chip) {
 		println!("[cache] '{name}' will not be cached (custom={is_custom}, within_budget={within_budget}, input_bits={num_input_bits})");
-		caching.chips_known_to_not_be_combinational.insert(name.to_string());
+		caching.not_combinational_chip_cache.insert(name);
 		return;
 	}
 
@@ -244,10 +229,8 @@ pub fn recalculate_cached_luts(sim: &mut Simulator, caching: &mut CachingState, 
 		lut.push(outputs);
 	}
 
-	let message = format!("Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
-	println!("[cache] {message}");
-	log.push(message);
-	caching.combinational_chip_caches.insert(name.to_string(), lut);
+	println!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
+	caching.combinational_chip_cache.insert(name, lut);
 
 	// Restore the buffered "real" input and re-settle outputs.
 	reset_received_flags_on_all_pins(sim, chip);
@@ -276,7 +259,7 @@ pub fn process_cached_chip(sim: &mut Simulator, caching: &CachingState, chip: Ch
 		shift += state.len();
 	}
 
-	let Some(lut) = caching.combinational_chip_caches.get(name.as_ref()) else {
+	let Some(lut) = caching.combinational_chip_cache.get(name.as_ref()) else {
 		return false;
 	};
 	let Some(outputs) = lut.get(input as usize) else {

@@ -240,14 +240,6 @@ impl SimHandle {
 	pub(crate) fn set_use_caching(&self, enabled: bool) {
 		self.lock().caching.use_caching = enabled;
 	}
-
-	/// Takes every cache-build log line queued since the last drain (see
-	/// `Simulator::cache_log`) -- small terminal/toast logging for when a
-	/// combinational chip's LUT gets (re)built. Cheap to call every frame:
-	/// almost always empty.
-	pub(crate) fn drain_cache_log(&self) -> Vec<String> {
-		std::mem::take(&mut self.lock().cache_log)
-	}
 }
 
 impl Drop for SimHandle {

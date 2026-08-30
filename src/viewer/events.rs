@@ -656,17 +656,6 @@ impl App {
 				let status = self.status.clone();
 				let viewer_stack = build_viewer_stack(v, status.as_deref(), vw, vh, self.mouse_pos);
 				v.stack = viewer_stack;
-				// One-frame-late is fine for a toast drawn every frame at
-				// full framerate: surface a just-built cache LUT message
-				// (see `frame::update_viewer_sim`) as the same transient
-				// status toast every other `self.status = Some(...)` site
-				// uses, so it gets the existing linger/auto-dismiss timing
-				// for free.
-				if let Some(msg) = v.pending_cache_status.take() {
-					let before = self.status.clone();
-					self.status = Some(msg);
-					self.note_status_maybe_changed(&before);
-				}
 			}
 		}
 
