@@ -20,6 +20,7 @@ pub(crate) fn cycle_pref(prefs: &mut crate::json::ProjectDescription, row_index:
 		4 => prefs.prefs_straight_wires = (prefs.prefs_straight_wires + 1) % 3,
 		5 => prefs.prefs_can_complete_wire_connection = (prefs.prefs_can_complete_wire_connection + 1) % 2,
 		6 => prefs.prefs_sim_paused = !prefs.prefs_sim_paused,
+		7 => prefs.prefs_use_caching = !prefs.prefs_use_caching,
 		_ => {}
 	}
 }

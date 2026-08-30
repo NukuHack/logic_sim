@@ -48,6 +48,7 @@ pub fn create_project(paths: &SavePaths, project_name: &str) -> io::Result<Proje
 		prefs_sim_target_steps_per_second: 1000,
 		prefs_sim_steps_per_clock_tick: 250,
 		prefs_sim_paused: false,
+		prefs_use_caching: true,
 		all_custom_chip_names: Vec::new(),
 		starred_list: default_starred_list(),
 		chip_collections: default_chip_collections(),

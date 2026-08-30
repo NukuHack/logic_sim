@@ -16,11 +16,18 @@ pub struct Camera {
 	pub viewport: Vec2,
 }
 
+impl Default for Camera {
+	fn default() -> Self {
+		Self { position: Vec2::default(), zoom: Self::DEF_ZOOM, viewport: Vec2::default() }
+	}
+}
+
+// Chips are sized in grid units of ~0.125, so getting a single small chip to fill a comfortable
+// fraction of a ~1000px window legitimately needs zoom in the hundreds-to-low-thousands. The old
+// cap of 40 meant `fit_to_bounds` was silently clamped and could never make small chips readable.
 impl Camera {
+	pub const DEF_ZOOM: f32 = 96.0;
 	pub const MIN_ZOOM: f32 = 0.05;
-	// Chips are sized in grid units of ~0.125, so getting a single small chip to fill a comfortable
-	// fraction of a ~1000px window legitimately needs zoom in the hundreds-to-low-thousands. The old
-	// cap of 40 meant `fit_to_bounds` was silently clamped and could never make small chips readable.
 	pub const MAX_ZOOM: f32 = 4096.0;
 
 	pub fn new(viewport: Vec2) -> Self {

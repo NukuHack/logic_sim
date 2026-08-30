@@ -5,19 +5,22 @@
 //! and all chips in one `Vec<SimChip>`, indexed rather than referenced, keeping the hot loop allocation-free.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress};
+use crate::gate_op::CachingState;
 use crate::pin_state::PinState;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Captured `internal_state` per chip id-path (see
 /// [`Simulator::capture_internal_states`]).
-pub type InternalStateMap = std::collections::HashMap<Vec<i32>, Vec<u32>>;
+pub type InternalStateMap = HashMap<Vec<i32>, Vec<u32>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PinIdx(pub usize);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChipIdx(pub usize);
 
 #[derive(Debug)]
@@ -61,6 +64,20 @@ impl SimPin {
 pub struct SimChip {
 	pub chip_type: ChipType,
 	pub id: i32,
+	/// This chip's name, as declared by its `ChipDescription` (e.g. "NAND",
+	/// "7-Segment Driver", a player's custom chip name). Shared -- an
+	/// `Arc<str>` clone is a refcount bump, not a fresh allocation -- via
+	/// the per-build interner in [`build_recursive`], so every instance of
+	/// the same chip type (there can be hundreds in a busy project) points
+	/// at the exact same heap allocation instead of each carrying its own
+	/// owned `String`. Primarily exists for [`crate::gate_op::caching`],
+	/// which keys its combinational-chip LUT cache by name.
+	pub name: Arc<str>,
+	/// Mirrored from `ChipDescription::should_be_cached` at build time
+	/// (same pattern as `is_builtin`): whether this chip has opted into
+	/// caching above the automatic input-bit budget. See
+	/// [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`].
+	pub should_be_cached: bool,
 	/// Some builtin chips (RAM, ROM, displays...) need internal state for
 	/// memory; also used for other arbitrary chip-specific data.
 	pub internal_state: Vec<u32>,
@@ -112,7 +129,7 @@ pub struct Simulator {
 	elapsed_seconds_old: f64,
 
 	/// Key-chip state: which key characters are currently held (set by host).
-	pub held_keys: std::collections::HashSet<char>,
+	pub held_keys: HashSet<char>,
 	/// KeyMods-chip state: current modifier keys, as a `key_mods_bits` bitmask
 	/// (set by host).
 	pub key_modifiers: u32,
@@ -123,7 +140,51 @@ pub struct Simulator {
 	/// unlisted pin is driven as a connected LOW, exactly like an untouched
 	/// switch sitting at off. Cleared when the viewer switches to another
 	/// root chip and carried across in-place rebuilds.
-	pub driven_inputs: std::collections::HashMap<i32, PinState>,
+	pub driven_inputs: HashMap<i32, PinState>,
+
+	/// Combinational-chip LUT cache + the "use caching at all" toggle --
+	/// see [`crate::gate_op`]. Public so the viewer's
+	/// customization checkbox (`ProjectDescription::prefs_use_caching`,
+	/// applied via `viewer::sim_thread::SimHandle::set_use_caching`) can
+	/// flip `caching.use_caching` directly through the shared-simulator
+	/// lock, same as every other prefs-driven field on this struct.
+	pub caching: CachingState,
+	/// Small log of cache-build events (`"Cached chip 'Foo': N rows"`),
+	/// appended to by [`crate::gate_op::recalculate_cached_luts`]
+	/// and drained once per frame by the main thread -- terminal logging
+	/// via `println!` happens right where it's pushed; this is the
+	/// separate copy that ends up as the in-game status toast (see
+	/// `viewer::sim_thread::SimHandle::drain_cache_log`).
+	pub cache_log: Vec<String>,
+}
+
+impl Default for Simulator {
+	fn default() -> Self {
+		Self {
+			pins: Vec::new(),
+			chips: Vec::new(),
+			root: ChipIdx::default(), // assuming ChipIdx has Default
+
+			simulation_frame: 0,
+			steps_per_clock_transition: 0,
+
+			needs_order_pass: false,
+			can_dynamic_reorder_this_frame: false,
+
+			pcg_rng_state: 0,
+			rng: StdRng::from_entropy(), // or StdRng::seed_from_u64(0) for deterministic
+
+			start_time: Instant::now(), // or Instant::now() for current time
+			elapsed_seconds_old: 0.0,
+
+			held_keys: HashSet::new(),
+			key_modifiers: 0,
+			driven_inputs: HashMap::new(),
+
+			caching: CachingState::default(), // assuming CachingState has Default
+			cache_log: Vec::new(),
+		}
+	}
 }
 
 /// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's
@@ -146,7 +207,8 @@ impl Simulator {
 	pub fn build(root_desc: &ChipDescription, library: &ChipLibrary) -> Self {
 		let mut pins = Vec::new();
 		let mut chips = Vec::new();
-		let root = build_recursive(root_desc, library, -1, None, &mut pins, &mut chips);
+		let mut interner: HashMap<String, Arc<str>> = HashMap::new();
+		let root = build_recursive(root_desc, library, -1, None, &mut pins, &mut chips, &mut interner);
 
 		Simulator {
 			pins,
@@ -160,9 +222,11 @@ impl Simulator {
 			rng: StdRng::from_entropy(),
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
-			held_keys: std::collections::HashSet::new(),
+			held_keys: HashSet::new(),
 			key_modifiers: 0,
-			driven_inputs: std::collections::HashMap::new(),
+			driven_inputs: HashMap::new(),
+			caching: CachingState::default(),
+			cache_log: Vec::new(),
 		}
 	}
 
@@ -176,6 +240,23 @@ impl Simulator {
 
 	pub fn pin(&self, idx: PinIdx) -> &SimPin {
 		&self.pins[idx.0]
+	}
+
+	/// Mutable counterpart to [`Self::pin`] -- needed by
+	/// [`crate::gate_op::caching`] to drive a chip's input pins through
+	/// every possible combination while sweeping a truth table, and to
+	/// write a cache hit's looked-up outputs straight onto a chip's
+	/// output pins.
+	pub(crate) fn pin_mut(&mut self, idx: PinIdx) -> &mut SimPin {
+		&mut self.pins[idx.0]
+	}
+
+	/// Mutable counterpart to [`Self::chip`]. Currently only used by tests;
+	/// kept alongside `pin_mut` for symmetry and because
+	/// [`crate::gate_op::caching`] is the kind of code that tends to want it.
+	#[allow(dead_code)]
+	pub(crate) fn chip_mut(&mut self, idx: ChipIdx) -> &mut SimChip {
+		&mut self.chips[idx.0]
 	}
 
 	/// Find a direct subchip of `chip` by its saved instance id. Used by
@@ -291,7 +372,7 @@ impl Simulator {
 	}
 
 	/// Recursively propagate signals through this chip and its subchips.
-	fn step_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
+	pub(crate) fn step_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
 		self.propagate_inputs(chip_idx);
 
 		let num_sub = self.chips[chip_idx.0].sub_chips.len();
@@ -310,16 +391,55 @@ impl Simulator {
 				}
 			}
 
-			if self.chips[next_sub_chip.0].is_builtin {
-				self.process_builtin_chip(next_sub_chip, audio);
-			} else {
-				self.step_chip(next_sub_chip, audio);
-			}
-
+			self.step_sub_chip(next_sub_chip, audio);
 			self.propagate_outputs(next_sub_chip);
 
 			i -= 1;
 		}
+	}
+
+	/// Evaluates one direct subchip: builtins dispatch in O(1) as always;
+	/// a combinational custom chip takes the cached-LUT fast path once
+	/// [`Self::caching`] has one for it (mirrors
+	/// `Simulator.ProcessCachedChip`/`RecalculateCachedLUTs`); anything
+	/// else falls back to a full recursive [`Self::step_chip`].
+	fn step_sub_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
+		if self.chips[chip_idx.0].is_builtin {
+			self.process_builtin_chip(chip_idx, audio);
+			return;
+		}
+
+		if self.caching.use_caching {
+			let name = Arc::clone(&self.chips[chip_idx.0].name);
+
+			if self.caching.combinational_chip_caches.contains_key(name.as_ref()) {
+				let caching = std::mem::take(&mut self.caching);
+				let hit = crate::gate_op::process_cached_chip(self, &caching, chip_idx);
+				self.caching = caching;
+				if hit {
+					return;
+				}
+				// A tri-state input declined the lookup (never enumerated
+				// into the table) -- fall through to a real step below.
+			} else if !self.caching.chips_known_to_not_be_combinational.contains(name.as_ref()) {
+				let mut caching = std::mem::take(&mut self.caching);
+				let mut log = std::mem::take(&mut self.cache_log);
+				crate::gate_op::recalculate_cached_luts(self, &mut caching, chip_idx, &mut log);
+				self.caching = caching;
+				self.cache_log = log;
+
+				if self.caching.combinational_chip_caches.contains_key(name.as_ref()) {
+					let caching = std::mem::take(&mut self.caching);
+					let hit = crate::gate_op::process_cached_chip(self, &caching, chip_idx);
+					self.caching = caching;
+					if hit {
+						return;
+					}
+				}
+			}
+		}
+
+		self.step_chip(chip_idx, audio);
 	}
 
 	/// Like `step_chip`, but also determines (and records) a good traversal
@@ -905,7 +1025,7 @@ impl Simulator {
 /// Pin state snapshot keyed by (owner-chip id-path, pin id, is_input).
 /// Used by `rebuild_sim` to carry live wire/signal states across rebuilds
 /// so the renderer doesn't see a frame of DISCONNECTED defaults.
-pub type PinStateMap = std::collections::HashMap<Vec<i32>, PinState>;
+pub type PinStateMap = HashMap<Vec<i32>, PinState>;
 
 /// Recursively build the flat pin/chip arenas from a ChipDescription tree.
 fn build_recursive(
@@ -915,24 +1035,28 @@ fn build_recursive(
 	internal_state_override: Option<&[u32]>,
 	pins: &mut Vec<SimPin>,
 	chips: &mut Vec<SimChip>,
+	interner: &mut HashMap<String, Arc<str>>,
 ) -> ChipIdx {
 	// Recursively create subchips first.
 	let mut sub_chip_indices = Vec::with_capacity(desc.sub_chips.len());
 	for sub_desc in &desc.sub_chips {
 		let full_desc = library.get(&sub_desc.name);
-		let idx = build_recursive(full_desc, library, sub_desc.id, sub_desc.internal_data.as_deref(), pins, chips);
+		let idx = build_recursive(full_desc, library, sub_desc.id, sub_desc.internal_data.as_deref(), pins, chips, interner);
 		sub_chip_indices.push(idx);
 	}
 
 	let is_builtin = desc.chip_type != ChipType::Custom;
 
 	let internal_state = build_internal_state(desc.chip_type, internal_state_override);
+	let name = intern_name(interner, &desc.name);
 
 	// Reserve the chip's own slot first so pins can point back to it.
 	let chip_idx = ChipIdx(chips.len());
 	chips.push(SimChip {
 		chip_type: desc.chip_type,
 		id: sub_chip_id,
+		name,
+		should_be_cached: desc.should_be_cached,
 		internal_state,
 		is_builtin,
 		input_pins: Vec::new(),
@@ -965,6 +1089,16 @@ fn build_recursive(
 	}
 
 	chip_idx
+}
+
+/// Shares one `Arc<str>`
+fn intern_name(interner: &mut HashMap<String, Arc<str>>, name: &str) -> Arc<str> {
+	if let Some(existing) = interner.get(name) {
+		return Arc::clone(existing);
+	}
+	let arc: Arc<str> = Arc::from(name);
+	interner.insert(name.to_string(), Arc::clone(&arc));
+	arc
 }
 
 fn connect(chip_idx: ChipIdx, source: PinAddress, target: PinAddress, pins: &mut [SimPin], chips: &mut [SimChip]) {

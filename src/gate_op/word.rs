@@ -13,7 +13,7 @@ pub trait WireWord: Clone + Eq + Send + Sync + 'static {
 	fn unpack(self, out: &mut [LogicState]);
 	/// This word's value as a `Vec` index. Only meaningful for word sizes small
 	/// enough to serve as a dense lookup-table index (see `WideWord`).
-	fn as_index(self) -> usize;
+	fn as_index(&self) -> usize;
 }
 
 macro_rules! impl_wire_word {
@@ -28,8 +28,8 @@ macro_rules! impl_wire_word {
 					*slot = LogicState::from_bool((self >> i) & 1 == 1);
 				}
 			}
-			fn as_index(self) -> usize {
-				self as usize
+			fn as_index(&self) -> usize {
+				*self as usize
 			}
 		}
 	)*};
@@ -46,10 +46,7 @@ pub struct WideWord {
 
 impl WireWord for WideWord {
 	fn pack(bits: &[LogicState]) -> Self {
-		let words = bits
-			.chunks(64)
-			.map(|chunk| chunk.iter().enumerate().fold(0u64, |acc, (i, b)| acc | ((b.is_high() as u64) << i)))
-			.collect();
+		let words = bits.chunks(64).map(|chunk| chunk.iter().enumerate().fold(0u64, |acc, (i, b)| acc | ((b.is_high() as u64) << i))).collect();
 		WideWord { bits: words }
 	}
 	fn unpack(self, out: &mut [LogicState]) {
@@ -58,7 +55,7 @@ impl WireWord for WideWord {
 			*slot = LogicState::from_bool((word >> (i % 64)) & 1 == 1);
 		}
 	}
-	fn as_index(self) -> usize {
+	fn as_index(&self) -> usize {
 		unreachable!("WideWord inputs are too wide for a dense Lut; use Native/NativeList instead")
 	}
 }

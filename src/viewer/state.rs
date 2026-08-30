@@ -220,6 +220,7 @@ pub(crate) struct DeleteDragSweep {
 
 /// State specific to viewing/simulating one open project's chip, split out
 /// so [`crate::viewer::app::App`] can hold either this or the menu depending on `Screen`.
+#[derive(Default)]
 pub(crate) struct ViewerState {
 	pub(crate) project_name: String,
 	pub(crate) library: ChipLibrary,
@@ -436,6 +437,12 @@ pub(crate) struct ViewerState {
 	/// Undo/redo history for the edited chip (`DevChipInstance`'s
 	/// `UndoController`). Cleared wherever the edited root changes.
 	pub(crate) undo: crate::viewer::undo::UndoController,
+
+	/// Latest "combinational chip cached" message drained from the sim
+	/// thread's [`crate::gate_op::caching`] log, waiting to be surfaced as
+	/// the transient status toast (see `viewer::frame::update_viewer_sim`
+	/// and `viewer::events::App::redraw`). `None` most frames.
+	pub(crate) pending_cache_status: Option<String>,
 }
 
 impl ViewerState {
@@ -505,6 +512,7 @@ impl ViewerState {
 			wire_edit: None,
 			view_stack: Vec::new(),
 			undo: Default::default(),
+			pending_cache_status: None,
 		};
 		v.sync_sim_clock_pref();
 		v

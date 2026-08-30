@@ -573,6 +573,15 @@ pub struct ChipDescription {
 	/// This chip's body footprint as saved on disk (`Size`), in world/grid
 	/// units.
 	pub size: Vec2,
+	/// The "Chip Caching: On/Off" opt-in flag (`ChipCaching` on disk). Only
+	/// matters once a chip's total input width climbs past
+	/// [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING`]
+	/// (below that, combinational chips are always cached automatically);
+	/// setting this lets a bigger combinational chip opt into caching up
+	/// to [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`]
+	/// bits, at the cost of the memory/build-time a bigger truth table
+	/// needs. Defaults to `false`.
+	pub should_be_cached: bool,
 }
 
 impl ChipDescription {
@@ -589,6 +598,7 @@ impl ChipDescription {
 			name_location: NameLocation::default(),
 			dls_version: None,
 			size: Vec2::default(),
+			should_be_cached: false,
 		}
 	}
 }

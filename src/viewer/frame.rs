@@ -193,9 +193,19 @@ fn update_viewer_sim(v: &mut ViewerState) {
 	v.sync_sim_clock_pref();
 	v.sim.set_paused(v.prefs.prefs_sim_paused);
 	v.sim.set_target_ticks_per_second(v.target_ticks_per_second() as u32);
+	v.sim.set_use_caching(v.prefs.prefs_use_caching);
 
 	v.paused_step_counter = v.sim.paused_step_counter();
 	v.sim_pacing.avg_ticks_per_sec = v.sim.avg_ticks_per_sec();
+
+	// Surface the newest cache-build message (if any) queued since last
+	// frame as the transient status toast -- small in-game "popup"
+	// logging for when a combinational chip's truth table gets (re)built.
+	// Only the latest line wins if several built the same frame, so a
+	// busy first frame doesn't queue up a stack of toasts.
+	if let Some(msg) = v.sim.drain_cache_log().into_iter().last() {
+		v.pending_cache_status = Some(msg);
+	}
 }
 
 /// Rebuilds the viewer's UI stack from live state, bottom-to-top: canvas

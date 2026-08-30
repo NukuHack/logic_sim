@@ -150,6 +150,8 @@ struct JsonChipDescription {
 	wires: Vec<JsonWireDescription>,
 	#[serde(rename = "Displays", default)]
 	displays: Option<Vec<JsonDisplayDescription>>,
+	#[serde(rename = "ChipCaching", default)]
+	should_be_cached: bool,
 }
 
 /// Parse a single chip's JSON text (the contents of e.g. `Chips/NOT.json`)
@@ -166,6 +168,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 	desc.name_location = raw.name_location;
 	desc.size = raw.size;
 	desc.dls_version = raw.dls_version.clone();
+	desc.should_be_cached = raw.should_be_cached;
 
 	desc.input_pins = raw
 		.input_pins
@@ -254,6 +257,7 @@ fn serialize_chip_description_impl(desc: &ChipDescription, library: Option<&Chip
 		// *is* current-format data. Writing anything older would make the
 		// loader re-apply the one-shot migrations on every load.
 		dls_version: Some(crate::DLS_VERSION.to_string()),
+		should_be_cached: desc.should_be_cached,
 		name: desc.name.clone(),
 		name_location: desc.name_location,
 		chip_type: desc.chip_type,
@@ -460,6 +464,13 @@ impl ChipCollection {
 	}
 }
 
+/// Serde default for a `bool` field that should default to `true` when
+/// absent from an on-disk file (plain `#[serde(default)]` would give
+/// `false`) -- used by `Prefs_UseCaching`.
+fn default_true() -> bool {
+	true
+}
+
 /// Full mirror of `DLS.Description.ProjectDescription` -- the per-project
 /// metadata file saved at `<project>/ProjectDescription.json`. Field names
 /// match the original exactly (via `serde(rename)`) so files written by
@@ -488,15 +499,12 @@ pub struct ProjectDescription {
 	pub prefs_snapping: i32,
 	#[serde(rename = "Prefs_StraightWires", default)]
 	pub prefs_straight_wires: i32,
-	/// Whether `CanCompleteWireConnection`'s bit-width check gates wire
-	/// completion at all. Defaults to `true` (on), matching the
-	/// previously-hardcoded always-on behaviour; exposed in the
-	/// preferences UI so it can be turned off to allow connecting
-	/// mismatched-width pins.
 	#[serde(rename = "Prefs_CanCompleteWireConnection", default)]
 	pub prefs_can_complete_wire_connection: i32,
 	#[serde(rename = "Prefs_SimPaused", default)]
 	pub prefs_sim_paused: bool,
+	#[serde(rename = "Prefs_UseCaching", default = "default_true")]
+	pub prefs_use_caching: bool,
 	#[serde(rename = "Prefs_SimTargetStepsPerSecond", default)]
 	pub prefs_sim_target_steps_per_second: i32,
 	#[serde(rename = "Prefs_SimStepsPerClockTick", default)]

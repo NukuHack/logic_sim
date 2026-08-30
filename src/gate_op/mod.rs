@@ -5,9 +5,14 @@
 //! - `word`: `WireWord`, the packed-integer representation pins are converted to/from.
 //! - `eval`: `OptimizedGate` and its implementations (`Lut`, `Native`, `NativeList`) --
 //!   the actual fast path, usable today.
-//! - `caching`: a not-yet-compiling sketch of *when* to build/use a `Lut` per
-//!   combinational chip. Kept separate from `eval` since it's pseudocode, not
-//!   working code -- see its module doc for what's missing.
+//! - `caching`: *when* to build/use a `Lut` per combinational chip --
+//!   `Simulator::step_sub_chip` (in `sim.rs`) calls straight into this
+//!   module's `process_cached_chip`/`recalculate_cached_luts` for every
+//!   non-builtin subchip it steps. Toggled at runtime by
+//!   `Simulator::caching.use_caching`, itself driven by the customization
+//!   checkbox (`ProjectDescription::prefs_use_caching`, see
+//!   `render::editor_ui::CACHING_OPTIONS`) via
+//!   `viewer::sim_thread::SimHandle::set_use_caching`.
 
 mod caching;
 mod eval;
@@ -19,8 +24,3 @@ pub use caching::{
 };
 pub use eval::{Lut, Native, NativeList, OptimizedGate};
 pub use word::{WideWord, WireWord};
-
-// TODO: add a "Chip Caching: On/Off" checkbox to the customization menu (default off)
-// that toggles a chip between the plain subchip walk and the `Lut`-backed path above.
-// For some circuits "off" and "disabled" behave the same; for others (see caching.rs)
-// they don't, since caching changes *when* outputs settle, not just how fast.

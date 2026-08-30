@@ -69,6 +69,7 @@ const PASS_TIME_CHECK_INTERVAL: u64 = 64;
 /// Control plane shared between the main thread and the worker. Plain
 /// atomics with relaxed ordering -- every value stands alone, so the
 /// worst a torn ordering can do is apply a change one worker pass late.
+#[derive(Default)]
 struct SimControls {
 	stop: AtomicBool,
 	paused: AtomicBool,
@@ -111,6 +112,7 @@ fn lock_audio(audio: &crate::audio::SharedAudioState) -> std::sync::MutexGuard<'
 /// Main-thread handle over the simulated world: owns the shared
 /// `Simulator`, the worker thread, and the control plane. Dropping it
 /// stops the worker and joins it.
+#[derive(Default)]
 pub(crate) struct SimHandle {
 	sim: Arc<Mutex<Simulator>>,
 	controls: Arc<SimControls>,
@@ -227,6 +229,24 @@ impl SimHandle {
 
 	pub(crate) fn paused_step_counter(&self) -> u32 {
 		self.controls.step_counter.load(Ordering::Relaxed)
+	}
+
+	// ---- Combinational-chip caching (see `crate::gate_op::caching`) ----
+
+	/// Flips the shared simulator's "use cached truth tables for
+	/// combinational chips" toggle -- the customization checkbox's
+	/// effect, applied every frame from `v.prefs.prefs_use_caching`
+	/// exactly like `set_paused`/`set_target_ticks_per_second` above.
+	pub(crate) fn set_use_caching(&self, enabled: bool) {
+		self.lock().caching.use_caching = enabled;
+	}
+
+	/// Takes every cache-build log line queued since the last drain (see
+	/// `Simulator::cache_log`) -- small terminal/toast logging for when a
+	/// combinational chip's LUT gets (re)built. Cheap to call every frame:
+	/// almost always empty.
+	pub(crate) fn drain_cache_log(&self) -> Vec<String> {
+		std::mem::take(&mut self.lock().cache_log)
 	}
 }
 

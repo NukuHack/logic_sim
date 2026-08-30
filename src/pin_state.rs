@@ -99,6 +99,7 @@ impl PinState {
 	/// This is the whole point of `PinState` being an enum rather than a
 	/// bare packed integer -- a value can report its own width.
 	#[inline(always)]
+	#[allow(clippy::len_without_is_empty)]
 	pub const fn len(self) -> u32 {
 		match self {
 			PinState::Bit1(_) => 1,
