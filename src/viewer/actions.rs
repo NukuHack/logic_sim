@@ -221,6 +221,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		EditorAction::CustomizeConfirm => customize_flow::confirm_customize(v, status),
 		EditorAction::CustomizeCycleNameLocation => customize_flow::cycle_name_location(v),
 		EditorAction::CustomizePickColour(i) => customize_flow::pick_colour(v, i),
+		EditorAction::CustomizeToggleForceCache => customize_flow::toggle_force_cache(v),
 		EditorAction::CustomizeGrabDisplayMove(i) => customize_flow::start_move_display(v, i),
 		EditorAction::CustomizeGrabDisplayScale(i) => customize_flow::start_scale_display(v, i),
 		EditorAction::CustomizeResizeStart(corner) => customize_flow::start_resize(v, corner),

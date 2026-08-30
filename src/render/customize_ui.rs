@@ -266,7 +266,10 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 	// Name position wheel
 	let name_label = NAME_LOCATION_LABELS[ctx.draft.name_location.to_int() as usize % NAME_LOCATION_LABELS.len()];
 	ui_kit::add_button(frame, ui, UiRect::new(inner_x, y, inner_w, BTN_H), name_label, EditorAction::CustomizeCycleNameLocation, true, None);
-	y += BTN_H + GAP + 4.0;
+	y += BTN_H + GAP;
+
+	y = build_force_cache_row(ctx, frame, ui, inner_x, inner_w, y);
+	y += 4.0;
 
 	// Colour swatches (two rows of four) + hex field
 	let swatch_w = (inner_w - GAP * 3.0) / 4.0;
@@ -334,6 +337,70 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 	}
 
 	list_rect
+}
+
+/// "Force chip caching" checkbox row -- a small tick box plus label,
+/// mirroring `ChipCustomizationMenu`'s caching checkbox. Bound to
+/// `ChipDescription::should_be_cached` (only meaningful once this chip's
+/// combined input width climbs past the always-cached auto budget); a
+/// hint line underneath spells out roughly what ticking it will cost, so
+/// the choice isn't blind. Always shown, even under the auto-cache
+/// budget, so a chip that later grows a wider input keeps its opt-in
+/// intact from the start.
+fn build_force_cache_row(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, inner_x: f32, inner_w: f32, y: f32) -> f32 {
+	use crate::gate_op::{MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
+
+	let box_size: f32 = 18.0;
+	let row_h: f32 = box_size.max(18.0);
+	let box_rect = UiRect::new(inner_x, y, box_size, box_size);
+	let checked = ctx.draft.should_be_cached;
+
+	ui_kit::fill_rect(frame, ui, box_rect, [0.09, 0.09, 0.1, 1.0]);
+	frame.geometry.add_rect(ui_kit::to_world(box_rect.centre(), ui.vw, ui.vh), Vec2::new(box_size - 3.0, box_size - 3.0), [0.4, 0.4, 0.45, 1.0]);
+	if checked {
+		frame.geometry.add_rect(
+			ui_kit::to_world(box_rect.centre(), ui.vw, ui.vh),
+			Vec2::new(box_size - 8.0, box_size - 8.0),
+			[0.24, 0.82, 0.41, 1.0],
+		);
+	}
+
+	let label_x = inner_x + box_size + 8.0;
+	ui_kit::add_label(
+		frame,
+		ui,
+		Vec2::new(label_x + (inner_w - box_size - 8.0) / 2.0, box_rect.centre().y),
+		inner_w - box_size - 8.0,
+		"Force chip caching",
+		[0.9, 0.9, 0.92, 1.0],
+		14.0,
+	);
+
+	// The whole row toggles, not just the tick box itself.
+	let hit_rect = UiRect::new(inner_x, y, inner_w, row_h);
+	frame.buttons.push(EditorButton { rect: hit_rect, action: EditorAction::CustomizeToggleForceCache, enabled: true });
+
+	let mut next_y = y + row_h + 4.0;
+
+	let input_bits = total_input_bits(ctx.draft);
+	if input_bits > MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING {
+		let hint = if input_bits <= MAX_NUM_INPUT_BITS_WHEN_USER_CACHING {
+			format!("{input_bits} input bits -- above the auto-cache limit ({MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING}); tick to cache anyway.")
+		} else {
+			format!("{input_bits} input bits -- too wide to cache even with this on ({MAX_NUM_INPUT_BITS_WHEN_USER_CACHING} max).")
+		};
+		ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, next_y + 8.0), inner_w, &hint, [0.6, 0.6, 0.65, 1.0], 12.0);
+		next_y += 20.0;
+	}
+
+	next_y
+}
+
+/// Total input-pin width in bits for a not-yet-simulated draft --
+/// mirrors `gate_op::caching::calculate_num_input_bits`, which needs a
+/// live `Simulator`/`ChipIdx` this UI-only draft doesn't have.
+fn total_input_bits(draft: &ChipDescription) -> u32 {
+	draft.input_pins.iter().map(|p| p.bit_count.to_int() as u32).sum()
 }
 
 fn same_rgb(a: Rgba, b: Rgba) -> bool {

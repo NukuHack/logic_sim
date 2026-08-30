@@ -183,6 +183,16 @@ pub enum EditorAction {
 	/// Customize workspace: set the body colour to palette swatch
 	/// `usize` (an index into `theme::COLORS`) and refresh the hex field.
 	CustomizePickColour(usize),
+	/// Customize workspace: flip the "Force chip caching" checkbox
+	/// (`ChipDescription::should_be_cached`) -- the user's opt-in for
+	/// caching this chip's truth table once its input width climbs past
+	/// [`crate::gate_op::MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING`]. Written
+	/// through onto the library entry on Confirm, same as every other
+	/// customize field, so the LUT itself is only ever (re)built lazily
+	/// the next time the chip is actually simulated -- on save (which
+	/// rebuilds the sim) or on opening a circuit whose subchip already
+	/// has the flag set but hasn't been cached yet this session.
+	CustomizeToggleForceCache,
 	/// Customize preview: press on placed display `usize`'s body to pick
 	/// it up (click again inside the preview to drop, Delete removes it,
 	/// Escape puts it back).
