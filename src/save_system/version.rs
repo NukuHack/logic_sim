@@ -5,14 +5,7 @@
 
 use std::fmt;
 
-/// The current version of this port. Bump this (and update
-/// `Cargo.toml`'s `version` alongside it, if desired) on release.
-///
-/// Kept in step with the upstream C# game's `Main.DLSVersion` at the time
-/// this port was written; the two don't have to move in lockstep going
-/// forward, but starting aligned means every file in the four sample
-/// projects (`DLSVersion_LastSaved: "2.1.6"` / `"2.1.4"`) is already
-/// compatible out of the box.
+/// The current version of this port.
 pub const DLS_VERSION: Version = Version::new(2, 1, 6);
 
 /// The oldest project format this port promises to be able to open.
@@ -30,13 +23,11 @@ impl Version {
 		Self { major, minor, patch }
 	}
 
-	/// Mirrors `Main.Version.ToInt()`. Kept for parity with the original
-	/// (and because on-disk/UI code may want a single comparable integer),
-	/// but note that ordinary `Version` comparisons (`<`, `>`, ...) don't
-	/// need this -- the derived `Ord` already compares major/minor/patch
-	/// lexicographically, which is correct even in the (very unlikely)
-	/// case a minor or patch component reaches three digits, unlike this
-	/// packed-integer form.
+	/// Mirrors `Main.Version.ToInt()`. Kept for parity with the original (and because on-disk/UI
+	/// code may want a single comparable integer), but note that ordinary `Version` comparisons
+	/// (`<`, `>`, ...) don't need this -- the derived `Ord` already compares major/minor/patch
+	/// lexicographically, which is correct even in the (very unlikely) case a minor or patch
+	/// component reaches three digits, unlike this packed-integer form.
 	pub fn to_int(self) -> i64 {
 		self.major as i64 * 100_000 + self.minor as i64 * 1_000 + self.patch as i64
 	}

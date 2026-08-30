@@ -10,16 +10,11 @@ use crate::render::scene::placed::PlacedSubChip;
 use crate::structs::Vec2;
 
 /// One real pin (never a wire tap -- see `WireTapHit` for that) hit by
-/// `hit_test_sub_chip_pin`/`hit_test_any_pin`: either a placed subchip's
-/// own pin or one of the current chip's own boundary dev-pins.
-/// `owner_id`/`pin_id` are exactly what `PinAddress::new` needs to
-/// reference this pin -- for a boundary dev-pin both are the pin's own
-/// id, the same self-owned convention `resolve_pin_colour`/`find_pin`
-/// already rely on. `is_input` is this pin's literal kind (matches
-/// `hit_test_dev_pin`'s existing convention); `is_boundary` distinguishes
-/// a chip's own dev-pin from a subchip's, since the two need opposite
-/// treatment when deciding which end of a new wire a pin can be (see
-/// `is_wire_source`).
+/// `hit_test_sub_chip_pin`/`hit_test_any_pin`: either a placed subchip's own pin or one of
+/// the current chip's own boundary dev-pins. `is_input` is this pin's literal kind (matches
+/// `hit_test_dev_pin`'s existing convention); `is_boundary` distinguishes a chip's own dev-
+/// pin from a subchip's, since the two need opposite treatment when deciding which end of a
+/// new wire a pin can be (see `is_wire_source`).
 #[derive(Debug, Clone, Copy)]
 pub struct PinHit {
 	pub owner_id: i32,
@@ -31,13 +26,7 @@ pub struct PinHit {
 }
 
 impl PinHit {
-	/// Whether this pin can be a new wire's *source* end. A subchip's
-	/// output pin drives a wire, same as one of the owning chip's own
-	/// boundary *input* dev-pins does from the inside (it's an input
-	/// from outside the chip, but the thing that actually feeds the
-	/// internal circuit) -- so `is_boundary` flips which literal kind
-	/// counts as the source side. Exactly the opposite of
-	/// `is_wire_target`.
+	/// Whether this pin can be a new wire's *source* end.
 	pub fn is_wire_source(&self) -> bool {
 		self.is_input == self.is_boundary
 	}
@@ -72,14 +61,8 @@ pub(crate) fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCou
 	point_in_rounded_rect(point, pos, size, radius, round_left, !round_left)
 }
 
-/// Returns the bit index (0-based) of whichever of an input dev-pin's
-/// individual clickable cells `point` landed on, or `None` if it missed
-/// every cell. `pos` is the dev-pin's own saved position, the same value
-/// passed to `draw_input_dev_pin_body`. Bit-0's cell is the top-left of
-/// the grid (see `layout::input_bit_cell_offsets`), matching the same
-/// bit-index convention `PinState::bit` uses --
-/// callers wiring up an actual click-to-toggle handler can flip bit
-/// `bit_index` of the pin's state directly.
+/// Returns the bit index (0-based) of whichever of an input dev-pin's individual clickable
+/// cells `point` landed on, or `None` if it missed every cell.
 pub fn hit_test_input_dev_pin_bit(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> Option<u32> {
 	let cell_size = Vec2::new(layout::INPUT_BIT_CELL_SIZE, layout::INPUT_BIT_CELL_SIZE);
 	for (bit_index, offset) in layout::input_bit_cell_offsets(bit_count).into_iter().enumerate() {

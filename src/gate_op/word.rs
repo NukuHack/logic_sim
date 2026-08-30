@@ -1,3 +1,7 @@
+//! Packs gate pin states into fixed-width integers for fast evaluation.
+//! Defines the `WireWord` trait and its implementations for the built-in
+//! integer types.
+
 use crate::pin_state::LogicState;
 
 /// A gate's pins packed into one integer, sized to fit that gate exactly (a 4-bit

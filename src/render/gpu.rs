@@ -236,13 +236,12 @@ impl Renderer {
 		});
 	}
 
-	/// Lays out `labels` (world space, via `camera`) into glyphon text
-	/// buffers and uploads any newly-needed glyphs into the atlas. Must be
-	/// called before `begin_render_pass` (glyphon's `prepare` touches the
-	/// device/queue directly, not a render pass), and the returned buffers
-	/// must be kept alive until after `text_renderer.render(...)` is called
-	/// -- `TextArea` borrows them, so `render()` builds them, prepares, and
-	/// draws all in one scope rather than stashing them on `self`.
+	/// Lays out `labels` (world space, via `camera`) into glyphon text buffers and uploads any
+	/// newly-needed glyphs into the atlas. Must be called before `begin_render_pass` (glyphon's
+	/// `prepare` touches the device/queue directly, not a render pass), and the returned buffers
+	/// must be kept alive until after `text_renderer.render(...)` is called -- `TextArea`
+	/// borrows them, so `render()` builds them, prepares, and draws all in one scope rather than
+	/// stashing them on `self`.
 	fn prepare_text(&mut self, labels: &[TextLabel], camera: &Camera) -> Vec<TextBuffer> {
 		self.text_viewport.update(&self.queue, Resolution { width: self.config.width, height: self.config.height });
 
@@ -305,28 +304,15 @@ impl Renderer {
 		buffers
 	}
 
-	/// Draws one frame from back to front, as an ordered stack of
-	/// `layers` (e.g. `[canvas, bottom_bar, flyout, ..., context_menu,
-	/// toast]` -- see `render::ui_stack`) -- each layer's own triangles
-	/// *and* text labels are fully drawn (as their own submitted GPU
-	/// pass) before the next layer's are even uploaded, so a later
-	/// layer's triangles reliably paint over an earlier layer's text, not
-	/// just its shapes. Compare the old single-`SceneGeometry` `render`,
-	/// which drew *all* triangles from every layer first and *all* text
-	/// second -- meaning any label, no matter which logical layer it
-	/// belonged to, always rendered on top of every triangle, including
-	/// e.g. a modal popup's own background that was meant to cover it.
-	///
-	/// Each layer is deliberately its own `queue.submit()` (rather than
-	/// one shared encoder/pass per frame) precisely so that layer *N*+1's
-	/// `prepare_text` call -- which uploads into the same glyphon
-	/// text-vertex buffer `prepare_text` reuses every call -- can't race
-	/// layer *N*'s still-unexecuted `text_renderer.render` draw command.
-	/// `wgpu::Queue` preserves strict submission order for everything
-	/// pushed through it (`write_buffer`/`write_texture` calls *and*
-	/// `submit()`s alike), so submitting layer *N* fully before even
-	/// preparing layer *N*+1's text guarantees layer *N*'s glyphs are
-	/// already consumed by the time they'd otherwise be overwritten.
+	/// Draws one frame from back to front, as an ordered stack of `layers` (e.g. Each layer is
+	/// deliberately its own `queue.submit()` (rather than one shared encoder/pass per frame)
+	/// precisely so that layer *N*+1's `prepare_text` call -- which uploads into the same
+	/// glyphon text-vertex buffer `prepare_text` reuses every call -- can't race layer *N*'s
+	/// still-unexecuted `text_renderer.render` draw command. `wgpu::Queue` preserves strict
+	/// submission order for everything pushed through it (`write_buffer`/`write_texture` calls
+	/// *and* `submit()`s alike), so submitting layer *N* fully before even preparing layer
+	/// *N*+1's text guarantees layer *N*'s glyphs are already consumed by the time they'd
+	/// otherwise be overwritten.
 	pub fn render(&mut self, layers: &[&SceneGeometry], camera: &Camera, clear_colour: [f32; 4]) -> Result<(), wgpu::SurfaceError> {
 		let camera_uniform = CameraUniform { view_proj: camera.view_proj_matrix() };
 		self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));

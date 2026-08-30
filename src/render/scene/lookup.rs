@@ -12,49 +12,31 @@ use crate::pin_state::LogicState;
 pub trait PinStateLookup {
 	fn is_high(&self, pin_owner_id: i32, pin_id: i32) -> Option<bool>;
 
-	/// Full tri-state logic level (low/high/disconnected) for this pin's
-	/// first bit, used by the renderer to pick a colour (see
-	/// `theme::state_colour`). Defaults to deriving `High`/`Low` from
-	/// `is_high` alone, so a lookup that can't distinguish "genuinely
-	/// disconnected" from "reads low" (like `AllLow`) never needs to
-	/// override this. `SimulatorPinState` overrides it to report real
-	/// disconnected pins as such rather than folding them into `Low`.
+	/// Full tri-state logic level (low/high/disconnected) for this pin's first bit, used by the
+	/// renderer to pick a colour (see `theme::state_colour`). `SimulatorPinState` overrides it
+	/// to report real disconnected pins as such rather than folding them into `Low`.
 	fn logic_state(&self, pin_owner_id: i32, pin_id: i32) -> Option<LogicState> {
 		self.is_high(pin_owner_id, pin_id).map(|high| if high { LogicState::High } else { LogicState::Low })
 	}
 
-	/// Same as `logic_state`, but for one specific bit of a multi-bit pin
-	/// (`bit_index` counting from 0, the same convention
-	/// `PinState::bit` uses), so a wire carrying more
-	/// than one bit can be drawn as that many individually-coloured
-	/// strands (see `draw_wires`) instead of a single "averaged" colour.
-	/// Defaults to `logic_state` regardless of `bit_index` -- correct for
-	/// any lookup that can't distinguish bits from each other (`AllLow`,
-	/// the fixed-state test doubles below), and overridden by
-	/// `SimulatorPinState` to report each bit's own real state.
+	/// Same as `logic_state`, but for one specific bit of a multi-bit pin (`bit_index` counting
+	/// from 0, the same convention `PinState::bit` uses), so a wire carrying more than one bit
+	/// can be drawn as that many individually-coloured strands (see `draw_wires`) instead of a
+	/// single "averaged" colour.
 	fn bit_logic_state(&self, pin_owner_id: i32, pin_id: i32, _bit_index: u32) -> Option<LogicState> {
 		self.logic_state(pin_owner_id, pin_id)
 	}
 
-	/// Raw `SimChip::internal_state` for the direct subchip identified by
-	/// `owner_id` (a `PlacedSubChip::id`), if one is currently simulated.
-	/// Used by the renderer to read the pixel/segment buffer behind a
-	/// display chip (7-segment/RGB/dot) -- mirrors `DisplayInstance.SimChip`
-	/// in the original, which caches the same lookup for drawing.
-	/// Defaults to `None`, which callers treat as "draw the display blank"
-	/// (matches `DrawDisplay`'s `sim == null` / `useSim == false` branches).
+	/// Raw `SimChip::internal_state` for the direct subchip identified by `owner_id` (a
+	/// `PlacedSubChip::id`), if one is currently simulated.
 	fn internal_state(&self, _owner_id: i32) -> Option<&[u32]> {
 		None
 	}
 
-	/// Descends into the simulation scope of the direct subchip identified
-	/// by `owner_id`, so addresses that were resolved against the *parent*
-	/// scope can keep resolving one level deeper (used when walking into a
-	/// custom chip's own embedded displays -- see
-	/// `render::scene::displays`). `None` means this lookup can't (or the
-	/// simulator doesn't) model that sub-scope; callers fall back to
-	/// drawing the nested content blank, mirroring the original's
-	/// `sim == null` branches.
+	/// Descends into the simulation scope of the direct subchip identified by `owner_id`, so
+	/// addresses that were resolved against the *parent* scope can keep resolving one level
+	/// deeper (used when walking into a custom chip's own embedded displays -- see
+	/// `render::scene::displays`).
 	fn enter_scope(&self, _owner_id: i32) -> Option<Box<dyn PinStateLookup + '_>> {
 		None
 	}

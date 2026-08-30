@@ -20,16 +20,13 @@ pub fn to_world(screen: Vec2, vw: f32, vh: f32) -> Vec2 {
 	Vec2::new(screen.x, vh - screen.y)
 }
 
-/// Re-maps geometry laid out in `to_world`'s fixed "pixel" space (the
-/// convention every `ui_kit`-based overlay builder draws in) into the
-/// world points that land on those *same pixels* when drawn through
-/// `camera`, which pans and zooms freely -- keeping overlays pinned to
-/// the screen (constant position and size in pixels) no matter how far
-/// the canvas underneath has been panned/zoomed, using one real render
-/// pass instead of needing a second camera/pipeline in `render::gpu`.
-///
-/// Text labels additionally divide their size by the zoom, since a label
-/// drawn at constant pixel size covers a proportionally smaller world rect.
+/// Re-maps geometry laid out in `to_world`'s fixed "pixel" space (the convention every
+/// `ui_kit`-based overlay builder draws in) into the world points that land on those *same
+/// pixels* when drawn through `camera`, which pans and zooms freely -- keeping overlays
+/// pinned to the screen (constant position and size in pixels) no matter how far the canvas
+/// underneath has been panned/zoomed, using one real render pass instead of needing a second
+/// camera/pipeline in `render::gpu`. Text labels additionally divide their size by the zoom,
+/// since a label drawn at constant pixel size covers a proportionally smaller world rect.
 pub fn pin_geometry_to_screen(mut geometry: SceneGeometry, camera: &Camera, vh: f32) -> SceneGeometry {
 	let to_screen_px = |world: Vec2| Vec2::new(world.x, vh - world.y); // inverse of `to_world`, which is its own inverse
 	for v in &mut geometry.triangles {

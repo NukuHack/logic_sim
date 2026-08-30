@@ -1,3 +1,7 @@
+//! Evaluation strategies for optimized gates, exposed behind the object-safe
+//! `OptimizedGate` trait so `SimChip` can store any gate width uniformly.
+//! Includes the precomputed-truth-table `Lut` fast path.
+
 use super::word::WireWord;
 use crate::pin_state::LogicState;
 use std::marker::PhantomData;

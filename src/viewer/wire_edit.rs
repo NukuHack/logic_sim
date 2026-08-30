@@ -1,10 +1,7 @@
-//! Wire edit mode (`ChipInteractionController`'s `wireToEdit` family):
-//! right-click a wire → "Edit", then its bend points become draggable --
-//! clicking the wire's line inserts a new bend there, dragging moves it
-//! (grid-snapped / straightened like placement), Delete removes the
-//! selected bend, and Enter/Escape/empty-click leaves. Every committed
-//! change lands in undo as a before/after wire-list snapshot, so
-//! dependent wires' renumbered attachment indices restore exactly.
+//! Wire edit mode (`ChipInteractionController`'s `wireToEdit` family): right-click a wire →
+//! "Edit", then its bend points become draggable -- clicking the wire's line inserts a new
+//! bend there, dragging moves it (grid-snapped / straightened like placement), Delete removes
+//! the selected bend, and Enter/Escape/empty-click leaves.
 
 use crate::description::{ChipDescription, WireConnectionType};
 use crate::render::layout;

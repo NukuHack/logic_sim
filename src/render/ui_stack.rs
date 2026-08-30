@@ -1,17 +1,10 @@
 //! The UI layer stack: an ordered list of immediate-mode layers that everything on screen is
 //! built from, replacing the old fixed `[world, ui_overlay, context_menu]` triple plus the
-//! hand-coded priority chains over six separate `last_*_buttons` lists. Layers are pushed
-//! bottom-to-top each frame (canvas first, popups last); rendering walks them front-to-back so
-//! every layer's triangles *and* text composite whole over the layer beneath it (a layer can never
-//! have its text painted over by an earlier layer's shapes -- the bug that motivated this). Input
-//! is offered to the stack top-first via [`UiStack::dispatch_click`] / [`UiStack::dispatch_wheel`]
-//! and resolves to [`InputResult::Handled`] (a layer consumed it), [`InputResult::Propagate`]
-//! (nobody wanted it -- it falls through to whatever is under the whole stack, in practice the
-//! canvas) or [`InputResult::Stop`] (consumed *and* swallowed from app-level listeners too).
-//! Keyboard focus is resolved by [`UiStack::keyboard_target`] (with [`UiStack::keyboard_stop`]
-//! saying whether typed characters are UI data rather than simulation input), right-click row
-//! lookups by [`UiStack::topmost_button`]; the canvas sits at the bottom of the stack and is
-//! simply what an event falls through to when every layer propagates it.
+//! hand-coded priority chains over six separate `last_*_buttons` lists. Keyboard focus is
+//! resolved by [`UiStack::keyboard_target`] (with [`UiStack::keyboard_stop`] saying whether
+//! typed characters are UI data rather than simulation input), right-click row lookups by
+//! [`UiStack::topmost_button`]; the canvas sits at the bottom of the stack and is simply what
+//! an event falls through to when every layer propagates it.
 
 use crate::render::foundation::SceneGeometry;
 use crate::render::ui_kit::{Button, Frame, UiRect};

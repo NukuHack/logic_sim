@@ -239,15 +239,9 @@ impl MainMenu {
 		!self.projects.iter().any(|p| p.project_name.eq_ignore_ascii_case(name))
 	}
 
-	/// Mirrors `MainMenu.OnNamePopupConfirmed`: performs whichever action
-	/// the currently-open name popup was for (new/rename/duplicate),
-	/// closes the popup, and refreshes the project list. Returns the
-	/// resulting `MenuOutcome` (opening the project, for a new project) if
-	/// any, or `Ok(None)` for rename/duplicate (which stay on the
-	/// load-project screen, as in the original).
-	///
-	/// No-ops (returns `Ok(None)`) if no name popup is currently open, or
-	/// if `name` fails validation for the popup kind in question.
+	/// Mirrors `MainMenu.OnNamePopupConfirmed`: performs whichever action the currently-open
+	/// name popup was for (new/rename/duplicate), closes the popup, and refreshes the project
+	/// list.
 	pub fn confirm_name_popup(&mut self, name: &str) -> std::io::Result<Option<MenuOutcome>> {
 		let kind = self.popup;
 		match kind {

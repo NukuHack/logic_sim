@@ -1,27 +1,16 @@
-//! Chip save/open flows: the Ctrl+S save popup's modes (save / save-as /
-//! rename / replace), new-chip creation, and switching the viewer to a
-//! different chip -- everything that moves whole `ChipDescription`s
-//! between the in-memory library and the project's on-disk chip files.
-//! Also the unsaved-changes gate (`UnsavedChangesPopup`): detecting that
-//! the open chip has in-memory-only edits and prompting before any flow
-//! would walk away from them.
+//! Chip save/open flows: the Ctrl+S save popup's modes (save / save-as / rename / replace),
+//! new-chip creation, and switching the viewer to a different chip -- everything that moves
+//! whole `ChipDescription`s between the in-memory library and the project's on-disk chip
+//! files.
 use crate::gate_op::{calculate_num_input_bits, is_combinational, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
 use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
 use crate::viewer::library::{is_custom_chip, DEFAULT_LIBRARY_COLLECTION_NAME};
 use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, Overlay, PendingUnsavedAction, ViewerState};
 use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver, Simulator};
 
-/// Resolves `desc.should_be_cached`/`desc.cache_kind` right before they're
-/// written to disk -- the one place the "was the caching checkbox actually
-/// touched?" rule from `ViewerState::cache_toggle_touched` gets applied.
-///
-/// `desc.cache_kind` coming in already holds whatever the customize
-/// checkbox last landed on (`customize::confirm_customize` writes it
-/// straight onto the library entry `desc` is cloned from), so a *touched*
-/// chip's job here is just to validate that choice against the wider
-/// user-caching budget, not to re-derive it from scratch -- overwriting it
-/// unconditionally is what used to silently turn a user's "on" back to
-/// "off" on every save.
+/// Resolves `desc.should_be_cached`/`desc.cache_kind` right before they're written to disk --
+/// the one place the "was the caching checkbox actually touched?" rule from
+/// `ViewerState::cache_toggle_touched` gets applied.
 pub(crate) fn resolve_should_cache(v: &ViewerState, desc: &mut ChipDescription, touched_as: &str) {
 	let sim = Simulator::build(desc, &v.library);
 	let root = sim.root();
@@ -50,13 +39,11 @@ pub(crate) fn resolve_should_cache(v: &ViewerState, desc: &mut ChipDescription, 
 	};
 }
 
-/// Determines which buttons `Overlay::SaveChip` should show for the
-/// currently-typed name, by comparing it against `v.root_chip_name` (the
-/// chip's current identity) and the rest of `v.library` -- see
-/// `editor_ui::SaveChipMode`'s docs for what each variant means and
-/// `build_save_chip_popup`'s docs for why this is re-derived identically
-/// on both the render side and the click-handling side. Case-insensitive,
-/// matching `ChipLibrary`'s own lookup rules.
+/// Determines which buttons `Overlay::SaveChip` should show for the currently-typed name, by
+/// comparing it against `v.root_chip_name` (the chip's current identity) and the rest of
+/// `v.library` -- see `editor_ui::SaveChipMode`'s docs for what each variant means and
+/// `build_save_chip_popup`'s docs for why this is re-derived identically on both the render
+/// side and the click-handling side.
 pub(crate) fn save_chip_mode(v: &ViewerState, typed: &str) -> SaveChipMode {
 	let typed = typed.trim();
 	if typed.eq_ignore_ascii_case(&v.root_chip_name) {
@@ -68,13 +55,11 @@ pub(crate) fn save_chip_mode(v: &ViewerState, typed: &str) -> SaveChipMode {
 	}
 }
 
-/// Adds `add_name` to the project's `all_custom_chip_names`/`chip_collections`
-/// bookkeeping if it isn't already there (and, when `remove_name` is given,
-/// *renames* the old entry in place -- preserving which collection holds it
-/// and where, mirroring `EnsureChipRenamedInCollections` -- rather than
-/// moving it to OTHER), then persists the updated `ProjectDescription`.
-/// Without this, a freshly Saved-As/Renamed chip would only be reachable if
-/// you already remembered its exact name to type into search.
+/// Adds `add_name` to the project's `all_custom_chip_names`/`chip_collections` bookkeeping if
+/// it isn't already there (and, when `remove_name` is given, *renames* the old entry in place
+/// -- preserving which collection holds it and where, mirroring
+/// `EnsureChipRenamedInCollections` -- rather than moving it to OTHER), then persists the
+/// updated `ProjectDescription`.
 fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_name: Option<&str>, add_name: &str) {
 	if let Some(old) = remove_name {
 		v.prefs.all_custom_chip_names.retain(|n| n != old);
@@ -174,18 +159,12 @@ fn random_initial_chip_colour() -> [f32; 4] {
 	hsv_to_rgb(rng.gen::<f32>(), rng.gen_range(0.2..=1.0), rng.gen_range(0.2..=1.0))
 }
 
-/// The save-time parent cascade (`Project.UpdateAndSaveAffectedChips`):
-/// every chip whose subchips include `target_name` is re-derived from its
-/// saved description with this chip's change folded in, and resaved.
-///
-/// - `removed_pin_ids`: dev-pin ids present in the *previous* saved
-///   version but gone from the new one -- wires attached to those pins of
-///   the affected chips' instances are deleted;
-/// - `renamed_to`: the chip was (also) renamed -- matching subchip
-///   instances are re-pointed at the new name.
-///
-/// Parents are loaded from disk (pristine), patched, updated in the live
-/// library, and resaved through the same project-aware serializer.
+/// The save-time parent cascade (`Project.UpdateAndSaveAffectedChips`): every chip whose
+/// subchips include `target_name` is re-derived from its saved description with this chip's
+/// change folded in, and resaved. - `removed_pin_ids`: dev-pin ids present in the *previous*
+/// saved version but gone from the new one -- wires attached to those pins of the affected
+/// chips' instances are deleted; - `renamed_to`: the chip was (also) renamed -- matching
+/// subchip instances are re-pointed at the new name.
 fn resave_affected_parent_chips(v: &mut ViewerState, paths: &SavePaths, target_name: &str, removed_pin_ids: &[i32], renamed_to: Option<&str>) {
 	let parent_names: Vec<String> =
 		v.library.iter().filter(|d| d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(target_name))).map(|d| d.name.clone()).collect();
@@ -260,15 +239,13 @@ fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 }
 
 /// Saves a *copy* of the currently-open chip under `new_name`
-/// (`SaveChipMode::SaveAsOrRename`, "Save As" button), leaving its
-/// existing on-disk file (under its current name, if it has one)
-/// completely untouched. Since that current identity's `v.library` entry
-/// has been edited in place all session, once we fork away from it its
-/// in-memory copy no longer matches what's actually on disk under that
-/// name -- so it's reloaded fresh from its own file right after (see
-/// `load_single_chip_from_disk`), discarding whatever of this session's
-/// edits hadn't already been saved under *that* identity. The viewer
-/// then switches over to the new name.
+/// (`SaveChipMode::SaveAsOrRename`, "Save As" button), leaving its existing on-disk file
+/// (under its current name, if it has one) completely untouched. Since that current
+/// identity's `v.library` entry has been edited in place all session, once we fork away from
+/// it its in-memory copy no longer matches what's actually on disk under that name -- so it's
+/// reloaded fresh from its own file right after (see `load_single_chip_from_disk`),
+/// discarding whatever of this session's edits hadn't already been saved under *that*
+/// identity.
 fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
 	let old_name = v.root_chip_name.clone();
 	let mut new_desc = v.library.get(&old_name).clone();
@@ -322,13 +299,12 @@ fn replace_chip_with_current(v: &mut ViewerState, paths: &SavePaths, status: &mu
 	save_chip_as(v, paths, status, new_name);
 }
 
-/// Actually renames the chip (`SaveChipMode::SaveAsOrRename`, "Rename"
-/// button): moves its on-disk file to `new_name` -- no copy left under
-/// the old name, the old file is deleted outright (no backup, since this
-/// is a rename rather than a delete) -- updates the project's
+/// Actually renames the chip (`SaveChipMode::SaveAsOrRename`, "Rename" button): moves its on-
+/// disk file to `new_name` -- no copy left under the old name, the old file is deleted
+/// outright (no backup, since this is a rename rather than a delete) -- updates the project's
 /// chip-name bookkeeping to match, re-points parents' subchip instances
-/// (`UpdateAndSaveAffectedChips`' willRename pass), and carries any
-/// starred shortcut over to the new name.
+/// (`UpdateAndSaveAffectedChips`' willRename pass), and carries any starred shortcut over to
+/// the new name.
 fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
 	let old_name = v.root_chip_name.clone();
 	let removed_pins = removed_boundary_pin_ids(v, paths, &old_name, v.library.get(&old_name));
@@ -373,14 +349,12 @@ fn valid_save_name(v: &ViewerState, typed: &str) -> bool {
 	!already_used || typed.eq_ignore_ascii_case(&v.root_chip_name)
 }
 
-/// Applies the `Overlay::SaveChip` popup's Confirm action -- shared by
-/// its "Save"/"Replace" button (`EditorAction::SaveChipConfirm`) and
-/// pressing Enter directly for those same two (unambiguous) modes; see
-/// the key-handler's own guard for why `SaveAsOrRename` never reaches
-/// here via Enter (that mode's own two buttons call
-/// `confirm_save_chip_as`/`confirm_save_chip_rename` directly instead,
-/// since which of "keep both" or "actually rename" is meant can't be
-/// inferred, only chosen).
+/// Applies the `Overlay::SaveChip` popup's Confirm action -- shared by its "Save"/"Replace"
+/// button (`EditorAction::SaveChipConfirm`) and pressing Enter directly for those same two
+/// (unambiguous) modes; see the key-handler's own guard for why `SaveAsOrRename` never
+/// reaches here via Enter (that mode's own two buttons call
+/// `confirm_save_chip_as`/`confirm_save_chip_rename` directly instead, since which of "keep
+/// both" or "actually rename" is meant can't be inferred, only chosen).
 pub(crate) fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	let typed = v.overlay_text_input.trim().to_string();
 	if !valid_save_name(v, &typed) {
@@ -439,16 +413,10 @@ fn reset_canvas_interaction(v: &mut ViewerState) {
 	crate::viewer::wire_edit::exit(v);
 }
 
-/// Discards whatever unsaved edits this session made to whichever chip
-/// is currently open (`v.root_chip_name`), by reloading its pristine
-/// on-disk copy back over its `v.library` entry (same "reload from disk"
-/// move `save_chip_as` already does for the identity it forks away
-/// from -- see `load_single_chip_from_disk`). Called by `open_chip_by_name`
-/// right before it actually switches away to a different chip. If the
-/// chip has no file on disk yet (a brand new, never-saved chip), there's
-/// nothing to revert to, so its in-memory draft is left exactly as it
-/// was -- it simply isn't reachable again once you navigate away, same
-/// as it already wasn't reachable after an app restart.
+/// Discards whatever unsaved edits this session made to whichever chip is currently open
+/// (`v.root_chip_name`), by reloading its pristine on-disk copy back over its `v.library`
+/// entry (same "reload from disk" move `save_chip_as` already does for the identity it forks
+/// away from -- see `load_single_chip_from_disk`).
 fn discard_unsaved_changes(v: &mut ViewerState, paths: &SavePaths) {
 	let leaving = v.root_chip_name.clone();
 	if !is_custom_chip(&v.library, &leaving) {
@@ -461,19 +429,11 @@ fn discard_unsaved_changes(v: &mut ViewerState, paths: &SavePaths) {
 
 // ---- Unsaved-changes gate (`ActiveChipHasUnsavedChanges` + `UnsavedChangesPopup`) ----
 
-/// Whether the currently-open chip has edits that exist only in memory --
-/// port of `Project.ActiveProject.ActiveChipHasUnsavedChanges`. A
-/// never-saved draft (no file on disk yet) is dirty as soon as anything
-/// has been placed in it, mirroring the original's
-/// `LastSavedDescription == null -> Elements.Count > 0`; a saved chip is
-/// dirty once its in-memory description no longer serializes equivalent
-/// to its own on-disk file. The comparison goes through
-/// `json::is_equivalent_json` (structural, float-tolerant) rather than
-/// raw string inequality, mirroring `Saver.HasUnsavedChanges`'s
-/// token-level comparison -- so e.g. dragging a component back to where
-/// it started isn't an edit.
-///
-/// Builtins are never dirty: they have no file and can't be edited.
+/// Whether the currently-open chip has edits that exist only in memory -- port of
+/// `Project.ActiveProject.ActiveChipHasUnsavedChanges`. The comparison goes through
+/// `json::is_equivalent_json` (structural, float-tolerant) rather than raw string inequality,
+/// mirroring `Saver.HasUnsavedChanges`'s token-level comparison -- so e.g. dragging a
+/// component back to where it started isn't an edit.
 pub(crate) fn active_chip_has_unsaved_changes(v: &ViewerState, paths: &SavePaths) -> bool {
 	let name = v.root_chip_name.clone();
 	if !is_custom_chip(&v.library, &name) {
@@ -510,14 +470,11 @@ fn finish_open_from_library(v: &mut ViewerState) {
 	v.bottom_bar_open_collection = None;
 }
 
-/// Gates "switch the viewer to editing `name`" behind the unsaved-changes
-/// prompt -- the shape every OPEN call site of the original shares
-/// (`if ActiveChipHasUnsavedChanges() OpenPopup(OpenChipIfConfirmed) else
-/// OpenChipIfConfirmed(true)`): with nothing to confirm (or re-opening
-/// the chip already on screen) it acts straight away; otherwise the popup
+/// Gates "switch the viewer to editing `name`" behind the unsaved-changes prompt -- the shape
+/// every OPEN call site of the original shares (`if ActiveChipHasUnsavedChanges()
+/// OpenPopup(OpenChipIfConfirmed) else OpenChipIfConfirmed(true)`): with nothing to confirm
+/// (or re-opening the chip already on screen) it acts straight away; otherwise the popup
 /// opens and [`PendingUnsavedAction::OpenChip`] remembers what to resume.
-/// `close_overlays` selects the library-panel/search variant of the open,
-/// which also leaves the library panel and resets the selection/flyout.
 pub(crate) fn request_open_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str, close_overlays: bool) {
 	if name != v.root_chip_name && active_chip_has_unsaved_changes(v, paths) {
 		open_unsaved_changes_prompt(v, PendingUnsavedAction::OpenChip { name: name.to_string(), close_overlays });
@@ -591,20 +548,9 @@ pub(crate) fn unique_new_chip_name(library: &ChipLibrary) -> String {
 	}
 }
 
-/// Ctrl+N: starts a brand-new, blank custom chip (no pins, no subchips,
-/// no wires -- see `ChipDescription::new`) and switches the viewer over
-/// to it, exactly as if it were an existing chip being opened. First
-/// discards any unsaved edits on whichever chip is currently open, the
-/// same as any other switch (see `discard_unsaved_changes`), so Ctrl+N
-/// can't be used to accidentally lose track of that.
-///
-/// Nothing is persisted: the new chip lives only in `v.library`, marked
-/// as an unsaved draft (`ViewerState::unsaved_drafts`) -- so it isn't
-/// added to the project's `all_custom_chip_names`/library sidebar (that's
-/// `register_chip_name_in_project`'s job, run from the save flow) and
-/// `sync_library_collections` skips it too, meaning no prefs write can
-/// ever sneak its name into the sidebar or onto disk. Only an actual
-/// Ctrl+S save promotes the draft to a real, listed chip.
+/// Ctrl+N: starts a brand-new, blank custom chip (no pins, no subchips, no wires -- see
+/// `ChipDescription::new`) and switches the viewer over to it, exactly as if it were an
+/// existing chip being opened.
 pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	discard_unsaved_changes(v, paths);
 
@@ -623,16 +569,6 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 }
 
 /// Actually switches the viewer over to `name`'s own definition -- i.e.
-/// "open this chip" -- if it's a custom chip in `v.library`. This used to
-/// be exactly what left-clicking a chip in the library sidebar did (via
-/// `EditorAction::SelectChip`); it's now reached only through that row's
-/// right-click "Open" popup and the library/search detail panels' own
-/// `EditorAction::OpenSelectedChip` OPEN button, so a left click alone
-/// no longer jumps the viewer away from whatever chip is currently open.
-/// Builtins are refused (see `is_custom_chip`) -- their "Open" row is
-/// greyed out in the popup, so reaching this arm for one at all would
-/// mean the disabled-row guard in `context_menu::build_context_menu` was
-/// bypassed somehow.
 pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
 	let switching = name != v.root_chip_name;
 

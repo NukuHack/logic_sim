@@ -1,26 +1,16 @@
-//! Undo/redo for the chip editor, ported from `DLS.Game.UndoController`
-//! (and its `MoveUndoAction` / `WireExistenceAction` /
-//! `ElementExistenceAction` trio), adapted to this port's
-//! description-driven data model:
-//!
-//! - a *move* stores `(id, position at grab, position at drop)` per
-//!   carried component; wires need no counterpart because wire geometry
-//!   here resolves live from component positions;
-//! - *wire add/delete* stores the `WireDescription` plus its index in the
-//!   root chip's wire list; deleting additionally snapshots the FULL wire
-//!   list (flagging the doomed one), so cascade losses -- a tap wire
-//!   dying with the wire it tapped onto -- come back on undo exactly as
-//!   the original's `FullWireState.Restore` does;
-//! - *element add/delete* stores the placed subchip + boundary dev-pin
-//!   descriptions involved (bus-pair partners included via
-//!   `compute_component_delete_set`); deleting again snapshots the full
-//!   wire list first.
-//!
-//! History is strictly linear: recording while undone truncates the redo
-//! tail (`RecordUndoAction`'s `RemoveRange`). Replaying an action applies
-//! it to live state then rebuilds the simulation; anything that would no
-//! longer resolve is skipped silently rather than half-applied, mirroring
-//! the original swallowing its own trigger exceptions.
+//! Undo/redo for the chip editor, ported from `DLS.Game.UndoController` (and its
+//! `MoveUndoAction` / `WireExistenceAction` / `ElementExistenceAction` trio), adapted to this
+//! port's description-driven data model: - a *move* stores `(id, position at grab, position
+//! at drop)` per carried component; wires need no counterpart because wire geometry here
+//! resolves live from component positions; - *wire add/delete* stores the `WireDescription`
+//! plus its index in the root chip's wire list; deleting additionally snapshots the FULL wire
+//! list (flagging the doomed one), so cascade losses -- a tap wire dying with the wire it
+//! tapped onto -- come back on undo exactly as the original's `FullWireState.Restore` does; -
+//! *element add/delete* stores the placed subchip + boundary dev-pin descriptions involved
+//! (bus-pair partners included via `compute_component_delete_set`); deleting again snapshots
+//! the full wire list first. Replaying an action applies it to live state then rebuilds the
+//! simulation; anything that would no longer resolve is skipped silently rather than half-
+//! applied, mirroring the original swallowing its own trigger exceptions.
 
 use crate::description::{ChipDescription, PinAddress, PinDescription, SubChipDescription, WireDescription};
 use crate::render::scene;
@@ -95,14 +85,10 @@ struct ElementExistenceAction {
 	/// Wires added alongside elements (duplication). Stored for atomic
 	/// undo: the entire element+wire group is one undo entry.
 	wires: Vec<(WireDescription, usize)>,
-	/// Standalone wires deleted alongside the components in a batch
-	/// delete (e.g. a shift+right-drag sweep), identified by their own
-	/// endpoints rather than an index -- unlike `wires` above, these
-	/// aren't attached to any of `subchips`/`pins` (those come back for
-	/// free via `wire_state`, the same way a plain component delete
-	/// restores its own wiring). Only ever populated when `is_delete`;
-	/// redoing the delete re-removes each by identity via
-	/// [`same_endpoints`], matching `WireExistenceAction`'s redo.
+	/// Standalone wires deleted alongside the components in a batch delete (e.g. a shift+right-
+	/// drag sweep), identified by their own endpoints rather than an index -- unlike `wires`
+	/// above, these aren't attached to any of `subchips`/`pins` (those come back for free via
+	/// `wire_state`, the same way a plain component delete restores its own wiring).
 	deleted_wires: Vec<WireDescription>,
 }
 
@@ -283,19 +269,15 @@ pub(crate) fn delete_components_with_undo(v: &mut ViewerState, ids: impl Iterato
 }
 
 /// Deletes components (`ids`, bus-partner-expanded exactly like
-/// [`delete_components_with_undo`]) *and* standalone wires
-/// (`wire_indices`, "Delete Part" semantics -- detach rather than
-/// cascade, matching [`delete_wire_segment_with_undo`]) as a single undo
-/// entry. This is what lets a shift+right-drag delete sweep -- which can
-/// eat through several components and wires before the button comes back
-/// up -- collapse to exactly one undo step, instead of one step per item
-/// swept.
-///
-/// A wire index that also belongs to one of the deleted components (its
-/// source or target owner is in `ids`) is harmless to pass here too: it
-/// gets removed once, either way, since `wire_indices` are resolved to
-/// `WireDescription`s up front and applied by identity, and
-/// `apply_component_deletion` skips wires that are already gone.
+/// [`delete_components_with_undo`]) *and* standalone wires (`wire_indices`, "Delete Part"
+/// semantics -- detach rather than cascade, matching [`delete_wire_segment_with_undo`]) as a
+/// single undo entry. This is what lets a shift+right-drag delete sweep -- which can eat
+/// through several components and wires before the button comes back up -- collapse to
+/// exactly one undo step, instead of one step per item swept. A wire index that also belongs
+/// to one of the deleted components (its source or target owner is in `ids`) is harmless to
+/// pass here too: it gets removed once, either way, since `wire_indices` are resolved to
+/// `WireDescription`s up front and applied by identity, and `apply_component_deletion` skips
+/// wires that are already gone.
 pub(crate) fn delete_batch_with_undo(v: &mut ViewerState, ids: impl Iterator<Item = i32>, wire_indices: impl Iterator<Item = usize>) {
 	let root_chip_name = v.root_chip_name.clone();
 

@@ -148,13 +148,9 @@ pub enum EditorAction {
 	/// numbers separated only by newlines (or any other non-numeric
 	/// separator), not just its own `;`/line-separated CSV shape.
 	RomPaste,
-	/// Save-chip popup: commit the typed name -- either a plain
-	/// overwrite/create (`SaveChipMode::Save`) or, when the name belongs
-	/// to a *different* existing chip, a backup-then-overwrite
-	/// (`SaveChipMode::Replace`). Which of those it actually does is
-	/// resolved by the host at click time the same way it was resolved
-	/// to choose which button/label to show -- see
-	/// `build_save_chip_popup`'s docs.
+	/// Save-chip popup: commit the typed name -- either a plain overwrite/create
+	/// (`SaveChipMode::Save`) or, when the name belongs to a *different* existing chip, a
+	/// backup-then-overwrite (`SaveChipMode::Replace`).
 	SaveChipConfirm,
 	/// Save-chip popup (`SaveChipMode::SaveAsOrRename` only): save a
 	/// *copy* of the current chip under the typed name, leaving the
@@ -323,16 +319,7 @@ struct PrefRow<'a> {
 }
 
 /// Builds the preferences overlay from a project's current prefs fields
-/// (`ProjectDescription.Prefs_*`). Purely a display of the *current*
-/// values plus next/cycle buttons -- the host applies cycled/typed values
-/// back onto its own copy of the prefs and re-calls this each frame, same
-/// pattern as `menu_ui`'s settings screen.
-///
-/// Row order (and therefore each row's `CyclePref` index): show I/O pin
-/// names, show chip pin names, show grid, snap to grid, straight wires,
-/// wire-connection width check, sim status, chip caching. Below those sit the SIMULATION value rows: steps-per-clock
-/// and target-steps-per-second text fields plus the measured-speed
-/// readout, mirroring `PreferencesMenu.DrawMenu`'s lower half.
+/// (`ProjectDescription.Prefs_*`).
 pub fn build_preferences_panel(state: &PrefsPanelState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let desc = state.desc;
 	let ui = UiCtx::new(vw, vh, mouse);
@@ -478,16 +465,11 @@ pub struct ChipLibraryState<'a> {
 	/// `!ChipLibrary.IsBuiltinChip`. Ignored unless `selection` is a
 	/// [`LibrarySelection::Chip`] or a non-collection starred row.
 	pub selected_chip_is_custom: bool,
-	/// Whether placing the selected chip as a new subchip inside the
-	/// chip currently open on the canvas would create a recursive cycle
-	/// -- it either *is* that chip, or already contains it somewhere
-	/// inside its own definition. Precomputed by the host (same reason
-	/// as `selected_chip_is_custom`'s docs -- this module has no
-	/// `ChipLibrary` access to walk the dependency tree itself; see
-	/// `viewer::library::would_create_cycle`). Gates the "USE" button the
-	/// same way `selected_chip_is_custom` gates OPEN/DELETE. Ignored
-	/// unless `selection` is a [`LibrarySelection::Chip`] or a
-	/// non-collection starred row.
+	/// Whether placing the selected chip as a new subchip inside the chip currently open on the
+	/// canvas would create a recursive cycle -- it either *is* that chip, or already contains it
+	/// somewhere inside its own definition. Precomputed by the host (same reason as
+	/// `selected_chip_is_custom`'s docs -- this module has no `ChipLibrary` access to walk the
+	/// dependency tree itself; see `viewer::library::would_create_cycle`).
 	pub selected_chip_would_cycle: bool,
 	pub creating_collection: bool,
 	pub renaming_collection: bool,
@@ -565,15 +547,11 @@ fn library_panel_header(frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, title:
 	add_label(frame, ui, rect.centre(), rect.w - 12.0, title, [0.24, 0.82, 0.41, 1.0], FONT_SIZE * 0.85);
 }
 
-/// Builds the "real" three-panel chip library overlay: a STARRED list on
-/// the left, a COLLECTIONS tree (headers + their chips, when open) in the
-/// middle, and a detail panel on the right showing whatever row is
-/// currently selected -- star/unstar, reorder, a "USE" action that picks
-/// the chip up for placement, and open/delete (chips) or rename/delete
-/// (collections) actions for it. Mirrors `ChipLibraryMenu.DrawMenu`'s
-/// three side-by-side panels; the delete confirmation and new/rename-collection
-/// name field are drawn inline at the bottom of the detail column, same
-/// as the original.
+/// Builds the "real" three-panel chip library overlay: a STARRED list on the left, a
+/// COLLECTIONS tree (headers + their chips, when open) in the middle, and a detail panel on
+/// the right showing whatever row is currently selected -- star/unstar, reorder, a "USE"
+/// action that picks the chip up for placement, and open/delete (chips) or rename/delete
+/// (collections) actions for it.
 pub fn build_chip_library_panel(state: &ChipLibraryState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
@@ -910,13 +888,11 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 // Search popup (`SearchPopup`)
 // ---------------------------------------------------------------------
 
-/// Builds the fullscreen chip-search overlay: a filtered, clickable list
-/// of chip names on the left (matching `query` as a case-insensitive
-/// substring, same filtering `SearchPopup` used) and, once a result is
-/// selected, a Library-style detail panel on the right showing
-/// Open/Delete/Use/Star(/Un-star) for it -- clicking a row just selects
-/// it, mirroring the chip library's own list-then-detail shape rather
-/// than acting immediately.
+/// Builds the fullscreen chip-search overlay: a filtered, clickable list of chip names on the
+/// left (matching `query` as a case-insensitive substring, same filtering `SearchPopup` used)
+/// and, once a result is selected, a Library-style detail panel on the right showing
+/// Open/Delete/Use/Star(/Un-star) for it -- clicking a row just selects it, mirroring the
+/// chip library's own list-then-detail shape rather than acting immediately.
 pub fn build_search_popup(state: &SearchPopupState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
@@ -1157,25 +1133,8 @@ const ROM_CELL_W: f32 = 42.0;
 const ROM_CELL_H: f32 = 22.0;
 const ROM_CELL_GAP: f32 = 2.0;
 
-/// Builds the 256-cell ROM contents editor popup -- a proper grid (16x16,
-/// one cell per address) rather than the plain comma-separated text blob
-/// this used to be. `data` is the host's own working copy of all 256
-/// words (`ViewerState` keeps this separately from the saved
-/// `SubChipDescription::internal_data` until "Apply" is clicked, same
-/// "edit a draft, commit on confirm" shape as every other overlay here);
-/// `selected` is which cell's value `edit_text` currently represents.
-///
-/// Each cell shows its word in decimal; click one to select it (loads
-/// its value into the text field for editing), type a new value, then
-/// either click "Set" or press Enter (`EditorAction::RomConfirmCell`) to
-/// commit it and move on to the next cell. Accepts a leading `0x`/`0X`
-/// for hex input; displays decimal, to match the plain-number contents
-/// most ROM programs actually use. "Clear" (next to "Set") empties the
-/// text field alone, without touching the selected cell. "Reset" (top
-/// middle) zeroes the whole 256-word draft. "Copy"/"Paste" round-trip
-/// the whole draft through the system clipboard as a 16x16 grid of
-/// `;`-separated decimal words, one row per line -- see
-/// `viewer::popups::rom_copy_text`/`rom_parse_clipboard_text`.
+/// Builds the 256-cell ROM contents editor popup -- a proper grid (16x16, one cell per
+/// address) rather than the plain comma-separated text blob this used to be.
 pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
@@ -1260,14 +1219,12 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 // Save-chip popup (Ctrl+S)
 // ---------------------------------------------------------------------
 
-/// Which buttons [`build_save_chip_popup`] should offer, based on how the
-/// currently-typed name compares to the chip's current on-disk identity
-/// and the rest of the library -- computed by the host (it needs
-/// `ChipLibrary`/`ViewerState` access this module deliberately doesn't
-/// have) by comparing the typed name against `v.root_chip_name` and
-/// `v.library`, then re-derived identically on both the "which buttons
-/// to draw" side and the "what did this click actually mean" side, so
-/// the two can never disagree.
+/// Which buttons [`build_save_chip_popup`] should offer, based on how the currently-typed
+/// name compares to the chip's current on-disk identity and the rest of the library --
+/// computed by the host (it needs `ChipLibrary`/`ViewerState` access this module deliberately
+/// doesn't have) by comparing the typed name against `v.root_chip_name` and `v.library`, then
+/// re-derived identically on both the "which buttons to draw" side and the "what did this
+/// click actually mean" side, so the two can never disagree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaveChipMode {
 	/// Typed name is exactly the chip's current identity (or, before
@@ -1286,13 +1243,9 @@ pub enum SaveChipMode {
 	SaveAsOrRename,
 }
 
-/// Builds the Ctrl+S popup. `current_name` is the chip's own current
-/// identity (shown for context, e.g. "Saving: Full Adder"); `text` is
-/// the typed name field's contents; `mode` (see its own docs) picks
-/// which action buttons to show -- and, for `Replace`, colours it red
-/// since it's destructive to *some other* chip's save file. Every mode
-/// also offers CUSTOMIZE (mirroring `ChipSaveMenu`'s button trio/quartet),
-/// which opens [`crate::render::customize_ui`]'s workspace on top.
+/// Builds the Ctrl+S popup. "Saving: Full Adder"); `text` is the typed name field's contents;
+/// `mode` (see its own docs) picks which action buttons to show -- and, for `Replace`,
+/// colours it red since it's destructive to *some other* chip's save file.
 pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
@@ -1438,14 +1391,9 @@ pub const MAX_PIN_NAME_LENGTH: usize = 16;
 /// mirroring `ChipSaveMenu.MaxLengthChipName`'s length).
 pub const MAX_CHIP_NAME_LENGTH: usize = 22;
 
-/// Builds the boundary-dev-pin edit popup (mirrors `PinEditMenu`): a name
-/// field, a "Colour" row of palette swatches, and -- only for pins wider
-/// than one bit -- a "Decimal Display" row of option buttons standing in
-/// for the original's wheel selector. Everything commits together on
-/// Confirm; Cancel discards. `name` is the host's shared text buffer's
-/// current contents; `display_mode_index` indexes [`ValueDisplayMode::ALL`]
-/// (ignored while `show_display_options` is false); `colour_index` indexes
-/// `theme::COLORS`.
+/// Builds the boundary-dev-pin edit popup (mirrors `PinEditMenu`): a name field, a "Colour"
+/// row of palette swatches, and -- only for pins wider than one bit -- a "Decimal Display"
+/// row of option buttons standing in for the original's wheel selector.
 pub fn build_pin_edit_popup(
 	name: &str,
 	show_display_options: bool,
@@ -1627,66 +1575,15 @@ pub const BOTTOM_BAR_HEIGHT: f32 = 44.0;
 const BOTTOM_BAR_BTN_GAP: f32 = 6.0;
 pub const BOTTOM_BAR_BTN_PAD: f32 = 8.0;
 
-/// Builds the persistent bottom bar of starred chips/collections --
-/// mirrors the chip-button strip half of `BottomBarUI.DrawBottomBar`.
-/// Its "MENU" dropdown (New/Save/Find/Library/Prefs/Quit) isn't ported
-/// here since every one of those already has its own keyboard shortcut
-/// in this port (see `viewer::input`'s shortcut handling), so the bar's
-/// only new surface is starred access.
-///
-/// `scroll_x` is the bar's horizontal scroll offset in pixels: with more
-/// starred items than fit the window width, the host scrolls the strip
-/// (the UI stack routes wheel events over the bar to it instead of
-/// letting them reach the canvas zoom underneath) and passes the clamped
-/// offset back in here, shifting every button left by that amount.
-///
-/// A plain starred chip's button (left click) picks it up for placement
-/// -- same as the library's "USE" button, see [`EditorAction::PlaceChip`]
-/// -- and mirrors the original's `StartPlacing`. Greyed out (same
-/// treatment a builtin's "Open" gets) when placing it into the currently
-/// open chip would create a recursive cycle -- `cycle_blocked` is a
-/// precomputed, case-insensitive set of such chip names (see
-/// `viewer::library::would_create_cycle`; this module has no `ChipLibrary`
-/// access of its own to work it out). Right-clicking it instead opens a
-/// small popup offering "Open" (switch to editing its definition) and
-/// "Un-star", handled by the host the same way it handles every other
-/// right-click popup (the app's right-click handler and
-/// `viewer::context_menu::apply_context_menu_action`) -- this
-/// module only draws/hit-tests the bar itself and has no popup state of
-/// its own. A starred collection's button instead toggles
-/// [`build_starred_collection_popup`] for it, same as clicking a
-/// collection button in the original opens/closes its flyout rather than
-/// acting directly.
-/// Builds the persistent bottom bar of starred chips/collections --
-/// mirrors the chip-button strip half of `BottomBarUI.DrawBottomBar`.
-/// Its "MENU" dropdown (New/Save/Find/Library/Prefs/Quit) isn't ported
-/// here since every one of those already has its own keyboard shortcut
-/// in this port (see `viewer::input`'s shortcut handling), so the bar's
-/// only new surface is starred access.
-///
-/// `scroll_x` is the bar's horizontal scroll offset in pixels: with more
-/// starred items than fit the window width, the host scrolls the strip
-/// (the UI stack routes wheel events over the bar to it instead of
-/// letting them reach the canvas zoom underneath) and passes the clamped
-/// offset back in here, shifting every button left by that amount.
-///
-/// A plain starred chip's button (left click) picks it up for placement
-/// -- same as the library's "USE" button, see [`EditorAction::PlaceChip`]
-/// -- and mirrors the original's `StartPlacing`. Greyed out (same
-/// treatment a builtin's "Open" gets) when placing it into the currently
-/// open chip would create a recursive cycle -- `cycle_blocked` is a
-/// precomputed, case-insensitive set of such chip names (see
-/// `viewer::library::would_create_cycle`; this module has no `ChipLibrary`
-/// access of its own to work it out). Right-clicking it instead opens a
-/// small popup offering "Open" (switch to editing its definition) and
-/// "Un-star", handled by the host the same way it handles every other
-/// right-click popup (the app's right-click handler and
-/// `viewer::context_menu::apply_context_menu_action`) -- this
-/// module only draws/hit-tests the bar itself and has no popup state of
-/// its own. A starred collection's button instead toggles
-/// [`build_starred_collection_popup`] for it, same as clicking a
-/// collection button in the original opens/closes its flyout rather than
-/// acting directly.
+/// Builds the persistent bottom bar of starred chips/collections -- mirrors the chip-button
+/// strip half of `BottomBarUI.DrawBottomBar`. Its "MENU" dropdown
+/// (New/Save/Find/Library/Prefs/Quit) isn't ported here since every one of those already has
+/// its own keyboard shortcut in this port (see `viewer::input`'s shortcut handling), so the
+/// bar's only new surface is starred access. `scroll_x` is the bar's horizontal scroll offset
+/// in pixels: with more starred items than fit the window width, the host scrolls the strip
+/// (the UI stack routes wheel events over the bar to it instead of letting them reach the
+/// canvas zoom underneath) and passes the clamped offset back in here, shifting every button
+/// left by that amount.
 pub fn build_starred_bottom_bar(
 	starred_list: &[StarredItem],
 	open_collection: Option<&str>,
@@ -1726,21 +1623,16 @@ pub fn build_starred_bottom_bar(
 	finish(frame, ui)
 }
 
-/// Builds the flyout listing one starred collection's chips, opened by
-/// clicking its button in [`build_starred_bottom_bar`]. Mirrors
-/// `BottomBarUI.DrawCollectionsPopup`, simplified to a single column that
-/// stops once it runs out of vertical room rather than wrapping into a
-/// second column near the top of the screen -- the same "rest is
-/// scrolled off, no offset state ported yet" simplification
-/// `build_search_popup` already makes elsewhere in this module. Anchored
-/// to grow upward from just above the bar, at `anchor_x` (the left edge
-/// of the collection's own button in the bar, so the flyout lines up
-/// under/over it). Each row is a chip picked up for placement on left
-/// click (`EditorAction::PlaceChip`, same as the bar's own plain-chip
-/// buttons) -- greyed out under the same `cycle_blocked` rule
-/// [`build_starred_bottom_bar`] uses -- with a right-click "Open" popup,
-/// but, being *inside* a collection rather than a bare starred chip, no
-/// "Un-star" option (see [`build_starred_bottom_bar`]'s docs).
+/// Builds the flyout listing one starred collection's chips, opened by clicking its button in
+/// [`build_starred_bottom_bar`]. Mirrors `BottomBarUI.DrawCollectionsPopup`, simplified to a
+/// single column that stops once it runs out of vertical room rather than wrapping into a
+/// second column near the top of the screen -- the same "rest is scrolled off, no offset
+/// state ported yet" simplification `build_search_popup` already makes elsewhere in this
+/// module. Each row is a chip picked up for placement on left click
+/// (`EditorAction::PlaceChip`, same as the bar's own plain-chip buttons) -- greyed out under
+/// the same `cycle_blocked` rule [`build_starred_bottom_bar`] uses -- with a right-click
+/// "Open" popup, but, being *inside* a collection rather than a bare starred chip, no "Un-
+/// star" option (see [`build_starred_bottom_bar`]'s docs).
 pub fn build_starred_collection_popup(
 	collection: &ChipCollection,
 	anchor_x: f32,

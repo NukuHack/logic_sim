@@ -18,13 +18,11 @@ use crate::render::scene::placed::{place_sub_chips, PlacedSubChip};
 /// revisited many times (e.g. a bus fanning out to several taps).
 pub(crate) type WirePointCache = HashMap<(usize, bool), Option<Vec2>>;
 
-/// How many wire-to-wire attachment hops to follow before giving up.
-/// Real projects only ever nest a couple of levels deep (`WireInstance`'s
-/// own `ConnectedWireRecursionDepth` tracks this for draw-ordering, and
-/// stays small in practice), so this is purely a guard against a
-/// hand-edited or corrupted save file describing a connection cycle --
-/// without it, a cycle would recurse forever instead of just drawing that
-/// wire wrong.
+/// How many wire-to-wire attachment hops to follow before giving up. Real projects only ever
+/// nest a couple of levels deep (`WireInstance`'s own `ConnectedWireRecursionDepth` tracks
+/// this for draw-ordering, and stays small in practice), so this is purely a guard against a
+/// hand-edited or corrupted save file describing a connection cycle -- without it, a cycle
+/// would recurse forever instead of just drawing that wire wrong.
 const MAX_WIRE_CONNECTION_DEPTH: u32 = 64;
 
 /// The closest point to `p` on line segment `a`-`b`. Mirrors
@@ -72,20 +70,8 @@ impl<'a> WireCtx<'a> {
 		}
 	}
 
-	/// Resolves one end of wire `wire_idx` (`is_target`: false = source, true =
-	/// target) to a world-space position.
-	///
-	/// A plain pin-attached end (`WireConnectionType::ToPins`, or the
-	/// non-tapped end of a partially-tapped wire) resolves straight from the
-	/// pin's own live position via `resolve_pin_position`, same as always. A
-	/// wire-attached end (`ToWireSource` for the source end, `ToWireTarget` for
-	/// the target end) instead re-projects that end's last cached attachment
-	/// point onto the referenced wire's segment (`connected_wire_index`,
-	/// `connected_wire_segment_index`) -- mirroring
-	/// `WireInstance.GetAttachmentPoint` / `WireLayoutHelper.GetClosestPointOnWire`
-	/// in the original. This is the fix for wire-tap endpoints resolving to the
-	/// wrong place (and thus producing visibly wrong bends): they were
-	/// previously always resolved as if `ToPins`.
+	/// Resolves one end of wire `wire_idx` (`is_target`: false = source, true = target) to a
+	/// world-space position.
 	pub fn endpoint(&self, wire_idx: usize, is_target: bool, cache: &mut WirePointCache, depth: u32) -> Option<Vec2> {
 		if let Some(&cached) = cache.get(&(wire_idx, is_target)) {
 			return cached;
@@ -124,15 +110,8 @@ impl<'a> WireCtx<'a> {
 	}
 }
 
-/// One point along an existing wire's drawn centreline, close enough to
-/// a click to tap a new wire onto -- returned by `hit_test_wire_tap`.
-/// `segment_index` is the index of the resolved centreline point that
-/// starts the segment `point` was projected onto (the same convention
-/// `WireDescription::connected_wire_segment_index`/`resolve_wire_point`
-/// use: `0` is the wire's own source, increasing through its bend
-/// points); `point` is the exact projected position, suitable both for
-/// previewing the in-progress wire and as a tapped `WireDescription`'s
-/// `cached_source_point`.
+/// One point along an existing wire's drawn centreline, close enough to a click to tap a new
+/// wire onto -- returned by `hit_test_wire_tap`.
 #[derive(Debug, Clone, Copy)]
 pub struct WireTapHit {
 	pub wire_index: usize,
@@ -145,14 +124,10 @@ pub struct WireTapHit {
 	pub bit_count: PinBitCount,
 }
 
-/// Finds whichever wire's drawn centreline `world_pos` is closest to
-/// (within `max_dist` world units of any of its segments), returning
-/// that wire's index into `chip.wires` -- used to resolve a right-click
-/// "delete wire" to *one specific* `WireDescription`, not e.g. every wire
-/// fanning out of the same source pin. Resolves each wire's endpoints
-/// (including tap-on-another-wire ones) the same way [`draw_wires`]
-/// does, so "closest to what's actually drawn" matches what the player
-/// sees, not just the saved bend points.
+/// Finds whichever wire's drawn centreline `world_pos` is closest to (within `max_dist` world
+/// units of any of its segments), returning that wire's index into `chip.wires` -- used to
+/// resolve a right-click "delete wire" to *one specific* `WireDescription`, not e.g. every
+/// wire fanning out of the same source pin.
 pub fn hit_test_wire(chip: &ChipDescription, library: &ChipLibrary, world_pos: Vec2, max_dist: f32) -> Option<usize> {
 	closest_wire_hit(chip, library, world_pos, max_dist).map(|hit| hit.wire_index)
 }
@@ -221,14 +196,12 @@ mod tests {
 		assert_eq!(closest_point_on_segment(Vec2::new(0.0, 0.0), a, a), a);
 	}
 
-	/// This is the regression test for the wire-bend bug: a wire tapped
-	/// onto another wire's segment (`WireConnectionType::ToWireSource`)
-	/// must resolve its endpoint by projecting the cached attachment point
-	/// onto that other wire's segment, *not* by jumping straight to the
-	/// underlying pin's position (the old, buggy behaviour) -- doing the
-	/// latter desyncs the tap's resolved position from its
-	/// player-authored bend points, which were drawn assuming the wire
-	/// starts at the tap point.
+	/// This is the regression test for the wire-bend bug: a wire tapped onto another wire's
+	/// segment (`WireConnectionType::ToWireSource`) must resolve its endpoint by projecting the
+	/// cached attachment point onto that other wire's segment, *not* by jumping straight to the
+	/// underlying pin's position (the old, buggy behaviour) -- doing the latter desyncs the
+	/// tap's resolved position from its player-authored bend points, which were drawn assuming
+	/// the wire starts at the tap point.
 	#[test]
 	fn wire_tap_endpoint_resolves_onto_referenced_wire_segment_not_the_underlying_pin() {
 		let mut lib = ChipLibrary::new();

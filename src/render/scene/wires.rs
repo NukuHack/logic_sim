@@ -14,27 +14,11 @@ use crate::render::{layout, place_sub_chips};
 use crate::structs::Vec2;
 use std::collections::HashMap;
 
-/// Draws one wire's full `bit_count` as that many individually-coloured,
-/// 1-bit-wide parallel strands rather than a single `bit_count`-scaled-
-/// thick line -- so e.g. a mixed-signal 4-bit bus shows its actual 4
-/// separate colours side by side, instead of a single line whose colour
-/// only reflects bit 0's state (the old behaviour), or some blended
-/// "average" that isn't any bit's real state.
-///
-/// Each strand's centreline is `centreline` (the wire's actual path,
-/// including any player-authored bend points) offset sideways by that
-/// strand's own constant distance via `offset_polyline` -- so every
-/// strand bends together with the wire and stays a clean parallel line
-/// through every corner, not just on straight runs.
-///
-/// Strand layout, `layout::WIRE_THICKNESS` apart: for `n` bits, strand `i`
-/// sits at offset `WIRE_THICKNESS * (i - (n - 1) / 2)`. This single
-/// formula handles both parities the way a real ribbon cable does: for an
-/// *odd* bit count the middle strand's offset comes out to exactly `0`
-/// (a real centred "middle wire"); for an *even* bit count there's no
-/// strand at `0` at all -- the two middle strands straddle the centreline
-/// at `+/- WIRE_THICKNESS / 2` instead, same spacing as every other
-/// adjacent pair.
+/// Draws one wire's full `bit_count` as that many individually-coloured, 1-bit-wide parallel
+/// strands rather than a single `bit_count`-scaled- thick line -- so e.g. a mixed-signal
+/// 4-bit bus shows its actual 4 separate colours side by side, instead of a single line whose
+/// colour only reflects bit 0's state (the old behaviour), or some blended "average" that
+/// isn't any bit's real state.
 fn draw_wire_strands(
 	geo: &mut SceneGeometry,
 	centreline: &[Vec2],
@@ -108,15 +92,11 @@ pub(crate) fn draw_wires(
 	spans
 }
 
-/// Removes wire `index` from `chip.wires` -- the full "Delete" context-menu
-/// action, which cascades: the wire itself, and every wire tapping onto it
-/// (transitively), go with it. For a bus wire this cascade also reaches
-/// everything else wired into either of the origin's pins, since a bus
-/// merges onto one shared net. See [`delete_wire_old`] for the "Delete
+/// Removes wire `index` from `chip.wires` -- the full "Delete" context-menu action, which
+/// cascades: the wire itself, and every wire tapping onto it (transitively), go with it. For
+/// a bus wire this cascade also reaches everything else wired into either of the origin's
+/// pins, since a bus merges onto one shared net. See [`delete_wire_old`] for the "Delete
 /// Part" counterpart, which detaches taps instead of destroying them.
-///
-/// Every remaining wire's `connected_wire_index` is shifted so the rest of
-/// the tap graph stays intact. Returns the number of wires removed.
 pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibrary) -> usize {
 	if index >= chip.wires.len() {
 		return 0;
@@ -257,19 +237,15 @@ pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipL
 			let touches_origin_pins =
 				[w.source_pin_address, w.target_pin_address].iter().any(|a| a.pin_owner_id == origin_owner && origin_pin_ids.contains(&a.pin_id));
 			let taps_removed = w.connection_type != WireConnectionType::ToPins && to_remove.contains(&(w.connected_wire_index as usize));
-			// Only genuine direct (`ToPins`) connections into the origin's
-			// pins are real net members and actually die with the net. A
-			// wire that merely *taps* onto something in the net (drawn
-			// attachment only -- `connection_type != ToPins`) keeps its own
-			// identity here: it gets auto-detached by
-			// `shift_connected_indices_after_removal` once its anchor is
-			// actually gone, instead of being destroyed along with it.
-			// Without this split, "Delete Part" on the bus segment (or
-			// anything touching the origin's pins) swept in and deleted
-			// every fan-out tap too, since a tap always carries the
-			// origin's real pin address and so always satisfies
-			// `touches_origin_pins` -- turning "delete part" into "delete
-			// the whole net", much more than the clicked part.
+			// Only genuine direct (`ToPins`) connections into the origin's pins are real net members
+			// and actually die with the net. A wire that merely *taps* onto something in the net
+			// (drawn attachment only -- `connection_type != ToPins`) keeps its own identity here: it
+			// gets auto-detached by `shift_connected_indices_after_removal` once its anchor is
+			// actually gone, instead of being destroyed along with it. Without this split, "Delete
+			// Part" on the bus segment (or anything touching the origin's pins) swept in and deleted
+			// every fan-out tap too, since a tap always carries the origin's real pin address and so
+			// always satisfies `touches_origin_pins` -- turning "delete part" into "delete the whole
+			// net", much more than the clicked part.
 			if (touches_origin_pins || taps_removed) && w.connection_type == WireConnectionType::ToPins {
 				to_remove.push(i);
 				added = true;
@@ -315,23 +291,15 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 
 	match chip.wires[d].connection_type {
 		WireConnectionType::ToWireSource => {
-			// Dependent's *source* sits ON the anchor -- its drawn start
-			// was the projection onto the anchor's segment while its
-			// electrical source already is the anchor's source pin. Fold
-			// the anchor's route up to the attachment into the bends
-			// (vertices 1..=seg; vertex 0 is the pin itself) so the drawn
-			// shape survives, then fall back to a plain pin connection --
-			// or, when the anchor was itself a tap, inherit its whole
-			// source-side attachment (`SourceConnectionInfo` hand-over).
+			// Dependent's *source* sits ON the anchor -- its drawn start was the projection onto the
+			// anchor's segment while its electrical source already is the anchor's source pin.
 			let mut points: Vec<Vec2> = anchor_world.iter().take((seg as usize + 1).min(anchor_world.len())).skip(1).copied().collect();
-			// However many vertices we're about to prepend (the folded
-			// anchor route plus the frozen tap point itself) -- any wire
-			// that in turn taps onto *this* one (`d`) measures its own
-			// `connected_wire_segment_index` from vertex 0 of `d`'s point
-			// list, so once we prepend here every such downstream tap's
-			// segment number needs to move forward by the same amount or
-			// it re-projects onto whatever unrelated segment now sits
-			// where its real attachment used to be.
+			// However many vertices we're about to prepend (the folded anchor route plus the frozen
+			// tap point itself) -- any wire that in turn taps onto *this* one (`d`) measures its own
+			// `connected_wire_segment_index` from vertex 0 of `d`'s point list, so once we prepend
+			// here every such downstream tap's segment number needs to move forward by the same
+			// amount or it re-projects onto whatever unrelated segment now sits where its real
+			// attachment used to be.
 			let prefix_len = points.len() + 1;
 			points.push(chip.wires[d].cached_source_point);
 			points.extend_from_slice(&chip.wires[d].points);
@@ -354,12 +322,9 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 			}
 		}
 		WireConnectionType::ToWireTarget => {
-			// Dependent's *target* sits ON the anchor -- purely a drawing
-			// attachment (its electrical endpoints are fully its own).
-			// Freeze the attachment point as an ordinary bend and draw
-			// straight to the real target pin from now on. Appending here
-			// (rather than prepending) leaves every earlier vertex index
-			// untouched, so unlike the source-side case above, nothing
+			// Dependent's *target* sits ON the anchor -- purely a drawing attachment (its electrical
+			// endpoints are fully its own). Appending here (rather than prepending) leaves every
+			// earlier vertex index untouched, so unlike the source-side case above, nothing
 			// downstream needs its `connected_wire_segment_index` shifted.
 			let mut points = chip.wires[d].points.clone();
 			points.push(chip.wires[d].cached_target_point);
@@ -374,18 +339,11 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 	}
 }
 
-/// Adjusts every surviving wire's `connected_wire_index` down by however
-/// many `removed` indices sat below it -- and, for any wire whose anchor
-/// *is* one of the removed indices (a tap whose target wasn't detached
-/// upstream, e.g. by a bare `delete_wire_segment`, or a bus fan-out tap
-/// excluded from `delete_wire_old`'s net-cascade), freezes that end at its
-/// last known attachment point and falls back to a plain pin-to-pin wire.
-/// Without this, such a wire keeps a `connected_wire_index` that (after the
-/// list shrinks) now names some unrelated surviving wire or none at all --
-/// `WireCtx::endpoint` then resolves to `None` and it stops being drawn,
-/// even though its own `source_pin_address`/`target_pin_address` are still
-/// the real pins, so the simulation keeps carrying its signal: a wire that
-/// looks disconnected but is still live.
+/// Adjusts every surviving wire's `connected_wire_index` down by however many `removed`
+/// indices sat below it -- and, for any wire whose anchor *is* one of the removed indices (a
+/// tap whose target wasn't detached upstream, e.g. by a bare `delete_wire_segment`, or a bus
+/// fan-out tap excluded from `delete_wire_old`'s net-cascade), freezes that end at its last
+/// known attachment point and falls back to a plain pin-to-pin wire.
 fn shift_connected_indices_after_removal(chip: &mut ChipDescription, removed: &[usize]) {
 	for w in chip.wires.iter_mut() {
 		if w.connection_type == WireConnectionType::ToPins {

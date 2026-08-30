@@ -1,18 +1,9 @@
-//! Component selection & movement, multi-component placement carries, and
-//! rubber-band box selection -- the viewer-facing half of the original's
-//! `DLS.Game.ChipInteractionController` (its selection/move/placement
-//! state machine), adapted to this port's description-driven data model:
-//!
-//! - a *pickup* (`ViewerState::pending_place`) carries
-//!   `Vec<(Vec2, PendingComponent)>` -- what to instantiate plus each
-//!   component's position relative to the cursor -- so placing a bus
-//!   origin automatically carries its linked terminus partner along;
-//! - a *drag* moves the real placed subchip positions live as the cursor
-//!   moves (attached wires stretch with them), rendering the carried
-//!   components translucently like a placement ghost, and reverts
-//!   everything if released overlapping something it may not cover;
-//! - a *rubber band* drawn on empty canvas selects every component lying
-//!   even partially inside it once released.
+//! Component selection & movement, multi-component placement carries, and rubber-band box
+//! selection -- the viewer-facing half of the original's `DLS.Game.ChipInteractionController`
+//! (its selection/move/placement state machine), adapted to this port's description-driven
+//! data model: - a *pickup* (`ViewerState::pending_place`) carries `Vec<(Vec2,
+//! PendingComponent)>` -- what to instantiate plus each component's position relative to the
+//! cursor -- so placing a bus origin automatically carries its linked terminus partner along
 
 use crate::render::foundation::SceneGeometry;
 use crate::render::layout::{self, snap_to_grid_centred};
@@ -113,14 +104,9 @@ pub(crate) fn start_placing(v: &mut ViewerState, chip_name: &str) {
 	v.pending_place = carry;
 }
 
-/// Adds `chip_name` to the carry already in flight without disturbing
-/// what's picked up so far -- mirrors [`start_placing`], but appends
-/// instead of replacing (shift-clicking a chip in the bottom bar, or in
-/// an open collection flyout, while already carrying something). Falls
-/// back to a plain [`start_placing`] if nothing was being carried yet.
-/// The new entry is offset diagonally from whatever was carried last so
-/// it doesn't land exactly on top of it and the two can both actually be
-/// placed once dropped.
+/// Adds `chip_name` to the carry already in flight without disturbing what's picked up so far
+/// -- mirrors [`start_placing`], but appends instead of replacing (shift-clicking a chip in
+/// the bottom bar, or in an open collection flyout, while already carrying something).
 pub(crate) fn add_to_placing(v: &mut ViewerState, chip_name: &str) {
 	if v.pending_place.is_empty() {
 		start_placing(v, chip_name);
@@ -150,15 +136,9 @@ pub(crate) fn add_to_placing(v: &mut ViewerState, chip_name: &str) {
 	}
 }
 
-/// A press landing on placed subchip `id`'s body: toggles it into/out of
-/// the selection (shift held -- "multi-mode"), or selects it alone, then
-/// starts carrying whatever ended up selected. Mirrors `Select` +
-/// `StartMovingSelectedItems`.
-///
-/// Only subchips take part in selection/dragging: boundary dev-pins' click
-/// surfaces stay owned by their other interactions (a dev-pin stub starts a
-/// wire, an input's bit cells toggle it), matching the original's
-/// pin-first priority.
+/// A press landing on placed subchip `id`'s body: toggles it into/out of the selection (shift
+/// held -- "multi-mode"), or selects it alone, then starts carrying whatever ended up
+/// selected.
 pub(crate) fn begin_drag_on_component(v: &mut ViewerState, id: i32, anchor: Vec2) {
 	if multi_mode_held(v) {
 		match v.selected_ids.iter().position(|&sel| sel == id) {
@@ -750,14 +730,12 @@ mod tests {
 	}
 }
 
-/// Picks up a duplicate of the current selection (`DuplicateSelectedElements`,
-/// on the MultiMode+D shortcut): every selected subchip -- plus any bus
-/// partner hanging outside the selection -- is copied with fresh ids,
-/// links pointing inside the group are re-mapped to their duplicates
-/// (`LinkDuplicatedBuses`; links to anything outside are cleared), wires
-/// internal to the group come along (bends re-anchored to the group's
-/// centroid), and the whole group lands in the placement carry for
-/// dropping like any pickup. Returns whether anything was picked up.
+/// Picks up a duplicate of the current selection (`DuplicateSelectedElements`, on the
+/// MultiMode+D shortcut): every selected subchip -- plus any bus partner hanging outside the
+/// selection -- is copied with fresh ids, links pointing inside the group are re-mapped to
+/// their duplicates (`LinkDuplicatedBuses`; links to anything outside are cleared), wires
+/// internal to the group come along (bends re-anchored to the group's centroid), and the
+/// whole group lands in the placement carry for dropping like any pickup.
 pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 	// Only over the bare editor (`!IsPlacingOrMovingElementOrCreatingWire`).
 	if !v.pending_place.is_empty() || v.pending_wire.is_some() || !matches!(v.canvas_interaction, CanvasInteraction::None) || v.wire_edit.is_some() {
@@ -808,13 +786,12 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 	for source in &originals {
 		let mut copy = source.clone();
 		copy.id = id_map[&source.id];
-		// Only Bus components stash a linked-partner id in `internal_data[0]`
-		// (see `bus_wiring`) -- remapping it to the fresh duplicate's id is
-		// what makes a carried bus half still find its pair. Every other
-		// component's `internal_data` is its own custom payload (e.g. the
-		// ROM editor's 256-word contents) that must come along untouched;
-		// previously this unconditionally truncated it down to 2 slots,
-		// which silently dropped everything past index 1.
+		// Only Bus components stash a linked-partner id in `internal_data[0]` (see `bus_wiring`)
+		// -- remapping it to the fresh duplicate's id is what makes a carried bus half still find
+		// its pair. Every other component's `internal_data` is its own custom payload (e.g. the
+		// ROM editor's 256-word contents) that must come along untouched; previously this
+		// unconditionally truncated it down to 2 slots, which silently dropped everything past
+		// index 1.
 		let is_bus = v.library.try_get(&source.name).is_some_and(|d| d.chip_type.is_bus_type());
 		if is_bus {
 			let new_link = id_map.get(&linked_partner(source)).copied().unwrap_or(0);

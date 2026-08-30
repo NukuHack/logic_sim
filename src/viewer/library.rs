@@ -13,13 +13,8 @@ use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 /// -- mirrors `ChipLibraryMenu`'s `defaultOtherChipsCollectionName`.
 pub(crate) const DEFAULT_LIBRARY_COLLECTION_NAME: &str = "OTHER";
 
-/// Whether `name` is a chip the player actually authored (as opposed to
-/// a built-in primitive like `AND`/`NAND`/`Pulse`) -- i.e. whether
-/// "Open" makes any sense for it. Builtins have no `ChipDescription` of
-/// their own worth navigating into (no subchips/wires to show), so every
-/// "Open" context-menu row is disabled for them (see
-/// `context_menu_items_for_chip_type`) and `open_chip_by_name` refuses to
-/// act on one even if somehow invoked anyway.
+/// Whether `name` is a chip the player actually authored (as opposed to a built-in primitive
+/// like `AND`/`NAND`/`Pulse`) -- i.e. whether "Open" makes any sense for it.
 pub(crate) fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
 	library.try_get(name).map(|d| d.chip_type == ChipType::Custom).unwrap_or(false)
 }
@@ -27,14 +22,7 @@ pub(crate) fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
 /// True if placing `chip_to_place` as a new subchip inside `root_chip_name` would create a
 /// recursive cycle -- either because it *is* `root_chip_name` itself, or because its own
 /// definition, directly or transitively through its own subchips, already contains
-/// `root_chip_name` somewhere inside it. In the latter case placing it back into
-/// `root_chip_name` would close the loop (`root_chip_name` -> `chip_to_place` -> ... ->
-/// `root_chip_name`), which `sim::build_recursive` has no cycle guard for and would recurse
-/// forever trying to flatten. Gates the "USE"/bottom-bar placement buttons
-/// (`editor_ui::ChipLibraryState::selected_chip_would_cycle`,
-/// `build_starred_bottom_bar`/`build_starred_collection_popup`'s `cycle_blocked`) and is checked
-/// again defensively in `try_place_pending_components` itself, so a click can never place a cycle even
-/// if the UI's greyed-out state somehow gets out of sync with what's actually open.
+/// `root_chip_name` somewhere inside it.
 pub(crate) fn would_create_cycle(library: &ChipLibrary, root_chip_name: &str, chip_to_place: &str) -> bool {
 	if chip_to_place.eq_ignore_ascii_case(root_chip_name) {
 		return true;
@@ -76,18 +64,9 @@ pub(crate) fn is_listed_in_current_build(library: &ChipLibrary, name: &str) -> b
 	is_listed_in_build(library, name, !dev_chips_hidden())
 }
 
-/// Ensures `prefs.chip_collections` has an `OTHER` collection and that
-/// every chip in `library` belongs to *some* collection, adding any
-/// stragglers to `OTHER` -- mirrors the collection-syncing half of
-/// `ChipLibraryMenu.OnMenuOpened`. Called whenever the library overlay
-/// is opened, so newly-loaded chips that were never explicitly filed
-/// always still show up somewhere in the panel.
-///
-/// Chips named in `unsaved_drafts` (never-saved Ctrl+N-style drafts --
-/// see `ViewerState::unsaved_drafts`) are deliberately skipped, and so
-/// are dev-only builtins in release builds (see `dev_chips_hidden`):
-/// neither joins the collections (and thus can't reach disk through any
-/// prefs write) until/unless they legitimately belong there.
+/// Ensures `prefs.chip_collections` has an `OTHER` collection and that every chip in
+/// `library` belongs to *some* collection, adding any stragglers to `OTHER` -- mirrors the
+/// collection-syncing half of `ChipLibraryMenu.OnMenuOpened`.
 pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: &ChipLibrary, unsaved_drafts: &std::collections::HashSet<String>) {
 	sync_library_collections_gated(prefs, library, unsaved_drafts, !dev_chips_hidden())
 }
@@ -119,15 +98,11 @@ fn sync_library_collections_gated(
 	prefs.chip_collections[default_index].chips.extend(stray_names);
 }
 
-/// Drops dev-only builtins (`ChipType::is_dev_only`) from a project's
-/// in-memory palette bookkeeping -- every collection row plus any starred
-/// entries -- when running in a build that hides them (release; see
-/// `dev_chips_hidden`). Projects saved from a debug build may still carry
-/// those names on disk; pruning here (rather than at render time) keeps
-/// every row index the UI and its click handlers agree on. Nothing is
-/// written back to disk by this itself, and the library entry survives --
-/// placing a BUS still pairs with its terminus and sims of chips using
-/// `dev.RAM-8` keep working.
+/// Drops dev-only builtins (`ChipType::is_dev_only`) from a project's in-memory palette
+/// bookkeeping -- every collection row plus any starred entries -- when running in a build
+/// that hides them (release; see `dev_chips_hidden`). Projects saved from a debug build may
+/// still carry those names on disk; pruning here (rather than at render time) keeps every row
+/// index the UI and its click handlers agree on.
 pub(crate) fn prune_hidden_chips_from_palette(prefs: &mut ProjectDescription, library: &ChipLibrary) {
 	prune_hidden_chips_from_palette_gated(prefs, library, !dev_chips_hidden())
 }
@@ -260,13 +235,10 @@ pub(crate) fn delete_collection(prefs: &mut ProjectDescription, index: usize) {
 	prefs.chip_collections.remove(index);
 }
 
-/// Moves whatever's selected in the library panel one step within its
-/// own list (`force_jump = false`, mirrors the original's combined
-/// UP/DOWN buttons -- steps if it can, otherwise falls back to a jump),
-/// or straight into the previous/next collection outright
-/// (`force_jump = true`, mirrors the separate JUMP UP/DOWN buttons).
-/// Only chip rows support jumping; collections and starred rows just
-/// reorder within their own list either way.
+/// Moves whatever's selected in the library panel one step within its own list (`force_jump =
+/// false`, mirrors the original's combined UP/DOWN buttons -- steps if it can, otherwise
+/// falls back to a jump), or straight into the previous/next collection outright (`force_jump
+/// = true`, mirrors the separate JUMP UP/DOWN buttons).
 pub(crate) fn move_selected_library_row(v: &mut ViewerState, down: bool, force_jump: bool) {
 	match v.library_selection {
 		LibrarySelection::Chip(ci, chi) => {

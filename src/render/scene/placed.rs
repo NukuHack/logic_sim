@@ -174,32 +174,25 @@ pub fn place_sub_chips_into<'a>(chip: &'a ChipDescription, library: &'a ChipLibr
 	}
 }
 
-/// Drops every cached [`TypeLayout`] entry. Not required for correctness
-/// (`type_layout` self-invalidates via `Fingerprint` comparison whenever a
-/// chip's definition actually changes), but callers that swap out or
-/// reload a whole `ChipLibrary` wholesale (e.g. loading a different
-/// project) can call this to release memory held for chip names that no
-/// longer exist rather than letting them linger until each name happens to
-/// get reused.
+/// Drops every cached [`TypeLayout`] entry. Not required for correctness (`type_layout` self-
+/// invalidates via `Fingerprint` comparison whenever a chip's definition actually changes),
+/// but callers that swap out or reload a whole `ChipLibrary` wholesale (e.g. loading a
+/// different project) can call this to release memory held for chip names that no longer
+/// exist rather than letting them linger until each name happens to get reused.
 pub fn clear_type_layout_cache() {
 	TYPE_LAYOUT_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-/// A [`place_sub_chips_into`] `out` buffer that can live inside a
-/// long-lived struct (e.g. `ViewerState`), despite `PlacedSubChip` being
-/// generic over the borrowed lifetime of whichever `chip`/`library` it was
-/// last filled from -- a lifetime that's different (and unrelated) every
-/// single call, since a fresh `chip`/`library` borrow is taken each frame.
-/// [`place_sub_chips_into`] itself can't be reused this way as a *stored*
-/// field for the same reason a `Vec<PlacedSubChip<'a>>` can't be a struct
-/// field without infecting the whole struct with `'a`: only [`Self::fill`]
-/// (called fresh each frame, with that frame's actual `'a` in scope) can
-/// name the real lifetime.
-///
-/// Internally stored as `Vec<PlacedSubChip<'static>>` purely so the field
-/// itself has a nameable, lifetime-free type. That's sound *only* because
-/// the vec is always emptied at the start of every [`Self::fill`] call
-/// before anything is reinterpreted -- see the safety comment there.
+/// A [`place_sub_chips_into`] `out` buffer that can live inside a long-lived struct (e.g.
+/// `ViewerState`), despite `PlacedSubChip` being generic over the borrowed lifetime of
+/// whichever `chip`/`library` it was last filled from -- a lifetime that's different (and
+/// unrelated) every single call, since a fresh `chip`/`library` borrow is taken each frame.
+/// [`place_sub_chips_into`] itself can't be reused this way as a *stored* field for the same
+/// reason a `Vec<PlacedSubChip<'a>>` can't be a struct field without infecting the whole
+/// struct with `'a`: only [`Self::fill`] (called fresh each frame, with that frame's actual
+/// `'a` in scope) can name the real lifetime. That's sound *only* because the vec is always
+/// emptied at the start of every [`Self::fill`] call before anything is reinterpreted -- see
+/// the safety comment there.
 #[derive(Default)]
 pub struct PlacedBuf(Vec<PlacedSubChip<'static>>);
 
@@ -208,25 +201,16 @@ impl PlacedBuf {
 		Self(Vec::new())
 	}
 
-	/// Refills this buffer from scratch for `chip`/`library` -- equivalent
-	/// to calling [`place_sub_chips_into`] against a cleared `out` -- and
-	/// returns it borrowed at `chip`/`library`'s lifetime. Reuses the same
-	/// backing allocation call over call (growing, never shrinking, past
-	/// its high-water mark of subchips-in-one-chip), the same benefit
-	/// [`place_sub_chips_into`] gives any other caller passing a
-	/// caller-owned `out`.
+	/// Refills this buffer from scratch for `chip`/`library` -- equivalent to calling
+	/// [`place_sub_chips_into`] against a cleared `out` -- and returns it borrowed at
+	/// `chip`/`library`'s lifetime.
 	pub fn fill<'a>(&mut self, chip: &'a ChipDescription, library: &'a ChipLibrary) -> &mut Vec<PlacedSubChip<'a>> {
 		self.0.clear();
 
 		// SAFETY: `self.0` was just cleared, so at this point it holds zero
-		// `PlacedSubChip<'static>` values to reinterpret -- only spare
-		// backing capacity, whose byte layout (pointer/len/cap) doesn't
-		// depend on `PlacedSubChip`'s lifetime parameter at all. Transmuting
-		// an *empty* `Vec<PlacedSubChip<'static>>` into `Vec<PlacedSubChip<'a>>`
-		// is therefore sound for any `'a`: there is no actual `'static`
-		// (or stale prior-call) borrow anywhere in it to misuse, only room
-		// to push new elements, which `place_sub_chips_into` below fills in
-		// genuinely borrowed at `'a`.
+		// `PlacedSubChip<'static>` values to reinterpret -- only spare backing capacity, whose
+		// byte layout (pointer/len/cap) doesn't depend on `PlacedSubChip`'s lifetime parameter at
+		// all.
 		let out: &mut Vec<PlacedSubChip<'a>> = unsafe { std::mem::transmute(&mut self.0) };
 		place_sub_chips_into(chip, library, out);
 		out

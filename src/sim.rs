@@ -129,13 +129,8 @@ pub struct Simulator {
 	/// KeyMods-chip state: current modifier keys, as a `key_mods_bits` bitmask
 	/// (set by host).
 	pub key_modifiers: u32,
-	/// Player-driven states for the root chip's own input dev-pins, keyed by
-	/// pin id -- what clicking a switch's bit grid toggles. Deliberately
-	/// sparse: only pins the player has actually touched get an entry (a
-	/// handful of switches, not one state per pin in the library), and any
-	/// unlisted pin is driven as a connected LOW, exactly like an untouched
-	/// switch sitting at off. Cleared when the viewer switches to another
-	/// root chip and carried across in-place rebuilds.
+	/// Player-driven states for the root chip's own input dev-pins, keyed by pin id -- what
+	/// clicking a switch's bit grid toggles.
 	pub driven_inputs: HashMap<i32, PinState>,
 
 	/// Combinational-chip LUT cache + the "use caching at all" toggle --
@@ -175,13 +170,7 @@ impl Default for Simulator {
 	}
 }
 
-/// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's
-/// output pin. Deliberately *not* the raw bit positions winit's own
-/// `ModifiersState::bits()` happens to use internally (those don't fit in
-/// this chip's 8-bit pin, and aren't guaranteed stable across winit
-/// versions/platforms anyway) -- instead each modifier gets one bit here,
-/// set from winit's `shift_key()`/`control_key()`/`alt_key()`/`super_key()`
-/// accessors, which is what actually makes this platform-independent.
+/// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's output pin.
 pub mod key_mods_bits {
 	pub const SHIFT: u32 = 1 << 0;
 	pub const CONTROL: u32 = 1 << 1;
@@ -299,14 +288,8 @@ impl Simulator {
 		self.driven_inputs.clear();
 	}
 
-	/// Run a single simulation step: apply externally-driven input states,
-	/// then propagate signals through the whole chip graph. Buzzer outputs
-	/// land in `audio`, whose smoothing advances by the real time this step
-	/// took -- the exact beat of `Simulator.RunSimulationStep`. The
-	/// player-driven switches come from `self.driven_inputs`; `external_inputs`
-	/// is for one-shot programmatic stimulus (tests/hosts driving any pin by
-	/// address) and is applied on top. `audio` lives outside the simulator
-	/// (on the host app) so it survives rebuilds.
+	/// Run a single simulation step: apply externally-driven input states, then propagate
+	/// signals through the whole chip graph.
 	pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput], audio: &mut crate::audio::SimAudio) {
 		audio.init_frame();
 
@@ -862,13 +845,11 @@ impl Simulator {
 		self.pins[out_pin.0].state = PinState::from_parts(pixel_state, 0);
 	}
 
-	/// Captures every `SimChip`'s `internal_state`, keyed by its id-path
-	/// from the root (root's own id first, then each nested subchip id).
-	/// This is the volatile runtime memory -- RAM/ROM contents, pulse
-	/// countdowns, display buffers, clock phases -- that a rebuild would
-	/// otherwise reset (`build_internal_state`'s defaults), and what
-	/// `ViewerState::rebuild_sim` carries across so editing one wire no
-	/// longer wipes unrelated chips' memory.
+	/// Captures every `SimChip`'s `internal_state`, keyed by its id-path from the root (root's
+	/// own id first, then each nested subchip id). This is the volatile runtime memory --
+	/// RAM/ROM contents, pulse countdowns, display buffers, clock phases -- that a rebuild would
+	/// otherwise reset (`build_internal_state`'s defaults), and what `ViewerState::rebuild_sim`
+	/// carries across so editing one wire no longer wipes unrelated chips' memory.
 	pub fn capture_internal_states(&self) -> InternalStateMap {
 		let mut map = InternalStateMap::default();
 		self.capture_internal_states_at(self.root, &[], &mut map);
@@ -1259,14 +1240,11 @@ mod internal_state_carry_tests {
 		panic!("no Key chip with id {id}");
 	}
 
-	/// Regression test: rebinding a Key chip through the key-select popup
-	/// (which edits `SubChipDescription::internal_data` then calls
-	/// `ViewerState::rebuild_sim`, i.e. capture-old-states -> build-from-new-
-	/// description -> restore-old-states) must not have that restore step
-	/// silently undo the rebind by copying the *old* bound char back over
-	/// the freshly-built chip's `internal_state`. Key has no runtime-mutated
-	/// state for `restore_internal_states` to legitimately preserve -- see
-	/// `Simulator::restore_internal_states_at`'s doc comment.
+	/// Regression test: rebinding a Key chip through the key-select popup (which edits
+	/// `SubChipDescription::internal_data` then calls `ViewerState::rebuild_sim`, i.e. capture-
+	/// old-states -> build-from-new- description -> restore-old-states) must not have that
+	/// restore step silently undo the rebind by copying the *old* bound char back over the
+	/// freshly-built chip's `internal_state`.
 	#[test]
 	fn rebuilding_after_a_key_chip_rebind_does_not_revert_to_the_old_key() {
 		let mut library = ChipLibrary::new();

@@ -88,13 +88,9 @@ impl SceneGeometry {
 		);
 	}
 
-	/// A filled rectangle with an outline rendered behind it: an
-	/// `outline_colour` rect at the full `size`, with the `fill_colour`
-	/// rect inset by `border` on every side drawn on top, so the outline
-	/// reads as a border of that thickness rather than being fully
-	/// covered. The single implementation of the recurring
-	/// "outline behind slightly-inset fill" pattern (dev-pin bit cells,
-	/// popup panel borders, ...).
+	/// A filled rectangle with an outline rendered behind it: an `outline_colour` rect at the
+	/// full `size`, with the `fill_colour` rect inset by `border` on every side drawn on top, so
+	/// the outline reads as a border of that thickness rather than being fully covered.
 	pub fn add_outlined_rect(&mut self, centre: Vec2, size: Vec2, border: f32, fill_colour: Rgba, outline_colour: Rgba) {
 		self.add_rect(centre, size, outline_colour);
 		let inner = Vec2::new((size.x - border * 2.0).max(0.0), (size.y - border * 2.0).max(0.0));
@@ -120,22 +116,13 @@ impl SceneGeometry {
 		self.add_circle(centre, (radius - border).max(0.0), fill_colour, segments);
 	}
 
-	/// A rectangle of `size` centred on `centre`, with its corners rounded
-	/// to `radius` on whichever of its left/right vertical edges
-	/// `corners` selects (either, both, or neither -- the other edge's
-	/// corners stay sharp). Used to draw a chip's own
-	/// boundary dev-pins as a "partially rounded rectangle": rounded on
-	/// the side facing outward (away from the chip body) and square on
-	/// the side facing in, so they read visually distinct from a regular
-	/// pin's plain circle. `radius` is clamped to the shape's own
-	/// half-width/half-height so it can never overshoot into a bowtie.
-	///
-	/// Implemented as a fan of triangles from `centre` around the
-	/// perimeter (rounded corners contribute an arc of points, square
-	/// corners contribute just their one corner point), the same
-	/// triangulation strategy `add_circle` uses -- valid here because a
-	/// rounded rect (with radius capped to half the smaller dimension) is
-	/// always convex/star-shaped from its own centre.
+	/// A rectangle of `size` centred on `centre`, with its corners rounded to `radius` on
+	/// whichever of its left/right vertical edges `corners` selects (either, both, or neither --
+	/// the other edge's corners stay sharp). Implemented as a fan of triangles from `centre`
+	/// around the perimeter (rounded corners contribute an arc of points, square corners
+	/// contribute just their one corner point), the same triangulation strategy `add_circle`
+	/// uses -- valid here because a rounded rect (with radius capped to half the smaller
+	/// dimension) is always convex/star-shaped from its own centre.
 	pub fn add_rounded_rect(&mut self, centre: Vec2, size: Vec2, colour: Rgba, radius: f32, corners: RoundCorners, corner_segments: u32) {
 		let hw = size.x / 2.0;
 		let hh = size.y / 2.0;
@@ -243,14 +230,11 @@ impl SceneGeometry {
 		);
 	}
 
-	/// A thick polyline through `points`, drawn as one continuous ribbon
-	/// with proper mitered joins at every interior vertex -- unlike
-	/// drawing each segment as its own independent `add_line` rectangle
-	/// (which leaves a visible gap or overlap at any bend that isn't
-	/// perfectly straight), this keeps the two edges of the ribbon
-	/// touching exactly at each bend. See `offset_polyline` (used for both
-	/// this ribbon's two edges and, separately, for laying out each
-	/// individual bit-strand's own centreline) for the actual join maths.
+	/// A thick polyline through `points`, drawn as one continuous ribbon with proper mitered
+	/// joins at every interior vertex -- unlike drawing each segment as its own independent
+	/// `add_line` rectangle (which leaves a visible gap or overlap at any bend that isn't
+	/// perfectly straight), this keeps the two edges of the ribbon touching exactly at each
+	/// bend.
 	pub fn add_polyline(&mut self, points: &[Vec2], thickness: f32, colour: Rgba) {
 		if points.len() < 2 {
 			return;

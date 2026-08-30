@@ -1,14 +1,9 @@
-//! Chip-customization state machine (`Overlay::CustomizeChip`): owns the
-//! cloned [`ChipDescription`] being customized plus whatever grab/resize
-//! interaction is in flight, applies the interactions between frames
-//! against the last-built [`PreviewLayout`], and commits the draft back
-//! onto the library entry on Confirm -- mirroring
-//! `ChipSaveMenu`/`ChipCustomizationMenu`'s "edit a preview copy, write
-//! through on confirm" shape.
-//!
-//! Rendering lives across the module boundary in
-//! [`crate::render::customize_ui`] (plain data in, frames out); this
-//! module holds everything stateful.
+//! Chip-customization state machine (`Overlay::CustomizeChip`): owns the cloned
+//! [`ChipDescription`] being customized plus whatever grab/resize interaction is in flight,
+//! applies the interactions between frames against the last-built [`PreviewLayout`], and
+//! commits the draft back onto the library entry on Confirm -- mirroring
+//! `ChipSaveMenu`/`ChipCustomizationMenu`'s "edit a preview copy, write through on confirm"
+//! shape.
 
 use crate::description::{ChipDescription, DisplayDescription, NameLocation};
 use crate::render::customize_ui::{default_display_scale, display_entries, CustomizeCtx, CustomizeFrameOut, CustomizeInteraction};

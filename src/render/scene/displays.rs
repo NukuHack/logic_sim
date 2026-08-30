@@ -1,19 +1,5 @@
-//! Embedded chip-display rendering ("customize" feature): the live
-//! display surfaces a chip can carry inside its own body. Ported from
-//! `DevSceneDrawer.DrawSubchipDisplays`/`DrawDisplayWithBackground`/
-//! `DrawDisplay` -- each of a chip's `displays` entries shows one of its
-//! own display-type subchips (7-segment / RGB / dot / LED) at an offset
-//! and scale inside the chip body.
-//!
-//! Content is clipped to the owning chip's body rect (the original masks
-//! via a shader scope; here every primitive is intersected with the clip
-//! rect instead), and -- when asked -- any display whose content doesn't
-//! fit entirely inside the body gets a translucent red quad drawn over
-//! its full extent, mirroring the original's out-of-bounds indicator.
-//! A custom chip's own embedded displays recurse into their children,
-//! descending one simulation scope per level so live state keeps
-//! resolving (`PinStateLookup::enter_scope`); scopes that can't be
-//! descended draw blank, matching the original's `sim == null` branches.
+//! Embedded chip-display rendering ("customize" feature): the live display surfaces a chip
+//! can carry inside its own body.
 
 use crate::description::{ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, SubChipDescription};
 use crate::render::foundation::SceneGeometry;
@@ -68,16 +54,12 @@ impl ClipRect {
 	}
 }
 
-/// Natural world-space footprint of one display at scale 1 -- chosen so
-/// **scale 1 reproduces the placed component's visible content exactly**
-/// (the brief for embedded displays): the originals' builtin display
-/// chips carry a self-display whose `Scale` equals their content width --
-/// 7-segment `1.0` (body `GridSize*10` minus insets), dot `1.5`
-/// (pin-stack height `1.75` minus `GridSize*2`), RGB `2.375`
-/// (`GridSize*21` body), LED `0.1875` (`0.25` body minus
-/// `GridSize*0.5`). Heights follow each painter's aspect (7-segment is
-/// 1 x 1.75; the rest square). `None` for chip types that can't be shown
-/// as an embedded display.
+/// Natural world-space footprint of one display at scale 1 -- chosen so **scale 1 reproduces
+/// the placed component's visible content exactly** (the brief for embedded displays): the
+/// originals' builtin display chips carry a self-display whose `Scale` equals their content
+/// width -- 7-segment `1.0` (body `GridSize*10` minus insets), dot `1.5` (pin-stack height
+/// `1.75` minus `GridSize*2`), RGB `2.375` (`GridSize*21` body), LED `0.1875` (`0.25` body
+/// minus `GridSize*0.5`).
 pub fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
 	match chip_type {
 		ChipType::SevenSegmentDisplay => Some(Vec2::new(1.0, 1.75)),
@@ -192,21 +174,8 @@ pub(crate) fn draw_placed_displays_for(
 	draw_subchip_displays(geo, sub.centre, sub.size, &desc.sub_chips, &desc.displays, library, scoped.as_ref(), desc.colour, false);
 }
 
-/// Draws every embedded display of a chip, clipped to the body rect at
-/// (`chip_centre`, `chip_size`). Display entries resolve through
-/// `owner_sub_chips` -- the owning chip's own sub-chip list whose ids the
-/// entries reference; entries resolving to nothing display-carrying are
-/// skipped, same as the original's "display has been deleted by player"
-/// tolerance. `chip_colour` tints the border around each display (alpha 0
-/// falls back to the theme default). With `mark_out_of_bounds`, displays
-/// sticking out of the body are flagged with a translucent red quad over
-/// their full extent (customize preview).
-///
-/// A custom-chip entry cascades: its target chip's own displays merge in
-/// wholesale, positions/scales composing down the levels and backed by
-/// one quad over the union -- mirroring `DrawDisplay`'s `ChildDisplays`
-/// recursion plus the bounds-accumulating backing of
-/// `DrawDisplayWithBackground`.
+/// Draws every embedded display of a chip, clipped to the body rect at (`chip_centre`,
+/// `chip_size`).
 #[allow(clippy::too_many_arguments)] // one painter entry covering clip/colour/flag knobs
 pub fn draw_subchip_displays(
 	geo: &mut SceneGeometry,

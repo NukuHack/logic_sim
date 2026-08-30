@@ -61,15 +61,9 @@ impl ContextTarget {
 	}
 }
 
-/// Builds the row list for a right-click popup opened on a placed
-/// subchip of type `chip_name` -- shared by the canvas-component and (for
-/// "Open"'s enabled state) library-row cases so the two stay consistent.
-/// Every component gets "Label"; "Configure" is only offered for the
-/// handful of chip types that actually have configurable
-/// `internal_data` (see `NamingPurpose`/`KeySelectPurpose`'s docs for
-/// what each one edits); "Open"/"Delete" are canvas-only (a library row
-/// has no wires to cascade-delete and *is* the definition, not an
-/// instance of it, so there's nothing to "open" beyond switching to it).
+/// Builds the row list for a right-click popup opened on a placed subchip of type `chip_name`
+/// -- shared by the canvas-component and (for "Open"'s enabled state) library-row cases so
+/// the two stay consistent.
 pub(crate) fn context_menu_items_for_component(library: &ChipLibrary, chip_name: &str) -> Vec<ContextMenuItem> {
 	let mut items = vec![ContextMenuItem::new_enabled("Open", ContextMenuAction::Open, is_custom_chip(library, chip_name))];
 	// Only player-authored chips can be *viewed* -- builtins have no
@@ -87,14 +81,12 @@ pub(crate) fn context_menu_items_for_component(library: &ChipLibrary, chip_name:
 	items
 }
 
-/// Un-stars `name` (a plain chip, never a collection -- see
-/// [`ContextTarget::BarChip`]'s docs) from the right-click popup on its own
-/// bottom-bar button, and immediately persists the change. Unlike
-/// `EditorAction::ToggleStarred` (which only mutates `v.prefs` in memory,
-/// relying on the library overlay's own exit/Tab handling to save when
-/// the player eventually leaves it), this has no such exit event to
-/// piggyback on -- the bottom bar is usable with the library closed --
-/// so it saves right away, the same way `EditorAction::PlaceChip` does
+/// Un-stars `name` (a plain chip, never a collection -- see [`ContextTarget::BarChip`]'s
+/// docs) from the right-click popup on its own bottom-bar button, and immediately persists
+/// the change. Unlike `EditorAction::ToggleStarred` (which only mutates `v.prefs` in memory,
+/// relying on the library overlay's own exit/Tab handling to save when the player eventually
+/// leaves it), this has no such exit event to piggyback on -- the bottom bar is usable with
+/// the library closed -- so it saves right away, the same way `EditorAction::PlaceChip` does
 /// for the same reason.
 fn unstar_bottom_bar_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, name: &str) {
 	v.prefs.set_starred(name, false, false);

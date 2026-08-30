@@ -1,18 +1,4 @@
 //! Save-format upgrades for chips saved by older versions of the game.
-//! Ported from `DLS.SaveSystem.UpgradeHelper` (`ApplyVersionChanges` /
-//! `UpdateChipPre_2_1_5`): every custom chip whose own save file declares a
-//! `DLSVersion` at or before 2.1.4 gets the one-shot pre-2.1.5 migrations
-//! applied, then is re-stamped as 2.1.4-format so the work never runs
-//! twice. Unparseable (or absent) versions count as 2.0.0 -- the oldest
-//! format this build promises to open -- mirroring the original's
-//! `TryParse` fallback.
-//!
-//! The two migrations (both consequences of version 2.1.5's changes):
-//!  - ORANGE was inserted as colour option index 1, so every old palette
-//!    index above zero shifts up by one -- applied to input dev-pins'
-//!    colours and to subchips' output-pin colour overrides;
-//!  - display LEDs gained a colour option backed by `InternalData`, so an
-//!    LED subchip saved without any now gets the default instance data.
 
 use crate::description::{ChipDescription, Color};
 use crate::save_system::version::Version;

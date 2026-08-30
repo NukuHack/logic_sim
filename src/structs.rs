@@ -1,3 +1,7 @@
+//! Shared geometric primitives used throughout the simulator and renderer.
+//! Currently home to `Vec2`, a 2D float vector with basic arithmetic and
+//! component-wise operations.
+
 use std::ops::{Add, AddAssign, Div, Mul, Neg, Sub};
 
 use serde::{Deserialize, Serialize};

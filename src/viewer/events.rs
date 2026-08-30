@@ -111,14 +111,11 @@ impl ApplicationHandler for App {
 						v.camera.pan(Vec2::new(before.x - after.x, before.y - after.y));
 					}
 					v.last_cursor = cursor;
-					// Shift+right-drag delete in progress: whatever's newly
-					// under the cursor is added to the sweep (dimmed for
-					// visual feedback elsewhere) so the drag visibly eats
-					// through the circuit as the mouse moves, but nothing
-					// is actually deleted until the button is released --
-					// see `Self::delete_drag_hit` and
-					// `handle_right_mouse_button`'s release branch, which
-					// applies the whole sweep as a single undo step.
+					// Shift+right-drag delete in progress: whatever's newly under the cursor is added to
+					// the sweep (dimmed for visual feedback elsewhere) so the drag visibly eats through the
+					// circuit as the mouse moves, but nothing is actually deleted until the button is
+					// released -- see `Self::delete_drag_hit` and `handle_right_mouse_button`'s release
+					// branch, which applies the whole sweep as a single undo step.
 					if v.delete_drag.is_some() {
 						Self::delete_drag_hit(v, cursor)
 					}
@@ -137,18 +134,10 @@ impl ApplicationHandler for App {
 }
 
 impl App {
-	/// Left-click handling, routed through the screen's UI stack
-	/// (`ViewerState::stack` / `App::menu_stack`): the click is offered to
-	/// layers front-to-back and lands on the first one whose capture
-	/// region contains it -- exactly the priority chain the old hand-rolled
-	/// sequence of `last_*_buttons` checks implemented, now expressed as
-	/// stack order instead. A click that propagates past every UI layer is
-	/// a canvas click (`handle_canvas_click`); its *release* ends whatever
-	/// that press started over the canvas (a selection drag or a rubber
-	/// band -- see `chip_interaction::handle_canvas_release`; releases are
-	/// self-guarding, so a press a UI layer swallowed never reaches it).
-	/// Camera panning is *not* handled here -- see
-	/// `handle_middle_mouse_button`.
+	/// Left-click handling, routed through the screen's UI stack (`ViewerState::stack` /
+	/// `App::menu_stack`): the click is offered to layers front-to-back and lands on the first
+	/// one whose capture region contains it -- exactly the priority chain the old hand-rolled
+	/// sequence of `last_*_buttons` checks implemented, now expressed as stack order instead.
 	fn handle_mouse_button(&mut self, btn_state: ElementState, event_loop: &ActiveEventLoop) {
 		match &mut self.screen {
 			Screen::Menu => {
@@ -308,7 +297,7 @@ impl App {
 		if v.wire_edit.is_some() {
 			let world_pos = v.camera.screen_to_world(self.mouse_pos);
 			if let Some(bend) = crate::viewer::wire_edit::bend_hit(v, world_pos) {
-				v.wire_edit.as_mut().unwrap().selected_bend = Some(bend);
+				v.wire_edit.as_mut().expect("checked above").selected_bend = Some(bend);
 				crate::viewer::wire_edit::delete_selected_bend(v);
 				return;
 			}
@@ -324,13 +313,9 @@ impl App {
 			return;
 		}
 
-		// 1) A visible UI row under the cursor: a chip row in the library
-		// panel, or a chip button in the bottom bar / its open flyout.
-		// All screen-space, so they're looked up through the stack rather
-		// than hit-tested in world space like everything below. The
-		// lookup counts disabled buttons too: a greyed-out starred chip
-		// (cycle-blocked for *placement*) still offers its Open/Un-star
-		// popup -- the grey only guards left-click placement.
+		// 1) A visible UI row under the cursor: a chip row in the library panel, or a chip button
+		// in the bottom bar / its open flyout. All screen-space, so they're looked up through the
+		// stack rather than hit-tested in world space like everything below.
 		if let Some((layer, action)) = v.stack.topmost_button_or_disabled(self.mouse_pos).map(|(l, b)| (l, b.action.clone())) {
 			match (&layer, &action) {
 				(LayerId::Library, ViewerAction::Editor(EditorAction::SelectChipRow { collection, chip })) => {
@@ -434,13 +419,6 @@ impl App {
 	}
 
 	/// What a shift+right-drag delete step's cursor position landed on.
-	/// Only *records* the hit into `v.delete_drag` -- nothing is actually
-	/// deleted here. The whole sweep is applied in one shot as a single
-	/// undo entry once the button comes back up (see
-	/// `handle_right_mouse_button`'s release branch, which hands the
-	/// accumulated sweep to `undo::delete_batch_with_undo`). Dimming
-	/// already-swept elements while the drag is in progress is handled
-	/// elsewhere, reading `v.delete_drag` directly.
 	fn delete_drag_hit(v: &mut ViewerState, mouse_pos: Vec2) {
 		if v.delete_drag.is_none() {
 			v.delete_drag = Some(DeleteDragSweep::default());
@@ -481,15 +459,7 @@ impl App {
 		}
 	}
 
-	/// Middle-click handling: drags/pans the camera, exactly like left-click
-	/// used to. Split out from `handle_mouse_button` so left-click is free
-	/// to toggle input dev-pins instead, and right-click free for
-	/// `handle_right_mouse_button`'s context-menu popup. Panning starts
-	/// only where a press would propagate past every UI layer (i.e. land
-	/// on the canvas) -- the same "swallow clicks while a modal popup is
-	/// open" gate the old code applied by hand -- but releasing always
-	/// stops an in-flight drag, so a drag started on the canvas can end
-	/// anywhere.
+	/// Middle-click handling: drags/pans the camera, exactly like left-click used to.
 	fn handle_middle_mouse_button(&mut self, btn_state: ElementState) {
 		if let Screen::Viewer(v) = &mut self.screen {
 			if btn_state == ElementState::Pressed {
@@ -557,14 +527,11 @@ impl App {
 		let pressed = event.state == ElementState::Pressed;
 		// Feed the Key chip's held-key set on both press and release (not just press, unlike the
 		// shortcut handling below) since it needs to know when a key stops being held. The chip
-		// stores/compares its target letter in capitals, so lowercase 'a' must register as 'A' here.
-		//
-		// Typed characters are only *simulation input* while no UI surface wants them, though:
-		// `UiStack::keyboard_stop` says when the top of the stack owns typing outright (a text
-		// field, or the key-select popup capturing its next key as data) -- configuring a Key chip
-		// to 'A' must not itself hold 'A' down in the simulator. Only *presses* are gated;
-		// releases always go through, so a key that was being held when a text overlay opened can
-		// never get stuck "on".
+		// stores/compares its target letter in capitals, so lowercase 'a' must register as 'A'
+		// here. Typed characters are only *simulation input* while no UI surface wants them,
+		// though: `UiStack::keyboard_stop` says when the top of the stack owns typing outright (a
+		// text field, or the key-select popup capturing its next key as data) -- configuring a Key
+		// chip to 'A' must not itself hold 'A' down in the simulator.
 		if let Some(c) = crate::viewer::input::char_for_keys(event.physical_key, &event.logical_key) {
 			if let Screen::Viewer(v) = &mut self.screen {
 				if v.stack.keyboard_stop() && c.is_ascii_alphanumeric() {

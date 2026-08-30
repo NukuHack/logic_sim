@@ -84,13 +84,11 @@ fn parse_rom_word(text: &str) -> Option<u32> {
 	}
 }
 
-/// Commits `v.overlay_text_input` into the currently-selected cell of
-/// the open ROM editor (`EditorAction::RomConfirmCell`), then advances
-/// selection to the next cell (wrapping) and loads *its* value into the
-/// text field -- lets the player type several values in a row without
-/// re-clicking between each one. A parse failure leaves the selection
-/// and text field untouched (so the player can just fix their typo)
-/// rather than silently discarding it.
+/// Commits `v.overlay_text_input` into the currently-selected cell of the open ROM editor
+/// (`EditorAction::RomConfirmCell`), then advances selection to the next cell (wrapping) and
+/// loads *its* value into the text field -- lets the player type several values in a row
+/// without re-clicking between each one. A parse failure leaves the selection and text field
+/// untouched (so the player can just fix their typo) rather than silently discarding it.
 pub(crate) fn confirm_rom_cell(v: &mut ViewerState, status: &mut Option<String>) {
 	let Some(editor) = v.rom_editor.as_mut() else { return };
 	match parse_rom_word(&v.overlay_text_input) {
@@ -145,13 +143,9 @@ pub(crate) fn reset_rom_editor(v: &mut ViewerState) {
 	}
 }
 
-/// Serialises a ROM draft buffer as `editor_ui::ROM_GRID_COLS`-wide rows
-/// of `;`-separated decimal words, one row per line -- what
-/// `EditorAction::RomCopy` puts on the clipboard, and the shape
-/// `rom_parse_clipboard_text` reads back. Pure text-in/text-out so it's
-/// unit-testable without a real clipboard. Pads short buffers with 0s and
-/// ignores anything past `editor_ui::ROM_WORD_COUNT` words, so it's safe
-/// to call on a buffer of any length.
+/// Serialises a ROM draft buffer as `editor_ui::ROM_GRID_COLS`-wide rows of `;`-separated
+/// decimal words, one row per line -- what `EditorAction::RomCopy` puts on the clipboard, and
+/// the shape `rom_parse_clipboard_text` reads back.
 pub(crate) fn rom_copy_text(data: &[u32]) -> String {
 	let mut rows = Vec::with_capacity(editor_ui::ROM_WORD_COUNT / editor_ui::ROM_GRID_COLS);
 	for chunk in data.chunks(editor_ui::ROM_GRID_COLS).take(editor_ui::ROM_WORD_COUNT / editor_ui::ROM_GRID_COLS) {
@@ -161,16 +155,12 @@ pub(crate) fn rom_copy_text(data: &[u32]) -> String {
 	rows.join("\n")
 }
 
-/// Parses whatever came back from the clipboard into up to
-/// `editor_ui::ROM_WORD_COUNT` words -- the reverse of `rom_copy_text`,
-/// but deliberately more lenient than that exact shape: any run of
-/// non-numeric characters (commas, semicolons, newlines, plain
-/// whitespace) counts as a separator, so a plain list of numbers with
-/// nothing but `\n` between them (no `;`, no 16-per-row grouping) parses
-/// just as well as this editor's own CSV. Each token may have a leading
-/// `0x`/`0X` for hex, matching `parse_rom_word`'s single-cell rule.
-/// Unparseable tokens are skipped rather than aborting the whole paste.
-/// Returns `None` if nothing at all could be parsed.
+/// Parses whatever came back from the clipboard into up to `editor_ui::ROM_WORD_COUNT` words
+/// -- the reverse of `rom_copy_text`, but deliberately more lenient than that exact shape:
+/// any run of non-numeric characters (commas, semicolons, newlines, plain whitespace) counts
+/// as a separator, so a plain list of numbers with nothing but `\n` between them (no `;`, no
+/// 16-per-row grouping) parses just as well as this editor's own CSV. Unparseable tokens are
+/// skipped rather than aborting the whole paste.
 pub(crate) fn rom_parse_clipboard_text(text: &str) -> Option<Vec<u32>> {
 	let values: Vec<u32> = text
 		.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
@@ -248,14 +238,11 @@ pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<
 }
 
 /// Commits the pin-edit popup's draft onto its target boundary dev-pin
-/// (`EditorAction::ConfirmPinEdit`, shared by the popup's Confirm button
-/// and pressing Enter): renames it when a fresh, validly-sized name is
-/// typed (empty/too-long drafts leave the name alone, matching the
-/// disabled Confirm button), writes the picked colour swatch back to
-/// `PinDescription::colour`, and -- for multi-bit pins -- the chosen
-/// Decimal Display mode to `PinDescription::value_display_mode`, both of
-/// which scene rendering reads each frame. Always closes the popup
-/// afterwards.
+/// (`EditorAction::ConfirmPinEdit`, shared by the popup's Confirm button and pressing Enter):
+/// renames it when a fresh, validly-sized name is typed (empty/too-long drafts leave the name
+/// alone, matching the disabled Confirm button), writes the picked colour swatch back to
+/// `PinDescription::colour`, and -- for multi-bit pins -- the chosen Decimal Display mode to
+/// `PinDescription::value_display_mode`, both of which scene rendering reads each frame.
 pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 	if let Some(edit) = v.pin_edit.take() {
 		let trimmed = v.overlay_text_input.trim().to_string();

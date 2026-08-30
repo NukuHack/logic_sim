@@ -83,14 +83,9 @@ pub(crate) fn char_for_keys(physical_key: PhysicalKey, logical_key: &Key) -> Opt
 	None
 }
 
-/// Routes a key *press* to whichever surface currently owns the keyboard,
-/// per `ViewerState::stack.keyboard_target()` -- mirroring, guard-for-guard, the old
-/// single match over `v.overlay` states this replaces. Typed characters are only UI data when a
-/// text-field overlay owns focus; the app's key handler separately gates feeding them to Key chips on
-/// `UiStack::keyboard_stop()`. Leaving the editor (Escape with nothing
-/// left to cancel) goes through the unsaved-changes gate: either it opens
-/// [`Overlay::UnsavedChanges`] or it sets
-/// [`ViewerState::exit_requested`] for the app shell to act on.
+/// Routes a key *press* to whichever surface currently owns the keyboard, per
+/// `ViewerState::stack.keyboard_target()` -- mirroring, guard-for-guard, the old single match
+/// over `v.overlay` states this replaces.
 pub(crate) fn handle_viewer_key(
 	v: &mut ViewerState,
 	paths: &SavePaths,

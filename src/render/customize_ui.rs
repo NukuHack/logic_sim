@@ -1,16 +1,8 @@
 //! Chip customization workspace UI (`ChipSaveMenu`'s CUSTOMIZE +
-//! `ChipCustomizationMenu`/`CustomizationSceneDrawer`): an option column
-//! (name position, body colour, embedded-display list) beside a live
-//! preview of the chip being customized -- body, edge pins, name label
-//! and any displays already placed on it, drawn at true relative scale so
-//! resizing reads correctly.
-//!
-//! Interactions are click-driven, matching this port's canvas idioms:
-//! press a corner bracket to resize (click again to finish), pick a
-//! display up from the list or off the body (click to drop, Delete
-//! removes, Escape reverts), wheel-scroll the list, wheel-zoom the
-//! preview. Same philosophy as [`crate::render::editor_ui`]: plain data
-//! in, frame + hit-boxes out, no GPU types -- fully unit-testable.
+//! `ChipCustomizationMenu`/`CustomizationSceneDrawer`): an option column (name position, body
+//! colour, embedded-display list) beside a live preview of the chip being customized -- body,
+//! edge pins, name label and any displays already placed on it, drawn at true relative scale
+//! so resizing reads correctly.
 
 use crate::description::{ChipDescription, ChipType, DisplayDescription, NameLocation, PinBitCount};
 use crate::render::editor_ui::{EditorAction, EditorButton, EditorFrame};
@@ -582,16 +574,13 @@ fn rect_from_corners(a: Vec2, b: Vec2) -> UiRect {
 	UiRect::new(a.x.min(b.x), a.y.min(b.y), (a.x - b.x).abs(), (a.y - b.y).abs())
 }
 
-/// Transforms world-unit scene geometry into the frame's pseudo-screen
-/// space. The preview maps world y-up onto screen y-down (`centre_px` is
-/// the on-screen chip centre, so a world point lands at pixel
-/// `centre + (x, -y) * ppu`) -- but overlay layers get one y-compensation
-/// applied later by the render pipeline (`ui_kit::pin_geometry_to_screen`
-/// treats frame coordinates as screen pixels), so the geometry stored
-/// here must be flipped *again* to survive it: net effect, world +y ends
-/// up toward the top of the preview like everywhere else in the editor.
-/// Button rects and cursor maths stay in plain screen pixels and don't
-/// go through this.
+/// Transforms world-unit scene geometry into the frame's pseudo-screen space. The preview
+/// maps world y-up onto screen y-down (`centre_px` is the on-screen chip centre, so a world
+/// point lands at pixel `centre + (x, -y) * ppu`) -- but overlay layers get one
+/// y-compensation applied later by the render pipeline (`ui_kit::pin_geometry_to_screen`
+/// treats frame coordinates as screen pixels), so the geometry stored here must be flipped
+/// *again* to survive it: net effect, world +y ends up toward the top of the preview like
+/// everywhere else in the editor.
 fn append_world_to_frame(target: &mut SceneGeometry, world: &SceneGeometry, centre_px: Vec2, px_per_unit: f32, vh: f32) {
 	let map = |p: Vec2| Vec2::new(centre_px.x + p.x * px_per_unit, vh - centre_px.y + p.y * px_per_unit);
 	for v in &world.triangles {

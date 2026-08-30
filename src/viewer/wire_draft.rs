@@ -49,14 +49,11 @@ impl PendingWireEnd {
 	}
 }
 
-/// State for an in-progress wire placement: the endpoint it started
-/// from, plus any bend ("turn") points the player has since clicked on
-/// empty canvas space, in click order -- becomes the finished
-/// `WireDescription::points` once the wire is completed at a second,
-/// opposite-role endpoint (reversed first if that second endpoint turns
-/// out to be the wire's real *source*, since `points` always runs
-/// source-to-target). `None` on [`crate::viewer::state::ViewerState`] whenever no
-/// wire is being placed.
+/// State for an in-progress wire placement: the endpoint it started from, plus any bend
+/// ("turn") points the player has since clicked on empty canvas space, in click order --
+/// becomes the finished `WireDescription::points` once the wire is completed at a second,
+/// opposite-role endpoint (reversed first if that second endpoint turns out to be the wire's
+/// real *source*, since `points` always runs source-to-target).
 #[derive(Debug, Clone)]
 pub(crate) struct PendingWire {
 	pub(crate) start: PendingWireEnd,

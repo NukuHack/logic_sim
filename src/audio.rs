@@ -1,11 +1,5 @@
-//! Buzzer audio synthesis, ported from DLS's `DLS.Simulation.SimAudio`,
-//! `AudioState` and the sample-processing half of Unity's `AudioUnity`.
-//! Split along the same seam as the original: [`SimAudio`] is the
-//! simulation-side note registry (advanced once per simulation step --
-//! see [`crate::sim::Simulator::run_simulation_step`]), [`AudioState`]
-//! turns the current amplitude mix into a waveform sample, and
-//! [`spawn_player`] runs the real output device, applying the gain +
-//! soft-clip stage `AudioUnity.OnAudioFilterRead` performs.
+//! Buzzer audio synthesis, ported from DLS's `DLS.Simulation.SimAudio`, `AudioState` and the
+//! sample-processing half of Unity's `AudioUnity`.
 
 use std::sync::{Arc, Mutex};
 
@@ -221,14 +215,11 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	let sample_rate = config.sample_rate() as f64;
 	let channels = config.channels() as usize;
 	let mut config: cpal::StreamConfig = config.into();
-	// Pin a generous period instead of accepting the device default: cpal's
-	// ALSA backend pairs the default negotiation with only a two-period ring
-	// (here: 2048-frame periods => ~85 ms total buffer), which rides out
-	// stalls that would underrun a ~10 ms period -- routine under load even
-	// when outputting silence (the errors also fire while no buzzer sounds,
-	// since the stream runs from app start either way). Buzzer audio has no
-	// interactive-latency requirement (the mix follows the simulation), so
-	// trading ~43 ms of latency for ~85 ms of buffer is free.
+	// Pin a generous period instead of accepting the device default: cpal's ALSA backend pairs
+	// the default negotiation with only a two-period ring (here: 2048-frame periods => ~85 ms
+	// total buffer), which rides out stalls that would underrun a ~10 ms period -- routine
+	// under load even when outputting silence (the errors also fire while no buzzer sounds,
+	// since the stream runs from app start either way).
 	config.buffer_size = cpal::BufferSize::Fixed(AUDIO_PERIOD_FRAMES);
 	// Sample count since start -- dividing by the rate reconstructs the
 	// callback's exact time without float drift accumulating per sample.
@@ -240,17 +231,8 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 			config,
 			move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
 				let mut time = samples_elapsed_callback.load(std::sync::atomic::Ordering::Relaxed) as f64 / sample_rate;
-				// Poison recovery, not just a failed lock: an audio panic on
-				// either side must degrade to silence, never to repeating
-				// whatever stale bytes were last left in the buffer.
-				//
-				// The lock is held only for a ~3 KB array copy: the mix
-				// itself (up to 20 harmonics per sounding slot, per frame)
-				// runs on the snapshot outside it. Synthesizing under the
-				// lock made this RT thread block the simulation worker for
-				// milliseconds per period -- and queue behind its batch
-				// holds -- which is exactly how a well-buffered stream
-				// still underruns.
+				// Poison recovery, not just a failed lock: an audio panic on either side must degrade to
+				// silence, never to repeating whatever stale bytes were last left in the buffer.
 				let (freqs, amplitudes) = {
 					let state = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 					(*state.sim_audio.freqs_all(), *state.sim_audio.amplitudes())
@@ -273,19 +255,12 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	Ok(AudioPlayer { _stream: stream })
 }
 
-/// Asks rtkit to promote cpal's ALSA worker thread to SCHED_FIFO.
-///
-/// The worker is plain SCHED_OTHER otherwise, and long system/process stalls
-/// (render-path hitches, CPU saturation) then leave it unable to feed the
-/// device in time -- reported as `BufferUnderrun` errors even in total
-/// silence. Realtime scheduling lets it run the moment a stall lifts; the
-/// enlarged period set by [`AUDIO_PERIOD_FRAMES`] covers the rest. No-op off
-/// Linux (the thread name and /proc scan are ALSA/Linux specifics).
-///
-/// Fire-and-forget on a helper thread (dbus setup must not delay startup),
-/// degrading silently wherever rtkit isn't running or refuses the request:
-/// audio then just behaves as before. Pure-zbus, so no system dbus headers
-/// are needed to build.
+/// Asks rtkit to promote cpal's ALSA worker thread to SCHED_FIFO. The worker is plain
+/// SCHED_OTHER otherwise, and long system/process stalls (render-path hitches, CPU
+/// saturation) then leave it unable to feed the device in time -- reported as
+/// `BufferUnderrun` errors even in total silence. Fire-and-forget on a helper thread (dbus
+/// setup must not delay startup), degrading silently wherever rtkit isn't running or refuses
+/// the request: audio then just behaves as before.
 #[cfg(target_os = "linux")]
 fn promote_worker_to_realtime() {
 	std::thread::spawn(|| {

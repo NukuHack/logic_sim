@@ -1,12 +1,5 @@
-//! Builds drawable geometry for one "view" of a chip (i.e. what the editor shows when you open a
-//! custom chip: its subchips, each subchip's pins, and the wires between them). This is the
-//! scene-graph half of the renderer -- pure data in, triangles out, no wgpu types -- so it can be
-//! unit tested without a GPU. Mirrors (a first-pass subset of) `DLS.Graphics.World.DevSceneDrawer`.
-//!
-//! Split by concern: [`lookup`] (pin-state queries), [`placed`] (subchip placement), [`wires`]
-//! (wire drawing/hit-testing/deletion), [`pins`] (pin drawing/hit-testing), [`components`]
-//! (component bodies + displays), and [`grid`] (the canvas background), all composed here by
-//! [`build_scene`] on top of [`crate::render::foundation`]'s primitives.
+//! Builds drawable geometry for one "view" of a chip (i.e. what the editor shows when you
+//! open a custom chip: its subchips, each subchip's pins, and the wires between them).
 
 pub mod components;
 pub mod displays;
@@ -36,13 +29,9 @@ pub use placed::{clear_type_layout_cache, place_sub_chips, place_sub_chips_into,
 pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};
 pub use wires::{delete_wire, delete_wire_old, delete_wire_segment};
 
-/// Finds whichever placed subchip's body (as laid out by
-/// [`place_sub_chips`]) contains `world_pos`, if any -- used to resolve a
-/// right-click on the canvas to "which component did the player click".
-/// Iterates back-to-front (last-placed first) so, on the rare case two
-/// bodies overlap, the one actually drawn on top (and thus visible to the
-/// player) is the one that gets hit, matching `components::draw_component`'s
-/// draw order.
+/// Finds whichever placed subchip's body (as laid out by [`place_sub_chips`]) contains
+/// `world_pos`, if any -- used to resolve a right-click on the canvas to "which component did
+/// the player click".
 pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec2) -> Option<&'b PlacedSubChip<'a>> {
 	placed.iter().rev().find(|p| point_in_rect(world_pos, p.centre, p.size))
 }
@@ -132,12 +121,11 @@ impl WireSpans {
 	}
 
 	/// Every wire with *either* endpoint belonging to `owner_ids` -- unlike
-	/// [`Self::fully_within`], this also catches a wire that only has one
-	/// end swept up by a delete-drag (the other end's component is
-	/// untouched but the wire itself still vanishes with whichever
-	/// component it's attached to). Used to preview a delete-drag: every
-	/// wire that release would actually remove fades out along with its
-	/// component(s), rather than just the ones fully internal to the set.
+	/// [`Self::fully_within`], this also catches a wire that only has one end swept up by a
+	/// delete-drag (the other end's component is untouched but the wire itself still vanishes
+	/// with whichever component it's attached to). Used to preview a delete-drag: every wire
+	/// that release would actually remove fades out along with its component(s), rather than
+	/// just the ones fully internal to the set.
 	pub fn touching<'a>(&'a self, owner_ids: &'a std::collections::HashSet<i32>) -> impl Iterator<Item = &'a WireEndpoints> {
 		self.spans.values().filter(move |w| owner_ids.contains(&w.owners.0) || owner_ids.contains(&w.owners.1))
 	}
@@ -169,18 +157,9 @@ pub fn build_scene_with_spans(
 	(geo, spans, wire_spans)
 }
 
-/// Same as [`build_scene_with_spans`], but writes into a caller-owned `geo`
-/// instead of returning a freshly allocated one, and lays out subchips
-/// into a caller-owned `placed_buf` instead of allocating a fresh
-/// `Vec<PlacedSubChip>` every call. `geo` is `.clear()`ed first and
-/// `placed_buf` is refilled from scratch (see [`PlacedBuf::fill`]) --
-/// callers who rebuild every frame (e.g. `viewer::frame`) should keep one
-/// persistent `SceneGeometry` and one persistent `PlacedBuf` around and
-/// pass both in here each time: `Vec::clear()` keeps its backing
-/// allocation, so a steady-state frame (same rough vertex/label/subchip
-/// count as last frame) does zero heap allocation for either buffer, only
-/// reallocating if the scene actually grows past its previous high-water
-/// mark.
+/// Same as [`build_scene_with_spans`], but writes into a caller-owned `geo` instead of
+/// returning a freshly allocated one, and lays out subchips into a caller-owned `placed_buf`
+/// instead of allocating a fresh `Vec<PlacedSubChip>` every call.
 pub fn build_scene_with_spans_into(
 	geo: &mut SceneGeometry,
 	placed_buf: &mut PlacedBuf,
@@ -198,15 +177,12 @@ pub fn build_scene_with_spans_into(
 	// land on a subchip (as opposed to one of this chip's own dev-pins).
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 
-	// Draw order is a simple four-layer stack, back to front (no depth buffer, so draw order is z-order):
-	// wires, then pins, then component bodies + name labels on top, then any
-	// display surfaces those components embed inside their own bodies (the
-	// "customize" feature -- a display must cover its host's body, never the
-	// other way around). Name labels are hover-gated to whichever thing
-	// `hover_world_pos` lands on; pins are checked first so an edge-hover
-	// shows the pin. Components and their displays draw interleaved (rather
-	// than as two whole layers) purely so each component's triangles land in
-	// one contiguous span.
+	// Draw order is a simple four-layer stack, back to front (no depth buffer, so draw order is
+	// z-order): wires, then pins, then component bodies + name labels on top, then any display
+	// surfaces those components embed inside their own bodies (the "customize" feature -- a
+	// display must cover its host's body, never the other way around). Components and their
+	// displays draw interleaved (rather than as two whole layers) purely so each component's
+	// triangles land in one contiguous span.
 	let wire_spans = wires::draw_wires(geo, chip, placed.as_slice(), &owner_to_placed, pin_state);
 	let effective_hover = if labels_visible { hover_world_pos } else { None };
 	let hovered_pin_name = pins::draw_pins(geo, chip, placed.as_slice(), pin_state, effective_hover);

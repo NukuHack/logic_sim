@@ -225,16 +225,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 	desc
 }
 
-/// Serialize back to the on-disk JSON shape. Editor-only fields not tracked
-/// by `ChipDescription` (position, colour, wire points, ...) are written
-/// with sensible defaults, so round-tripping through this loader will lose
-/// layout info -- fine for the simulation core, not yet a full save-system
-/// replacement for the editor.
-///
-/// Library-free: each placed subchip's `OutputPinColourInfo` is emitted as
-/// its stored override list (empty array when none). Saving a *project*
-/// chip should prefer [`serialize_chip_description_for_save`], which
-/// resolves the Unity-exact shape against the chip library instead.
+/// Serialize back to the on-disk JSON shape.
 pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<String> {
 	serialize_chip_description_impl(desc, None)
 }
@@ -330,17 +321,13 @@ fn serialize_chip_description_impl(desc: &ChipDescription, library: Option<&Chip
 	serde_json::to_string(&raw)
 }
 
-/// The on-disk `OutputPinColourInfo` for placed subchip `s`:
-///
-/// - with no library context (or an unresolvable chip name): the stored
-///   override list as-is;
-/// - a bus subchip: `None` -- serialized as JSON `null`, exactly what
-///   `DescriptionCreator.CreateSubChipDescription` writes (a bus' pin
-///   colours follow live wire state, so persisting them would make Unity's
-///   `UnsavedChangeDetector` flag phantom edits right after opening);
-/// - anything else: one entry per output pin of the library description --
-///   the subchip's own override where one exists, else that pin's default
-///   colour.
+/// The on-disk `OutputPinColourInfo` for placed subchip `s`: - with no library context (or an
+/// unresolvable chip name): the stored override list as-is; - a bus subchip: `None` --
+/// serialized as JSON `null`, exactly what `DescriptionCreator.CreateSubChipDescription`
+/// writes (a bus' pin colours follow live wire state, so persisting them would make Unity's
+/// `UnsavedChangeDetector` flag phantom edits right after opening); - anything else: one
+/// entry per output pin of the library description -- the subchip's own override where one
+/// exists, else that pin's default colour.
 fn json_pin_colour_info(s: &SubChipDescription, library: Option<&ChipLibrary>) -> Option<Vec<JsonPinColourInfo>> {
 	let stored = || s.pin_colour_info.iter().map(|(pin_id, colour)| JsonPinColourInfo { pin_colour: *colour, pin_id: *pin_id }).collect::<Vec<_>>();
 	let Some(library) = library else { return Some(stored()) };

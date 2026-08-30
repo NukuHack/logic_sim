@@ -1,36 +1,15 @@
-//! The simulation's own background thread, porting `DLS.Simulation.SimThread`'s
-//! role (and `Project.StartSimulation`/`NotifyExit`): the whole `Simulator`
-//! lives behind a mutex shared with the main thread, and a dedicated worker
-//! steps it against the project's target rate -- using the exact pacing
-//! math already ported in [`crate::viewer::sim_timing`] (tick-debt
-//! accumulator + rolling throughput window) -- so simulation speed no
-//! longer tracks the render framerate.
-//!
-//! Division of labour mirrors the original's thread/main split:
-//! - main thread: builds/replaces simulators (`Project.LoadDevChipOrCreateNewIfDoesntExist`),
-//!   toggles player-driven input dev-pins straight into the shared
-//!   simulator (`Simulator::driven_inputs`), flips pause/target-rate
-//!   prefs, and *reads* pin states freely for rendering (the read half of
-//!   `ViewedChip.UpdateStateFromSim`, which ran on the sim thread there --
-//!   here rendering simply locks the shared arena);
-//! - worker thread: applies those driven inputs every step and runs the
-//!   paced step loop, including the paused branch's decay-only
-//!   `UpdateInPausedState` beat and the single-step-while-paused counter.
-//!
-//! Execution model (why this beats stepping tick-by-tick): every lock is
-//! acquired once per *pass*, never once per *tick*. A pass grabs the arena
-//! and audio state in one scope, runs all currently-due ticks inside it,
-//! and gives the locks back -- so a catch-up burst costs two lock cycles
-//! total rather than two per tick, and the worker can't end up parked
-//! behind the realtime audio callback (which holds the same audio mutex
-//! for whole output periods) thousands of times a second. Passes are also
-//! time-sliced: if running flat out, the worker hands the arena back
-//! after [`PASS_TIME_BUDGET`] instead of monopolising it, keeping render
-//! latency bounded while leftover ticks stay owed as debt. Between passes
-//! that owe nothing, the worker naps exactly until the next tick falls
-//! due (bounded by [`MIN_IDLE_SLEEP`]/[`MAX_IDLE_SLEEP`]) -- the
-//! original's `Thread.SpinWait` busy-wait expressed without burning a
-//! core or waking on a fixed cadence into contention with the renderer.
+//! The simulation's own background thread, porting `DLS.Simulation.SimThread`'s role (and
+//! `Project.StartSimulation`/`NotifyExit`): the whole `Simulator` lives behind a mutex shared
+//! with the main thread, and a dedicated worker steps it against the project's target rate --
+//! using the exact pacing math already ported in [`crate::viewer::sim_timing`] (tick-debt
+//! accumulator + rolling throughput window) -- so simulation speed no longer tracks the
+//! render framerate. A pass grabs the arena and audio state in one scope, runs all currently-
+//! due ticks inside it, and gives the locks back -- so a catch-up burst costs two lock cycles
+//! total rather than two per tick, and the worker can't end up parked behind the realtime
+//! audio callback (which holds the same audio mutex for whole output periods) thousands of
+//! times a second. Passes are also time-sliced: if running flat out, the worker hands the
+//! arena back after [`PASS_TIME_BUDGET`] instead of monopolising it, keeping render latency
+//! bounded while leftover ticks stay owed as debt.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -258,13 +237,9 @@ fn spawn_worker(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: c
 		.expect("failed to spawn sim thread")
 }
 
-/// Runs up to `max_steps` simulation ticks under a single acquisition of
-/// both locks (`SimThread.Run`'s `RunSimulationStep`, with
-/// `stepsPerClockTransition` assigned once per batch instead of once per
-/// tick). Stops early once the pass has held the arena for
-/// [`PASS_TIME_BUDGET`] -- the caller puts un-run ticks back onto the
-/// debt -- so running flat out can't monopolise the arena away from the
-/// renderer. Returns how many steps actually ran.
+/// Runs up to `max_steps` simulation ticks under a single acquisition of both locks
+/// (`SimThread.Run`'s `RunSimulationStep`, with `stepsPerClockTransition` assigned once per
+/// batch instead of once per tick).
 fn run_steps_batch(sim: &Mutex<Simulator>, audio: &crate::audio::SharedAudioState, steps_per_clock_transition: u32, max_steps: u64) -> u64 {
 	let mut sim = lock_sim(sim);
 	let mut audio_guard = lock_audio(audio);
@@ -438,13 +413,10 @@ mod tests {
 		assert!(wait_until(Duration::from_secs(5), || h.avg_ticks_per_sec() > 0.0), "throughput window never measured");
 	}
 
-	/// Regression for the rework: sustained throughput has to land near the
-	/// target rate. The old loop woke on a fixed 200µs cadence and paid
-	/// two lock acquisitions (arena + realtime audio state) *per tick*,
-	/// which capped measured speed well below target even for a blank
-	/// chip; batching under one scope per pass must track the target
-	/// closely. Generous margins keep it stable on loaded/CI machines --
-	/// it only fails on gross pacing regressions.
+	/// Regression for the rework: sustained throughput has to land near the target rate. The old
+	/// loop woke on a fixed 200µs cadence and paid two lock acquisitions (arena + realtime audio
+	/// state) *per tick*, which capped measured speed well below target even for a blank chip;
+	/// batching under one scope per pass must track the target closely.
 	#[test]
 	fn sustained_throughput_tracks_the_target_rate() {
 		const TARGET: u32 = 40_000;

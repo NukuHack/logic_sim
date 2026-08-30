@@ -1,13 +1,6 @@
-//! Frame construction: rebuilds each screen's whole UI stack from live
-//! state, bottom-to-top -- the menu screen and its popup, or the viewer's
-//! canvas/bottom-bar/flyout/overlay-panel/context-menu layers. Input
-//! dispatch in the event handlers consults exactly what's built here.
-//!
-//! This is also where the frame syncs with the background simulation
-//! thread (see [`crate::viewer::sim_thread`]): prefs-derived pacing
-//! inputs (pause, target rate, clock speed) are pushed out, and the
-//! thread's measured speed / single-step counter are read back for the
-//! preferences panel and paused banner.
+//! Frame construction: rebuilds each screen's whole UI stack from live state, bottom-to-top
+//! -- the menu screen and its popup, or the viewer's canvas/bottom-bar/flyout/overlay-
+//! panel/context-menu layers.
 
 use crate::render::camera::Camera;
 use crate::render::context_menu;
@@ -84,14 +77,9 @@ fn paused_banner_geometry(paused_step_counter: u32, vw: f32, vh: f32) -> SceneGe
 	geo
 }
 
-/// The viewed-chips bar (`ViewedChipsBar.DrawViewedChipsBanner`): a
-/// full-width info strip pinned to the very top of the screen, showing the
-/// "Viewing: a > b" chain, with a Back button at its right edge for
-/// popping back to the parent chip. Geometry rects are in top-down screen
-/// pixels and are converted into the flipped "ui-world" space
-/// (`ui_kit::to_world`) that `pin_geometry_to_screen` un-flips; the
-/// returned Back hit-rect stays in raw pixels, matching how every other
-/// layer's buttons are hit-tested.
+/// The viewed-chips bar (`ViewedChipsBar.DrawViewedChipsBanner`): a full-width info strip
+/// pinned to the very top of the screen, showing the "Viewing: a > b" chain, with a Back
+/// button at its right edge for popping back to the parent chip.
 fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, vh: f32, top_y: f32) -> (SceneGeometry, UiRect) {
 	const BAR_H: f32 = 34.0;
 	const PAD: f32 = 12.0;
@@ -177,18 +165,12 @@ pub(crate) fn build_menu_stack(
 	menu_stack
 }
 
-/// Syncs the open chip's simulation thread with this frame's live state
-/// (the main-thread half of the original's `Project.Update` /
-/// `SimThread` split -- stepping itself happens on the worker):
-///
-/// - prefs-derived pacing inputs are pushed out (pause flag, target rate,
-///   clock speed), so the panel/shortcut paths only ever touch `prefs`;
-/// - the thread's measured ticks/second and paused single-step counter
-///   are read back for the preferences readout and paused banner.
-///
-/// Player-driven input dev-pins need no publishing here: their toggles go
-/// straight into the shared simulator's `driven_inputs` at click time
-/// (see `viewer::canvas`), where every step picks them up.
+/// Syncs the open chip's simulation thread with this frame's live state (the main-thread half
+/// of the original's `Project.Update` / `SimThread` split -- stepping itself happens on the
+/// worker): - prefs-derived pacing inputs are pushed out (pause flag, target rate, clock
+/// speed), so the panel/shortcut paths only ever touch `prefs`; - the thread's measured
+/// ticks/second and paused single-step counter are read back for the preferences readout and
+/// paused banner.
 fn update_viewer_sim(v: &mut ViewerState) {
 	v.sync_sim_clock_pref();
 	v.sim.set_paused(v.prefs.prefs_sim_paused);
@@ -239,16 +221,14 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		build_scene_with_spans_into(&mut v.chip_scene_buf, &mut v.placed_buf, root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
 	};
 
-	// A selection being dragged renders translucently -- deliberately the
-	// same read as a placement ghost -- by fading exactly the carried
-	// components' own geometry (bodies, labels, embedded displays), plus
-	// any wire that runs entirely *between* two carried components (which
-	// rides along rigidly with them, same as a duplicate-then-drag): those
-	// fade to the same alpha instead of stretching along at full strength.
-	// Wires with only one end carried stay opaque -- they genuinely
-	// stretch, since the other end hasn't moved. Fading happens here,
-	// before the scene merges with the grid layer, because the spans
-	// index into the chip scene's buffers alone.
+	// A selection being dragged renders translucently -- deliberately the same read as a
+	// placement ghost -- by fading exactly the carried components' own geometry (bodies,
+	// labels, embedded displays), plus any wire that runs entirely *between* two carried
+	// components (which rides along rigidly with them, same as a duplicate-then-drag): those
+	// fade to the same alpha instead of stretching along at full strength. Wires with only one
+	// end carried stay opaque -- they genuinely stretch, since the other end hasn't moved.
+	// Fading happens here, before the scene merges with the grid layer, because the spans index
+	// into the chip scene's buffers alone.
 	if let CanvasInteraction::MovingSelection { originals, .. } = &v.canvas_interaction {
 		for &(id, _) in originals {
 			if let Some(span) = component_spans.get(id) {
@@ -261,13 +241,10 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		}
 	}
 
-	// A shift+right-drag delete sweep in progress: every component and
-	// bare wire it's crossed so far fades out immediately (nothing is
-	// actually deleted yet -- that happens once as a single undo entry
-	// when the drag ends, see `App::handle_right_mouse_button`), so the
-	// sweep still *reads* as an instant delete as the cursor moves.
-	// `touching` (not `fully_within`) is used for the swept components'
-	// wires so a wire with only one end swept still vanishes with it.
+	// A shift+right-drag delete sweep in progress: every component and bare wire it's crossed
+	// so far fades out immediately (nothing is actually deleted yet -- that happens once as a
+	// single undo entry when the drag ends, see `App::handle_right_mouse_button`), so the sweep
+	// still *reads* as an instant delete as the cursor moves.
 	if let Some(sweep) = &v.delete_drag {
 		for &id in &sweep.components {
 			if let Some(span) = component_spans.get(id) {
@@ -291,13 +268,11 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		let bounds = bounding_box(&v.chip_scene_buf).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
 		match bounds {
 			Some((min, max)) => v.camera.fit_to_bounds(min, max, 0.15),
-			// No geometry at all -- e.g. a brand-new blank chip has no
-			// components/wires yet, so there's nothing to fit to. Fall back to
-			// a fixed, comfortable default instead of leaving whatever zoom the
-			// camera previously had (which is usually the untouched construction
-			// default of 1.0 -- since chips are sized in grid units of ~0.125,
-			// that reads as "zoomed all the way out" rather than a sane starting
-			// view of an empty canvas).
+			// No geometry at all -- e.g. a brand-new blank chip has no components/wires yet, so
+			// there's nothing to fit to. Fall back to a fixed, comfortable default instead of leaving
+			// whatever zoom the camera previously had (which is usually the untouched construction
+			// default of 1.0 -- since chips are sized in grid units of ~0.125, that reads as "zoomed
+			// all the way out" rather than a sane starting view of an empty canvas).
 			None => {
 				v.camera.position = Vec2::ZERO;
 				v.camera.zoom = DEFAULT_EMPTY_CHIP_ZOOM;

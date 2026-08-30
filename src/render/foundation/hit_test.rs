@@ -5,15 +5,9 @@
 
 use crate::structs::Vec2;
 
-/// A point-in-shape test matching `SceneGeometry::add_rounded_rect`'s
-/// actual drawn geometry exactly (same corner-rounding rules), so hover
-/// hit-testing lines up with what's on screen instead of assuming every
-/// pin is a plain circle. Corners flagged `round_left`/`round_right` are
-/// treated as a quarter-circle around the same arc centre `add_rounded_rect`
-/// uses; the flat middle "cross" (within the bounding box but outside any
-/// rounded corner's own box) always counts as inside, same as a square
-/// corner would. `radius` is clamped the same way `add_rounded_rect` clamps
-/// it, so callers can pass the exact same arguments used to draw the shape.
+/// A point-in-shape test matching `SceneGeometry::add_rounded_rect`'s actual drawn geometry
+/// exactly (same corner-rounding rules), so hover hit-testing lines up with what's on screen
+/// instead of assuming every pin is a plain circle.
 pub fn point_in_rounded_rect(point: Vec2, centre: Vec2, size: Vec2, radius: f32, round_left: bool, round_right: bool) -> bool {
 	let hw = size.x / 2.0;
 	let hh = size.y / 2.0;

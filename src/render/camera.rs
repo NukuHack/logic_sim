@@ -35,14 +35,12 @@ impl Camera {
 	}
 
 	/// Clamps a viewport size to a sane minimum (1x1) so `screen_to_world`/
-	/// `world_to_screen`/`view_proj_matrix` never divide by zero. A `0`
-	/// (or negative/NaN) viewport can genuinely happen for a frame or two
-	/// on some platforms -- e.g. the window's real size can arrive via a
-	/// `Resized` event *after* the very first frame is drawn -- and
-	/// dividing by it produces `Infinity`/`NaN` world-space geometry that
-	/// gets sent straight to the GPU, which some drivers handle very
-	/// badly (up to and including a hard crash) rather than just
-	/// misrendering the one bad frame.
+	/// `world_to_screen`/`view_proj_matrix` never divide by zero. A `0` (or negative/NaN)
+	/// viewport can genuinely happen for a frame or two on some platforms -- e.g. the window's
+	/// real size can arrive via a `Resized` event *after* the very first frame is drawn -- and
+	/// dividing by it produces `Infinity`/`NaN` world-space geometry that gets sent straight to
+	/// the GPU, which some drivers handle very badly (up to and including a hard crash) rather
+	/// than just misrendering the one bad frame.
 	fn sanitize_viewport(viewport: Vec2) -> Vec2 {
 		let x = if viewport.x.is_finite() { viewport.x.max(1.0) } else { 1.0 };
 		let y = if viewport.y.is_finite() { viewport.y.max(1.0) } else { 1.0 };
@@ -68,14 +66,8 @@ impl Camera {
 		self.viewport = Self::sanitize_viewport(Vec2::new(width, height));
 	}
 
-	/// Fit the camera so the world-space box `[min, max]` is fully visible,
-	/// with `padding_fraction` extra room on each side (e.g. 0.1 = 10%
-	/// margin). No-ops (keeps current zoom/position) if the box is
-	/// degenerate. Call this after building the first scene, and again
-	/// whenever the viewed chip changes, so content isn't lost off in the
-	/// weeds at the default zoom=1.0 (which shows ~viewport-pixels world
-	/// units across -- far too zoomed out for chips sized in grid units of
-	/// ~0.125).
+	/// Fit the camera so the world-space box `[min, max]` is fully visible, with
+	/// `padding_fraction` extra room on each side (e.g. 0.1 = 10% margin).
 	pub fn fit_to_bounds(&mut self, min: Vec2, max: Vec2, padding_fraction: f32) {
 		let width = (max.x - min.x).max(1e-4);
 		let height = (max.y - min.y).max(1e-4);

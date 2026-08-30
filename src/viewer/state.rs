@@ -17,13 +17,7 @@ use crate::{ChipLibrary, ProjectDescription};
 
 use crate::structs::Vec2;
 
-/// One editor panel from `render::editor_ui` that can sit in
-/// [`ViewerState::overlays`]. Overlays are entries of the live UI stack:
-/// several may be open at once, stacked bottom-to-top in open order
-/// (e.g. Ctrl+F pushes Search *on top of* an already-open Library, and
-/// Escape pops just the Search back off). The top-most overlay is the
-/// stack's keyboard target; only the Library leaves its bar buttons
-/// usable beneath it (see `viewer::frame`'s `bar_enabled`).
+/// One editor panel from `render::editor_ui` that can sit in [`ViewerState::overlays`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Overlay {
 	Library,
@@ -79,14 +73,10 @@ pub(crate) fn editor_action(action: editor_ui::EditorAction) -> ViewerAction {
 	ViewerAction::Editor(action)
 }
 
-/// What `Overlay::Naming`'s Confirm/Enter should actually *do* with the
-/// typed text once confirmed -- the popup itself (a title + one text
-/// field) is generic, reused for the project-rename prompt as well as
-/// every "Label"/"Configure" popup opened from a right-click context menu
-/// (see `apply_context_menu_action`). Defaults to `RenameProject` so the
-/// existing 'n' shortcut keeps working unchanged; every other variant is
-/// set right before opening the overlay and consumed (reset back to
-/// `RenameProject`) by `confirm_naming_popup`.
+/// What `Overlay::Naming`'s Confirm/Enter should actually *do* with the typed text once
+/// confirmed -- the popup itself (a title + one text field) is generic, reused for the
+/// project-rename prompt as well as every "Label"/"Configure" popup opened from a right-click
+/// context menu (see `apply_context_menu_action`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum NamingPurpose {
 	#[default]
@@ -114,13 +104,10 @@ pub(crate) enum KeySelectPurpose {
 	ConfigureKeyChar(i32),
 }
 
-/// One chip entered in view-only mode ("View" row of a placed component's
-/// right-click menu, mirroring `Project.EnterViewMode`): its definition's
-/// name, plus the chain of subchip ids leading to *its live instance*
-/// from the edited root chip (so the view keeps resolving across sim
-/// rebuilds -- ids are stable, arena indices are not). The stack sits
-/// above the edited chip: the bottom of the stack is what Ctrl+S saves
-/// and what edits land in; every entry above it is watch-only.
+/// One chip entered in view-only mode ("View" row of a placed component's right-click menu,
+/// mirroring `Project.EnterViewMode`): its definition's name, plus the chain of subchip ids
+/// leading to *its live instance* from the edited root chip (so the view keeps resolving
+/// across sim rebuilds -- ids are stable, arena indices are not).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ViewedChip {
 	pub(crate) name: String,
@@ -140,14 +127,11 @@ pub(crate) struct RomEditorState {
 	pub(crate) selected: usize,
 }
 
-/// Working state for the pin-edit popup (`Overlay::PinEdit`, mirroring
-/// `PinEditMenu`): which of the current root chip's own boundary dev-pins
-/// it's editing, plus the drafts of the two option rows -- the "Decimal
-/// Display" wheel selection (`display_mode_index`, an index into
-/// `ValueDisplayMode::ALL`, only meaningful for pins wider than one bit)
-/// and the colour-palette swatch pick (`colour`). The name draft lives in
-/// the shared `overlay_text_input` like every other text-field popup. All
-/// three are written back onto the pin only on Confirm.
+/// Working state for the pin-edit popup (`Overlay::PinEdit`, mirroring `PinEditMenu`): which
+/// of the current root chip's own boundary dev-pins it's editing, plus the drafts of the two
+/// option rows -- the "Decimal Display" wheel selection (`display_mode_index`, an index into
+/// `ValueDisplayMode::ALL`, only meaningful for pins wider than one bit) and the colour-
+/// palette swatch pick (`colour`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PinEditState {
 	pub(crate) is_input: bool,
@@ -241,23 +225,14 @@ pub(crate) struct ViewerState {
 	/// preferences/library overlays and written back to disk on Apply.
 	pub(crate) prefs: ProjectDescription,
 
-	/// Names (lower-cased) of custom chips that exist only in
-	/// [`Self::library`] so far -- created with Ctrl+N (or the blank chip
-	/// every project opens onto) but never saved with Ctrl+S. They stay
-	/// out of the library sidebar/collections and off disk entirely:
-	/// `sync_library_collections` skips them, so no prefs write can ever
-	/// persist one. Cleared by every successful save path (see
-	/// `viewer::save_flow`).
+	/// Names (lower-cased) of custom chips that exist only in [`Self::library`] so far --
+	/// created with Ctrl+N (or the blank chip every project opens onto) but never saved with
+	/// Ctrl+S.
 	pub(crate) unsaved_drafts: std::collections::HashSet<String>,
 
-	/// Names (lower-cased) of chips whose caching checkbox
-	/// (`ChipDescription::should_be_cached`, toggled via
-	/// `customize::toggle_force_cache`) has been manually flipped by the
-	/// user this session. Consulted at Save time
-	/// (`viewer::save_flow::resolve_should_cache`): a touched chip keeps
-	/// whatever the user landed on; an untouched one has its caching
-	/// flag re-derived from the auto-cache rules instead, so caching
-	/// never silently turns itself on for a chip nobody asked to cache.
+	/// Names (lower-cased) of chips whose caching checkbox (`ChipDescription::should_be_cached`,
+	/// toggled via `customize::toggle_force_cache`) has been manually flipped by the user this
+	/// session.
 	pub(crate) cache_toggle_touched: std::collections::HashSet<String>,
 
 	/// Pacing/throughput readouts fed back from the background simulation
@@ -339,16 +314,11 @@ pub(crate) struct ViewerState {
 	/// Toggled by Tab; defaults to `true` (labels shown on hover).
 	pub(crate) labels_visible: bool,
 
-	/// Persistent scratch buffer for the canvas's main chip scene, rebuilt
-	/// every frame via `render::scene::build_scene_with_spans_into`. Kept
-	/// here (rather than a fresh `SceneGeometry` per frame) so the
-	/// triangle/label `Vec`s are `.clear()`ed and reused instead of
-	/// reallocated -- a steady-state frame (roughly the same amount of
-	/// on-screen geometry as last frame) then costs zero heap allocation
-	/// for the scene itself. Named distinctly from `viewer::frame`'s local
-	/// `scene_geo` (the grid + this + overlays, merged fresh each frame
-	/// for the UI stack layer) to keep the two buffers' lifetimes obviously
-	/// separate.
+	/// Persistent scratch buffer for the canvas's main chip scene, rebuilt every frame via
+	/// `render::scene::build_scene_with_spans_into`. Kept here (rather than a fresh
+	/// `SceneGeometry` per frame) so the triangle/label `Vec`s are `.clear()`ed and reused
+	/// instead of reallocated -- a steady-state frame (roughly the same amount of on-screen
+	/// geometry as last frame) then costs zero heap allocation for the scene itself.
 	pub(crate) chip_scene_buf: SceneGeometry,
 
 	/// Persistent scratch buffer for that same per-frame scene build's
@@ -405,18 +375,11 @@ pub(crate) struct ViewerState {
 	/// whenever the root chip changes
 	pub(crate) pending_wire: Option<PendingWire>,
 
-	/// The components currently picked up for placement (the library's
-	/// "USE" button, `EditorAction::PlaceChip`), if any -- each entry is
-	/// `(offset from the cursor, what to place)`, drawn as translucent
-	/// previews following the cursor (`build_pending_place_scene`) and
-	/// dropped as real descriptions on the next canvas click that lands on
-	/// free space (`try_place_pending_components`). A pickup normally
-	/// carries one entry; picking up a bus origin additionally carries its
-	/// linked terminus partner as a second one -- see
-	/// `chip_interaction::start_placing`. Mutually exclusive with
-	/// `pending_wire` in practice (starting one clears the other), and
-	/// cleared on the same triggers `pending_wire` is: Escape, a
-	/// right-click, or the root chip changing.
+	/// The components currently picked up for placement (the library's "USE" button,
+	/// `EditorAction::PlaceChip`), if any -- each entry is `(offset from the cursor, what to
+	/// place)`, drawn as translucent previews following the cursor (`build_pending_place_scene`)
+	/// and dropped as real descriptions on the next canvas click that lands on free space
+	/// (`try_place_pending_components`).
 	pub(crate) pending_place: Vec<(Vec2, chip_interaction::PendingComponent)>,
 
 	/// Ids of the currently selected placed components (subchips of the
@@ -532,16 +495,9 @@ impl ViewerState {
 		self.unsaved_drafts.remove(&name.to_ascii_lowercase());
 	}
 
-	/// Rebuilds `self.sim` from `self.library`'s current copy of
-	/// `self.root_chip_name` -- called after any edit that changes the
-	/// simulated structure (deleting a component/wire, re-configuring a
-	/// Pulse/Key/ROM, etc). Deliberately leaves the camera exactly where
-	/// it is: an in-place edit to the chip you're already looking at
-	/// shouldn't yank the view back to a fresh auto-fit every time (that
-	/// was `camera_fitted`'s old, wrong role here). Actually switching to
-	/// a *different* chip is a separate, explicit action --
-	/// `open_chip_by_name` resets `camera_fitted` itself, only when the
-	/// root chip is actually changing.
+	/// Rebuilds `self.sim` from `self.library`'s current copy of `self.root_chip_name` -- called
+	/// after any edit that changes the simulated structure (deleting a component/wire, re-
+	/// configuring a Pulse/Key/ROM, etc).
 	pub(crate) fn rebuild_sim(&mut self) {
 		let root_desc = self.library.get_arc(&self.root_chip_name);
 		// Carry the player-driven transient input state across the swap so
@@ -647,14 +603,11 @@ impl ViewerState {
 		self.view_stack.is_empty()
 	}
 
-	/// Enters `subchip_id`'s own definition in view-only mode, if that
-	/// component exists on the *currently displayed* chip (the edited root,
-	/// or the chip being viewed when stacking deeper -- mirroring
-	/// `EnterViewMode` looking the instance up on `ViewedChip`) and is a
-	/// player-authored chip (builtins have no definition to enter --
-	/// their View row is greyed out in the popup too). Cancels whatever
-	/// canvas state was in flight (`controller.CancelEverything`) and
-	/// re-fits the camera.
+	/// Enters `subchip_id`'s own definition in view-only mode, if that component exists on the
+	/// *currently displayed* chip (the edited root, or the chip being viewed when stacking
+	/// deeper -- mirroring `EnterViewMode` looking the instance up on `ViewedChip`) and is a
+	/// player-authored chip (builtins have no definition to enter -- their View row is greyed
+	/// out in the popup too).
 	pub(crate) fn enter_view_mode(&mut self, subchip_id: i32) {
 		let displayed_name = match self.resolve_scene_target() {
 			SceneTarget::EditRoot => self.root_chip_name.clone(),

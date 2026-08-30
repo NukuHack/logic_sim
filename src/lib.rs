@@ -1,3 +1,7 @@
+//! Crate root for the logic simulator: wires together simulation, chip
+//! description/serialization, save-system persistence, rendering, and the
+//! viewer UI, and re-exports the public API surface used by the binary.
+
 pub mod audio;
 pub mod builtins;
 pub mod description;

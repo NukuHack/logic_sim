@@ -35,19 +35,15 @@ impl SavePaths {
 		platform_data_dir().unwrap_or_else(|| PathBuf::from(".")).join("DigitalLogicSim")
 	}
 
-	/// The exact save-data directory the original Unity build of Digital
-	/// Logic Sim uses (`Application.persistentDataPath`), so this port
-	/// reads/writes the *same* projects a player already has on disk
-	/// instead of a parallel `DigitalLogicSim` folder next to it:
-	///
-	/// - Windows: `%USERPROFILE%\AppData\LocalLow\SebastianLague\Digital-Logic-Sim\`
-	/// - macOS:   `~/Library/Application Support/SebastianLague/Digital-Logic-Sim/`
-	/// - Linux:   `~/.config/unity3d/SebastianLague/Digital-Logic-Sim/`
-	///
-	/// Falls back to `./Digital-Logic-Sim` (relative to the current
-	/// working directory) if the relevant environment variables aren't
-	/// set, so the app still has *somewhere* writable to start from
-	/// rather than failing outright.
+	/// The exact save-data directory the original Unity build of Digital Logic Sim uses
+	/// (`Application.persistentDataPath`), so this port reads/writes the *same* projects a
+	/// player already has on disk instead of a parallel `DigitalLogicSim` folder next to it: -
+	/// Windows: `%USERPROFILE%\AppData\LocalLow\SebastianLague\Digital-Logic-Sim\` - macOS:
+	/// `~/Library/Application Support/SebastianLague/Digital-Logic-Sim/` - Linux:
+	/// `~/.config/unity3d/SebastianLague/Digital-Logic-Sim/` Falls back to `./Digital-Logic-Sim`
+	/// (relative to the current working directory) if the relevant environment variables aren't
+	/// set, so the app still has *somewhere* writable to start from rather than failing
+	/// outright.
 	pub fn unity_persistent_data_dir() -> PathBuf {
 		unity_persistent_data_dir_impl().unwrap_or_else(|| PathBuf::from("Digital-Logic-Sim"))
 	}

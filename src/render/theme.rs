@@ -109,14 +109,9 @@ pub fn text_colour_for_background(bg: Rgba) -> Rgba {
 	}
 }
 
-/// Colour for one of the 8 state-palette indices in a given logic state,
-/// clamped like `DrawSettings.GetStateColour` (no hover state here --
-/// that's an editor interaction concern, not a first-pass rendering
-/// concern). A pin/wire that's `LogicState::Disconnected` always renders
-/// flat black regardless of `palette_index`, matching
-/// `LOGIC_DISCONNECTED`/`DrawSettings.StateDisconnectedCol`; `Low` is a
-/// darker variant of the same palette index's `High` colour (via `dim`),
-/// not a separately hand-tuned colour.
+/// Colour for one of the 8 state-palette indices in a given logic state, clamped like
+/// `DrawSettings.GetStateColour` (no hover state here -- that's an editor interaction
+/// concern, not a first-pass rendering concern).
 pub fn state_colour(state: LogicState, color: Color) -> Rgba {
 	if state == LogicState::Disconnected {
 		return STATE_DISCONNECTED_COL;

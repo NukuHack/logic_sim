@@ -21,14 +21,8 @@ fn grid_line_skip(screen_half_height: f32) -> i32 {
 	}
 }
 
-/// Builds the background grid line geometry currently visible within
-/// `camera`'s view, mirroring `DevSceneDrawer.DrawGrid`. Draw this *before*
-/// the rest of a scene's triangles (this renderer has no depth buffer, so
-/// draw order is z-order -- grid needs to be background, i.e. first).
-///
-/// Line density thins out as the camera zooms out (skipping every 4th/16th
-/// line past certain world-half-height thresholds), matching the original's
-/// `skip` logic so a fully zoomed-out view doesn't turn into visual noise.
+/// Builds the background grid line geometry currently visible within `camera`'s view,
+/// mirroring `DevSceneDrawer.DrawGrid`.
 pub fn build_grid(camera: &Camera, colour: Rgba) -> SceneGeometry {
 	let mut geo = SceneGeometry::default();
 

@@ -13,21 +13,15 @@ use crate::render::scene::placed::PlacedSubChip;
 use crate::render::theme::{self, Rgba};
 use crate::structs::Vec2;
 
-/// Draws a single subchip pin's connection shape at `pos`, coloured
-/// `colour`, scaled by `bit_count`: a plain circle for a 1-bit pin, or a
-/// "pill" (a rectangular body with a half-circle cap on each end) for a
-/// wider pin -- so a 4/8-bit pin reads as visibly carrying more than a
-/// 1-bit pin's single wire, rather than every pin drawing at the same
-/// fixed size. See `PinBitCount::pin_radius`/
-/// `pin_visual_shape_size` for the exact sizing rule.
-///
-/// The pill's rounded corners become true semicircle caps (not just
-/// quarter-round corners) because `PinBitCount::pin_visual_shape_size`
-/// always returns a
-/// shape whose height already equals twice the intended cap radius, and
-/// that radius is what's passed to `add_rounded_rect` below (see
-/// `add_rounded_rect`'s own docs on how corner arcs merge into a full
-/// semicircle when `radius == height / 2`).
+/// Draws a single subchip pin's connection shape at `pos`, coloured `colour`, scaled by
+/// `bit_count`: a plain circle for a 1-bit pin, or a "pill" (a rectangular body with a half-
+/// circle cap on each end) for a wider pin -- so a 4/8-bit pin reads as visibly carrying more
+/// than a 1-bit pin's single wire, rather than every pin drawing at the same fixed size. The
+/// pill's rounded corners become true semicircle caps (not just quarter-round corners)
+/// because `PinBitCount::pin_visual_shape_size` always returns a shape whose height already
+/// equals twice the intended cap radius, and that radius is what's passed to
+/// `add_rounded_rect` below (see `add_rounded_rect`'s own docs on how corner arcs merge into
+/// a full semicircle when `radius == height / 2`).
 fn draw_pin_shape(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Rgba) {
 	match bit_count {
 		PinBitCount::Bit1 => {
@@ -41,14 +35,11 @@ fn draw_pin_shape(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, co
 	}
 }
 
-/// Draws one of a chip's own boundary dev-pins as a small "component"
-/// body at `pos` (its real saved position): a partially rounded
-/// rectangle, rounded on whichever side faces outward (`round_left` for
-/// an input pin, sitting on the chip's left edge with wires approaching
-/// from further left; the mirror for an output pin) and square on the
-/// side facing in, filled with the pin's live state colour and outlined
-/// in a grey-ish border. See `layout::dev_pin_body_size`/
-/// `dev_pin_corner_radius` for the sizing this follows.
+/// Draws one of a chip's own boundary dev-pins as a small "component" body at `pos` (its real
+/// saved position): a partially rounded rectangle, rounded on whichever side faces outward
+/// (`round_left` for an input pin, sitting on the chip's left edge with wires approaching
+/// from further left; the mirror for an output pin) and square on the side facing in, filled
+/// with the pin's live state colour and outlined in a grey-ish border.
 fn draw_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Color, logic: Option<LogicState>, round_left: bool) {
 	let size = layout::dev_pin_body_size(bit_count);
 	let radius = layout::dev_pin_corner_radius(size);
@@ -79,16 +70,10 @@ fn draw_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount,
 	);
 }
 
-/// Draws one of a chip's own boundary *input* dev-pins as a grid of
-/// individually-clickable bit cells, its drawn
-/// footprint scales with how many bits it carries: one circle (twice a
-/// plain pin's radius) for a 1-bit input, a 2x2 grid of squares for a
-/// 4-bit input, 2x4 for 8-bit. See `PinBitCount::input_bit_grid_dims`/
-/// `input_bit_cell_offsets` for the exact grid geometry, and
-/// `hit_test_input_dev_pin_bit` for the matching per-cell hit test. Each
-/// cell is coloured by that individual bit's own live state
-/// (`PinStateLookup::bit_logic_state`), so e.g. an 8-bit input shows all
-/// eight of its bits' states at a glance, not one averaged colour.
+/// Draws one of a chip's own boundary *input* dev-pins as a grid of individually-clickable
+/// bit cells, its drawn footprint scales with how many bits it carries: one circle (twice a
+/// plain pin's radius) for a 1-bit input, a 2x2 grid of squares for a 4-bit input, 2x4 for
+/// 8-bit.
 fn draw_input_dev_pin_body(geo: &mut SceneGeometry, pos: Vec2, bit_count: PinBitCount, colour: Color, pin_id: i32, pin_state: &dyn PinStateLookup) {
 	for (bit_index, offset) in layout::input_bit_cell_offsets(bit_count).into_iter().enumerate() {
 		let cell_pos = pos + offset;
@@ -177,20 +162,11 @@ fn draw_dev_pin_value_label(
 	geo.labels.push(TextLabel { pos: centre, text, colour: [1.0, 1.0, 1.0, 1.0], font_size: theme::FONT_SIZE_CHIP_NAME, width: grid_size.x });
 }
 
-/// Layer 2 (middle): every pin -- each subchip's input/output pins
-/// (`draw_pin_shape` -- a plain circle for 1-bit, a "pill" for wider
-/// pins) plus this chip's own boundary dev-pins (small rounded-rect
-/// bodies, drawn via `draw_dev_pin_body`) -- so pins always sit visibly on
-/// top of the wires that connect to them, and underneath the component
-/// bodies that own them.
-///
-/// Also hit-tests every pin against `hover_world_pos` (if given) using its
-/// *exact* drawn shape (`point_in_pin_shape`/`point_in_rounded_rect`,
-/// mirroring `draw_pin_shape`/`draw_dev_pin_body`'s own geometry) and
-/// returns the first hit's `(label anchor position, pin name)`, for
-/// `build_scene` to turn into a hover label. Pins are hit-tested in the
-/// same order they're drawn, so if two overlap the topmost (drawn last)
-/// wins, matching what's visibly on top.
+/// Layer 2 (middle): every pin -- each subchip's input/output pins (`draw_pin_shape` -- a
+/// plain circle for 1-bit, a "pill" for wider pins) plus this chip's own boundary dev-pins
+/// (small rounded-rect bodies, drawn via `draw_dev_pin_body`) -- so pins always sit visibly
+/// on top of the wires that connect to them, and underneath the component bodies that own
+/// them.
 pub(crate) fn draw_pins(
 	geo: &mut SceneGeometry,
 	chip: &crate::description::ChipDescription,

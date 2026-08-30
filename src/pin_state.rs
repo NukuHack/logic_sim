@@ -1,17 +1,8 @@
-//! Helpers for dealing with pin state.
-//!
-//! A pin (or bus of up to 8 pins) is represented by `PinState`: an enum tagged
-//! by how many tristate wires it actually carries (1, 4, or 8 -- the same
-//! widths `PinBitCount` supports), each variant packing its bits into a u16
-//! under the hood (tri-state flags in the high byte, bit values in the low
-//! byte). Exposing this as a real enum -- rather than a bare u16 -- means a
-//! `PinState` can answer "how many wires am I?" for itself (`len`/`width`)
-//! instead of callers having to track that separately, while every bit of
-//! packing/unpacking logic still lives in this module so call sites doing
-//! things like "give me bit 3 of this 8-bit bus" don't need to hand-roll
-//! masks/shifts.
-//!
-//! Each individual wire is a `LogicState`: `Low`, `High`, or `Disconnected` (tri-state).
+//! Helpers for dealing with pin state. Exposing this as a real enum -- rather than a bare u16
+//! -- means a `PinState` can answer "how many wires am I?" for itself (`len`/`width`) instead
+//! of callers having to track that separately, while every bit of packing/unpacking logic
+//! still lives in this module so call sites doing things like "give me bit 3 of this 8-bit
+//! bus" don't need to hand-roll masks/shifts.
 
 use crate::description::PinBitCount;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
@@ -66,13 +57,7 @@ pub const LOGIC_HIGH: u8 = LogicState::High.to_int();
 pub const LOGIC_LOW: u8 = LogicState::Low.to_int();
 pub const LOGIC_DISCONNECTED: u8 = LogicState::Disconnected.to_int();
 
-/// Packed state of a pin/bus, tagged by how many wires it carries. Bit values
-/// live in the low byte of the packed u16, tri-state ("disconnected") flags
-/// in the high byte -- same layout regardless of variant, so unused high
-/// wires of a `Bit1`/`Bit4` value are simply left at zero. This is the thing
-/// `SimPin::state` stores, and what flows along wires/buses during
-/// simulation -- a 16-bit payload keeps every `SimPin` down to a size the
-/// stepping hot loop keeps in cache.
+/// Packed state of a pin/bus, tagged by how many wires it carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PinState {
 	/// A single wire -- the width of a plain gate output or 1-bit dev-pin.
@@ -358,15 +343,12 @@ impl PinState {
 
 // --- conflict resolution (used when two sources drive the same pin) --------
 impl PinState {
-	/// Shared tri-state merge: `combined` is the already-computed bitwise result of
-	/// the boolean op (OR/AND/NAND) applied to both value bytes. Per bit:
-	/// - both sides driven  -> use `combined`
-	/// - only one side driven -> the driven side wins outright (floating input
-	///   doesn't get a vote)
-	/// - neither side driven -> stays disconnected
-	///
-	/// The result keeps `self`'s width tag (both sides are expected to carry
-	/// the same width in practice, since they're driving the same pin).
+	/// Shared tri-state merge: `combined` is the already-computed bitwise result of the boolean
+	/// op (OR/AND/NAND) applied to both value bytes. Per bit: - both sides driven -> use
+	/// `combined` - only one side driven -> the driven side wins outright (floating input
+	/// doesn't get a vote) - neither side driven -> stays disconnected The result keeps `self`'s
+	/// width tag (both sides are expected to carry the same width in practice, since they're
+	/// driving the same pin).
 	#[inline(always)]
 	const fn merge_driven(self, other: Self, combined: u8) -> Self {
 		let val_a = self.bit_states();

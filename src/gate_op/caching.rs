@@ -1,19 +1,8 @@
 //! Combinational-chip caching, ported from `DLS.Simulation.Simulator`
 //! (`RecalculateCachedLUTs`, `ProcessCachedChip`) and `DLS.Simulation.SimChip`
-//! (`IsCombinational`, `CalculateNumberOfInputBits`, `ResetReceivedFlagsOnAllPins`).
-//!
-//! Without this, `Simulator::step_chip` always walks the full subchip graph
-//! every tick, even for chips that are purely combinational (output depends
-//! only on the current input, nothing sequential). The idea is to build each
-//! such chip's truth table once and index into it afterwards instead of
-//! re-walking its subchip graph every single simulation frame.
-//!
-//! The actual hook-in lives in `Simulator::step_sub_chip` (in `sim.rs`):
-//! for each non-builtin subchip it checks `caching.use_caching`, then either
-//! looks the chip up in the LUT cache (`process_cached_chip`), tries to
-//! build one for it (`recalculate_cached_luts`), or -- for anything already
-//! known not to qualify -- falls straight through to a real recursive
-//! `step_chip`.
+//! (`IsCombinational`, `CalculateNumberOfInputBits`, `ResetReceivedFlagsOnAllPins`). The idea
+//! is to build each such chip's truth table once and index into it afterwards instead of re-
+//! walking its subchip graph every single simulation frame.
 
 use crate::pin_state::PinState;
 use crate::sim::{ChipIdx, PinIdx, Simulator};
@@ -141,7 +130,7 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 		visited += 1;
 		if let Some(neighbors) = graph.get(&id) {
 			for &n in neighbors {
-				let deg = in_degree.get_mut(&n).unwrap();
+				let deg = in_degree.get_mut(&n).expect("every id in `graph` was inserted into `in_degree` above");
 				*deg -= 1;
 				if *deg == 0 {
 					queue.push(n);

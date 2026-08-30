@@ -78,24 +78,10 @@ pub fn bus_partner_id(chip: &ChipDescription, library: &ChipLibrary, owner_id: i
 		.map(|_| partner_id)
 }
 
-/// Resolves a wire completion whose *two endpoints both land on bus-family
-/// chips* (the caller has checked both owners are `is_bus_type`). Any bus
-/// may connect to any other:
-///
-/// - the first-clicked half (`start_owner`) keeps its type;
-/// - the second-clicked half (`end_owner`) converts to the complementary
-///   type where needed (`BUS-n` <-> `BUS-TERMINUS-n`, same width), with its
-///   flip flag inverted so the conversion -- which swaps which side a
-///   visible pin is drawn on by default -- leaves the pin physically on
-///   the same side it was when the player aimed at it;
-/// - the two halves are then linked instantly: each writes the other's
-///   instance id into its `internal_data[0]`. Any *previous* links are
-///   replaced, and partners orphaned by the re-link have their pointer
-///   cleared so deletion-cascades don't drag them along.
-///
-/// Returns the `(source, target)` pin addresses the finished wire must
-/// use: the origin half's visible output pin and the terminus half's input
-/// pin, whichever physical owner each role landed on.
+/// Resolves a wire completion whose *two endpoints both land on bus-family chips* (the caller
+/// has checked both owners are `is_bus_type`). Returns the `(source, target)` pin addresses
+/// the finished wire must use: the origin half's visible output pin and the terminus half's
+/// input pin, whichever physical owner each role landed on.
 pub fn resolve_bus_pair_completion(
 	chip: &mut ChipDescription,
 	library: &ChipLibrary,
@@ -208,15 +194,11 @@ fn pin_of(chip: &ChipDescription, library: &ChipLibrary, owner_id: i32, output: 
 }
 
 /// Outcome of finishing a pending wire on existing wire `wire` -- mirrors
-/// `CanCompleteWireConnection(wireToConnectTo, out endPin)` plus the
-/// restrictions around it:
-///
-/// - wire-to-wire completions are rejected (ambiguous signal source),
-/// - an *output*-pin end may only land on a bus wire (two outputs driving
-///   one normal wire would disagree on its state),
-/// - an *input*-pin end may land on any wire,
-/// - electrically the new wire connects to the tapped wire's resolved pins
-///   (bus-corrected on the target side).
+/// `CanCompleteWireConnection(wireToConnectTo, out endPin)` plus the restrictions around it:
+/// wire-to-wire completions are rejected (ambiguous signal source), an *output*-pin end
+/// may only land on a bus wire (two outputs driving one normal wire would disagree on its
+/// state), an *input*-pin end may land on any wire, electrically the new wire connects to
+/// the tapped wire's resolved pins (bus-corrected on the target side).
 pub fn resolve_completion_on_wire(
 	chip: &ChipDescription,
 	library: &ChipLibrary,

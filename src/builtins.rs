@@ -204,16 +204,14 @@ pub fn create_input_or_output_pin(chip_type: ChipType) -> ChipDescription {
 	builtin(chip_type, if is_input { vec![p.clone()] } else { vec![] }, if is_output { vec![p] } else { vec![] })
 }
 
-/// `(is_input, template_pin)` for `chip_type` if it's one of the boundary
-/// I/O pin types (`In1Bit` .. `Out8Bit`), `None` for every other type. Used
-/// when one of these is placed from the palette: rather than becoming a
-/// placed *subchip* like a real component (NAND, a display, ...), it adds a
-/// fresh boundary dev-pin directly to the current chip's own
-/// `input_pins`/`output_pins` -- the same field a custom chip's boundary
-/// pins are parsed into from `InputPins`/`OutputPins` in its saved JSON (see
-/// `json::to_chip_description`), just built up in code instead of loaded
-/// from disk. The returned pin's `id` is always `0`; callers must overwrite
-/// it with a fresh id scoped to the chip they're adding it to.
+/// `(is_input, template_pin)` for `chip_type` if it's one of the boundary I/O pin types
+/// (`In1Bit` .. Used when one of these is placed from the palette: rather than becoming a
+/// placed *subchip* like a real component (NAND, a display, ...), it adds a fresh boundary
+/// dev-pin directly to the current chip's own `input_pins`/`output_pins` -- the same field a
+/// custom chip's boundary pins are parsed into from `InputPins`/`OutputPins` in its saved
+/// JSON (see `json::to_chip_description`), just built up in code instead of loaded from disk.
+/// The returned pin's `id` is always `0`; callers must overwrite it with a fresh id scoped to
+/// the chip they're adding it to.
 pub fn io_pin_template(chip_type: ChipType) -> Option<(bool, PinDescription)> {
 	let (is_input, is_output, num_bits) = is_input_or_output_pin(chip_type);
 	if !is_input && !is_output {

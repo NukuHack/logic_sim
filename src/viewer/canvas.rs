@@ -1,11 +1,7 @@
-//! Canvas interaction: what a click on the chip-editing surface means --
-//! starting/continuing wire placements, dropping a pending multi-component
-//! placement, selecting/dragging placed components, rubber-band box
-//! selection, toggling an input dev-pin's bits -- plus the scene-space
-//! previews (in-progress wire, placement ghost) those interactions draw.
-//! The selection/drag/box-select state machine itself lives in
-//! `viewer::chip_interaction`; this module routes clicks between it and
-//! the wire-placement flow.
+//! Canvas interaction: what a click on the chip-editing surface means -- starting/continuing
+//! wire placements, dropping a pending multi-component placement, selecting/dragging placed
+//! components, rubber-band box selection, toggling an input dev-pin's bits -- plus the scene-
+//! space previews (in-progress wire, placement ghost) those interactions draw.
 
 use crate::description::ChipDescription;
 use crate::render::camera::Camera;
@@ -19,13 +15,10 @@ use crate::viewer::state::ViewerState;
 use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
 use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireConnectionType, WireDescription};
 
-/// Finds whichever bit of one of `root_desc`'s own boundary *input*
-/// dev-pins (if any) `world_pos` landed on -- the same per-bit grid
-/// `scene::pins::draw_input_dev_pin_body` draws for each input pin
-/// (one clickable circle for a 1-bit input, a 2x2/2x4 grid of cells for
-/// 4/8-bit) -- returning that pin's own id and the clicked bit's index.
-/// Output pins are never hit -- only inputs are meant to be toggled by a
-/// click.
+/// Finds whichever bit of one of `root_desc`'s own boundary *input* dev-pins (if any)
+/// `world_pos` landed on -- the same per-bit grid `scene::pins::draw_input_dev_pin_body`
+/// draws for each input pin (one clickable circle for a 1-bit input, a 2x2/2x4 grid of cells
+/// for 4/8-bit) -- returning that pin's own id and the clicked bit's index.
 pub(crate) fn hit_test_root_input_pin_click(root_desc: &ChipDescription, world_pos: Vec2) -> Option<(i32, u32)> {
 	for pin in &root_desc.input_pins {
 		if let Some(bit_index) = scene::hit_test_input_dev_pin_bit(world_pos, pin.position, pin.bit_count) {
@@ -75,31 +68,19 @@ fn try_start_pending_wire(v: &mut ViewerState, world_pos: Vec2) -> bool {
 	false
 }
 
-/// Advances an in-progress wire placement (`v.pending_wire`, assumed
-/// `Some`) with a click at `world_pos`:
-///  - landing on a pin of the *opposite* role (see `PinHit::is_wire_source`/
-///    `PendingWireEnd::is_source`) completes the wire, connecting through
-///    any bend points collected so far -- and so does landing on *any*
-///    other bus-family chip's pin: the completing click converts that
-///    second chip to the complementary origin/terminus type (keeping its
-///    visible pin side) and links the pair instantly (see
-///    `viewer::bus_wiring::resolve_bus_pair_completion`);
-///  - landing on a pin of the *same* role (e.g. input-to-input,
-///    output-to-output) is rejected with a status message, leaving the
-///    placement active so the player can just try a different pin --
-///    unless both ends are bus chips, where the conversion above absorbs
-///    exactly those cases;
-///  - landing on an existing wire *completes into it* ("wiring into the
-///    wire"): inputs may tap into any wire, outputs only into bus wires,
-///    and the electrical endpoints resolve from the tapped wire
-///    (bus-corrected on the output-start side) -- see `viewer::bus_wiring`.
-///    A placement that itself started on a wire ignores wire clicks instead
-///    (wire-to-wire is ambiguous);
-///  - landing on a component body is ignored outright (deliberately *not*
-///    a "turn" -- see this method's caller's doc comment on the
-///    empty-space branch below);
-///  - anywhere else (empty canvas) adds a bend ("turn") point there and
-///    leaves the placement active.
+/// Advances an in-progress wire placement (`v.pending_wire`, assumed `Some`) with a click at
+/// `world_pos`: - landing on a pin of the *opposite* role (see `PinHit::is_wire_source`/
+/// `PendingWireEnd::is_source`) completes the wire, connecting through any bend points
+/// collected so far -- and so does landing on *any* other bus-family chip's pin: the
+/// completing click converts that second chip to the complementary origin/terminus type
+/// (keeping its visible pin side) and links the pair instantly (see
+/// `viewer::bus_wiring::resolve_bus_pair_completion`); - landing on a pin of the *same* role
+/// (e.g. input-to-input, output-to-output) is rejected with a status message, leaving the
+/// placement active so the player can just try a different pin -- unless both ends are bus
+/// chips, where the conversion above absorbs exactly those cases; - landing on an existing
+/// wire *completes into it* ("wiring into the wire"): inputs may tap into any wire, outputs
+/// only into bus wires, and the electrical endpoints resolve from the tapped wire (bus-
+/// corrected on the output-start side) -- see `viewer::bus_wiring`.
 fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
 	let root_chip_name = v.root_chip_name.clone();
 	let root_desc = v.library.get(&root_chip_name);
@@ -107,14 +88,9 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 
 	if let Some(hit) = scene::hit_test_any_pin(root_desc, &placed, world_pos) {
 		let pending_ref = v.pending_wire.as_ref().expect("caller only calls this with a pending wire");
-		// Widths must match -- except where exactly one end is a bus chip:
-		// the bus is the port's merge-everything node, so any-width pins may
-		// drive or tap it (its origin merges bitwise). Bus-to-bus and
-		// plain-pin-to-plain-pin completions keep the original's strict rule
-		// (`CanCompleteWireConnection`'s `endPin.bitCount != startPin.bitCount`):
-		// a mismatched pair would silently change one side's width. Gated on
-		// `Prefs_CanCompleteWireConnection` (default on) so it can be turned
-		// off from the preferences UI to allow mismatched-width connections.
+		// Widths must match -- except where exactly one end is a bus chip: the bus is the port's
+		// merge-everything node, so any-width pins may drive or tap it (its origin merges
+		// bitwise).
 		let start_is_bus = match pending_ref.start {
 			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
 				bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type())
@@ -127,12 +103,9 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			return;
 		}
 		// Any bus-family chip may wire to any other bus-family chip (see
-		// `resolve_bus_pair_completion`): the completing click converts the
-		// second half to the complementary origin/terminus type -- keeping
-		// its visible pin side -- and links the pair instantly. That makes
-		// the usual same-role rejections inapplicable here: two origins'
-		// visible output pins read as "output to output" but are exactly
-		// how two plain buses join.
+		// `resolve_bus_pair_completion`): the completing click converts the second half to the
+		// complementary origin/terminus type -- keeping its visible pin side -- and links the pair
+		// instantly.
 		let bus_start_owner = match pending_ref.start {
 			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
 				let start_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type());
@@ -230,18 +203,12 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			match bus_wiring::resolve_completion_on_wire(root_desc, &v.library, tap.wire_index, false, pending.start.is_source(), owner_id, pin_id) {
 				Ok((source, target)) => {
 					let pending = v.pending_wire.take().expect("checked above");
-					// Whichever end of the pending placement is the one landing
-					// on the tapped wire's line is the end that must visually
-					// attach there -- an output-started placement completes its
-					// *target* onto the tap point (see the bus-merge branch
-					// above), but an input-started one completes its *source*
-					// there (the tapped wire's real source pin feeds the new
-					// wire, but the branch physically springs from the click,
-					// not from that pin's own position). Picking the wrong
-					// constructor here previously drew every input-started "wire
-					// into a wire" completion running from the tapped wire's
-					// original source pin straight to the click point, ignoring
-					// the pin the player actually started from.
+					// Whichever end of the pending placement is the one landing on the tapped wire's line
+					// is the end that must visually attach there -- an output-started placement completes
+					// its *target* onto the tap point (see the bus-merge branch above), but an input-
+					// started one completes its *source* there (the tapped wire's real source pin feeds the
+					// new wire, but the branch physically springs from the click, not from that pin's own
+					// position).
 					let mut wire = if start_is_source {
 						WireDescription::new_tapped_target(source, target, tap.wire_index as i32, tap.segment_index, tap.point)
 					} else {
@@ -290,14 +257,13 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	pending.bend_points.push(turn);
 }
 
-/// Next free id for a newly placed subchip or boundary dev-pin on `chip`:
-/// one past whatever the highest existing id is, or `1` if it has none yet
-/// (`SubChipDescription::id` docs say IDs are `> 0`). Dev-pins share this
-/// same id space with subchips -- a wire's `PinOwnerID` is looked up
-/// against both `chip.sub_chips` and `chip.input_pins`/`output_pins`
-/// interchangeably (see `sim::Simulator::find_pin`) -- so every id handed
-/// out here must stay unique across all three lists, not just within
-/// whichever one the caller is about to push into.
+/// Next free id for a newly placed subchip or boundary dev-pin on `chip`: one past whatever
+/// the highest existing id is, or `1` if it has none yet (`SubChipDescription::id` docs say
+/// IDs are `> 0`). Dev-pins share this same id space with subchips -- a wire's `PinOwnerID`
+/// is looked up against both `chip.sub_chips` and `chip.input_pins`/`output_pins`
+/// interchangeably (see `sim::Simulator::find_pin`) -- so every id handed out here must stay
+/// unique across all three lists, not just within whichever one the caller is about to push
+/// into.
 pub(crate) fn next_component_id(chip: &ChipDescription) -> i32 {
 	chip.sub_chips.iter().map(|s| s.id).chain(chip.input_pins.iter().map(|p| p.id)).chain(chip.output_pins.iter().map(|p| p.id)).max().unwrap_or(0)
 		+ 1
@@ -327,29 +293,13 @@ fn default_internal_data(chip_type: Option<ChipType>) -> Option<Vec<u32>> {
 	}
 }
 
-/// Attempts to drop `v.pending_place`'s carried components (assumed
-/// non-empty) at `world_pos`. Only actually places anything -- and clears
-/// `v.pending_place` -- when the click lands on genuinely free canvas
-/// space: not a subchip's pin, one of the current chip's own boundary
-/// dev-pins, an existing placed component's body, or a wire. Landing on
-/// any of those just leaves the pending carry untouched, so the player can
-/// simply try again elsewhere (mirrors `try_continue_pending_wire`'s
-/// "component/wire clicks are ignored outright" behaviour). Each entry is
-/// dropped at the cursor plus its carried offset (grid-snapped when the
-/// snapping pref -- or held Ctrl -- says so), with consecutive fresh ids
-/// (`next_component_id`). An "IN/OUT" palette entry is the one exception:
-/// it adds a boundary dev-pin to the current chip instead of a subchip
-/// instance. Bus-pair entries (see `chip_interaction::start_placing`)
-/// write their mutual link into both halves' `internal_data[0]` on drop,
-/// exactly what the original's auto-place + `SetLinkedBusPair` produced --
-/// everything downstream of that link (pair-wiring rules, tap merging,
-/// paired deletion) keys off it unchanged.
-///
-/// Also defensively re-checks `would_create_cycle` per distinct name --
-/// unlike a free-space miss, this can never be resolved by clicking
-/// somewhere else, so (unlike the free-space case) it cancels the whole
-/// pending carry outright and reports why via `status`, rather than
-/// leaving it dangling for a retry that could never succeed.
+/// Attempts to drop `v.pending_place`'s carried components (assumed non-empty) at
+/// `world_pos`. An "IN/OUT" palette entry is the one exception: it adds a boundary dev-pin to
+/// the current chip instead of a subchip instance. Also defensively re-checks
+/// `would_create_cycle` per distinct name -- unlike a free-space miss, this can never be
+/// resolved by clicking somewhere else, so (unlike the free-space case) it cancels the whole
+/// pending carry outright and reports why via `status`, rather than leaving it dangling for a
+/// retry that could never succeed.
 pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) {
 	// Everything the drop decision needs, resolved against the *current*
 	// chip before any mutation below.
@@ -483,24 +433,15 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 	}
 }
 
-/// Builds the translucent "ghost" preview of everything currently carried
-/// by a pending placement (`pending`), floating at the cursor's live world
-/// position -- each entry at the cursor plus its carried offset (snapped
-/// when `snap_to_grid`). Reuses the exact same `build_scene` pipeline real
-/// placed components draw through -- body, pins, name label, and any
-/// type-specific rendering (a Key's bound letter, an LED's tint, ...) --
-/// by wrapping them in a throwaway single-level `ChipDescription`, so the
-/// preview can never drift out of sync with what actually gets placed.
-/// Faded to [`PENDING_PLACEMENT_ALPHA`] via `scene::apply_alpha`. Entries
-/// whose chip no longer resolves in `library` are skipped defensively
-/// (shouldn't normally happen, but avoids a panic in `place_sub_chips` if
-/// it somehow does).
-///
-/// An "IN/OUT" palette entry previews as a boundary dev-pin instead (see
-/// `try_place_pending_components`), so its ghost is built the same way -- a
-/// throwaway pin added straight to `input_pins`/`output_pins` -- rather
-/// than wrapping it as a subchip, so the preview never shows the wrong
-/// body shape for what's actually about to be placed.
+/// Builds the translucent "ghost" preview of everything currently carried by a pending
+/// placement (`pending`), floating at the cursor's live world position -- each entry at the
+/// cursor plus its carried offset (snapped when `snap_to_grid`). Entries whose chip no longer
+/// resolves in `library` are skipped defensively (shouldn't normally happen, but avoids a
+/// panic in `place_sub_chips` if it somehow does). An "IN/OUT" palette entry previews as a
+/// boundary dev-pin instead (see `try_place_pending_components`), so its ghost is built the
+/// same way -- a throwaway pin added straight to `input_pins`/`output_pins` -- rather than
+/// wrapping it as a subchip, so the preview never shows the wrong body shape for what's
+/// actually about to be placed.
 pub(crate) fn build_pending_place_scene(
 	library: &ChipLibrary,
 	pending: &[(Vec2, crate::viewer::chip_interaction::PendingComponent)],
@@ -530,13 +471,11 @@ pub(crate) fn build_pending_place_scene(
 				ghost.output_pins.push(new_pin);
 			}
 		} else if let Some(duplicate) = &component.duplicate_of {
-			// Keep the id `duplicate_selection` already assigned instead of
-			// renumbering to `index` -- `attached_wires`' pin addresses were
-			// built against that id (matching the `first_id + index` scheme
-			// `try_place_pending_components` reuses at drop time), so
-			// overwriting it here breaks pin resolution and the wire silently
-			// fails to resolve endpoints in this ghost, only appearing once
-			// the group is actually dropped and placed with real ids.
+			// Keep the id `duplicate_selection` already assigned instead of renumbering to `index` --
+			// `attached_wires`' pin addresses were built against that id (matching the `first_id +
+			// index` scheme `try_place_pending_components` reuses at drop time), so overwriting it
+			// here breaks pin resolution and the wire silently fails to resolve endpoints in this
+			// ghost, only appearing once the group is actually dropped and placed with real ids.
 			let mut ghost_desc = duplicate.clone();
 			ghost_desc.position = position;
 			ghost.sub_chips.push(ghost_desc);
@@ -561,13 +500,8 @@ pub(crate) fn build_pending_place_scene(
 		sum / ghost_positions.len() as f32
 	};
 
-	// Include duplicated wires in the ghost so they render at the same
-	// translucent alpha as the carried components. Bend points are
-	// centroid-relative in `attached_wires` but the ghost subchips live
-	// in world space, so we translate each point into world space.
-	// `connected_wire_index` (wire-to-wire taps) is already local to this
-	// batch, in the same push order used here, so it resolves correctly
-	// against `ghost.wires` with no further remapping.
+	// Include duplicated wires in the ghost so they render at the same translucent alpha as the
+	// carried components.
 	for wire in pending.first().map(|(_, c)| c.attached_wires.as_slice()).unwrap_or(&[]) {
 		let mut w = (*wire).clone();
 		w.points = w.points.iter().map(|p| *p + centroid).collect();
@@ -641,22 +575,14 @@ pub(crate) fn compute_component_delete_set(v: &ViewerState, id: i32) -> Vec<i32>
 	ids
 }
 
-/// Physically removes components `ids` (and their attached wiring) from
-/// the current root chip -- but, per the brief, only the "shortest
-/// possible section" of wiring: just the wire(s) whose source or target
-/// pin actually belongs to one of these components (via
-/// `scene::delete_wire_old`, the same detach-not-cascade removal "Delete
-/// Part" uses on a single wire). A wire fanning out from one of these
-/// components' *output* pins to some other, unrelated component is left
-/// completely alone at the far end -- only the segment that touched the
-/// deleted component goes; anything merely *tapping* onto that segment
-/// stays too, detached rather than deleted with it.
-///
-/// `ids` may mix placed subchips' `SubChipDescription::id`s and boundary
-/// dev-pins' `PinDescription::id`s freely -- the two share one id space
-/// (see `next_component_id`). Does NOT rebuild the simulation; callers
-/// decide when to pay for that (batching several mutations into one
-/// rebuild).
+/// Physically removes components `ids` (and their attached wiring) from the current root chip
+/// -- but, per the brief, only the "shortest possible section" of wiring: just the wire(s)
+/// whose source or target pin actually belongs to one of these components (via
+/// `scene::delete_wire_old`, the same detach-not-cascade removal "Delete Part" uses on a
+/// single wire). A wire fanning out from one of these components' *output* pins to some
+/// other, unrelated component is left completely alone at the far end -- only the segment
+/// that touched the deleted component goes; anything merely *tapping* onto that segment stays
+/// too, detached rather than deleted with it.
 pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
 	let root_chip_name = v.root_chip_name.clone();
 
@@ -686,10 +612,6 @@ pub(crate) fn apply_component_deletion(v: &mut ViewerState, ids: &[i32]) {
 /// Applies a canvas click that the UI stack let fall all the way through
 /// (`UiStack::dispatch_click` returned [`crate::render::ui_stack::InputResult::Propagate`] --
 /// every visible UI layer was either missed or transparent at that point).
-/// The release half of wire placement (`HandleLeftMouseUp`'s
-/// `TryFinishPlacingWire`): tries to *complete* an in-progress wire at
-/// `world_pos` -- over an opposite-role pin, or into an existing wire --
-/// but never adds bends. Returns whether it completed.
 pub(crate) fn try_finish_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut Option<String>) -> bool {
 	if v.pending_wire.is_none() {
 		return false;
@@ -1152,13 +1074,8 @@ mod tests {
 		assert!(!one.triangles.is_empty());
 	}
 
-	/// A duplicated pair's carried wire must resolve and draw in the ghost
-	/// itself, at the same moment the ghost bodies do -- not only once the
-	/// group is actually dropped. Regression test for the ghost previously
-	/// renumbering duplicated subchips' ids to their carry index, which
-	/// didn't match the ids `attached_wires`' pin addresses were built
-	/// against, so the wire's endpoints failed to resolve and it silently
-	/// never appeared until placement.
+	/// A duplicated pair's carried wire must resolve and draw in the ghost itself, at the same
+	/// moment the ghost bodies do -- not only once the group is actually dropped.
 	#[test]
 	fn duplicated_wire_renders_in_the_ghost_preview() {
 		use crate::viewer::chip_interaction::PendingComponent;

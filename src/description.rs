@@ -91,13 +91,9 @@ impl ChipType {
 		matches!(self, CT::In1Bit | CT::In4Bit | CT::In8Bit | CT::Out1Bit | CT::Out4Bit | CT::Out8Bit)
 	}
 
-	/// Dev-facing builtins (`dev.RAM-8` and the BUS-TERMINUS trio) that
-	/// release builds keep out of every player-facing list -- palette
-	/// defaults, collection syncing/rows, the bottom bar, and search (see
-	/// `viewer::library::is_listed_in_current_build`). They remain fully
-	/// registered in the library either way: placing a BUS still carries
-	/// its terminus partner along, and saved projects may reference either
-	/// type, so simulation needs them present.
+	/// Dev-facing builtins (`dev.RAM-8` and the BUS-TERMINUS trio) that release builds keep out
+	/// of every player-facing list -- palette defaults, collection syncing/rows, the bottom bar,
+	/// and search (see `viewer::library::is_listed_in_current_build`).
 	pub fn is_dev_only(self) -> bool {
 		matches!(self, ChipType::DevRam8Bit | ChipType::BusTerminus1Bit | ChipType::BusTerminus4Bit | ChipType::BusTerminus8Bit)
 	}
@@ -192,14 +188,8 @@ impl NameLocation {
 	}
 }
 
-/// Simplified, informational summary of what caching a chip ends up with
-/// once Save resolves `ChipDescription::should_be_cached`
-/// (`viewer::save_flow::resolve_should_cache`). This is *not* the actual
-/// lookup table -- that's still only ever built lazily at simulation time
-/// (`gate_op::caching::recalculate_cached_luts`) and never touches disk --
-/// just a label describing what kind of caching this chip is set up for,
-/// so a save file (or a human skimming it) can tell at a glance without
-/// re-running the combinational/tri-state analysis itself.
+/// Simplified, informational summary of what caching a chip ends up with once Save resolves
+/// `ChipDescription::should_be_cached` (`viewer::save_flow::resolve_should_cache`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
 #[repr(i32)]
 pub enum CacheKind {
@@ -376,14 +366,9 @@ impl Color {
 pub struct PinDescription {
 	pub name: String,
 	pub id: i32,
-	/// World-space position of this pin, in grid units, as saved on disk
-	/// under this pin's `Position` field. For a chip's own boundary
-	/// (dev-)pins (`ChipDescription::input_pins`/`output_pins`) this is the
-	/// exact point at which wires attach -- unlike a subchip's pins, whose
-	/// position is instead *derived* from the subchip's body + default pin
-	/// layout (see `layout::pin_world_position`), a dev-pin's position is
-	/// authoritative and comes straight from this field. Defaults to the
-	/// origin for pins built up in code rather than loaded from disk.
+	/// World-space position of this pin, in grid units, as saved on disk under this pin's
+	/// `Position` field. Defaults to the origin for pins built up in code rather than loaded
+	/// from disk.
 	pub position: Vec2,
 	pub bit_count: PinBitCount,
 	/// Palette index (0..=7) into the state colour tables
@@ -473,14 +458,12 @@ impl DisplayDescription {
 	}
 }
 
-/// How a wire's source/target end attaches to the rest of the scene.
-/// Mirrors `DLS.Description.WireConnectionType`. Most wires attach both
-/// ends directly to a pin (`ToPins`), but a wire can instead be "tapped"
-/// off of another wire's line -- its saved `SourcePinAddress`/
-/// `TargetPinAddress` still names the real originating pin (needed for
-/// colour/bit-count/simulation-state lookups), but that end's *position*
-/// must be resolved along the referenced wire's segment instead of at the
-/// pin itself. See `render::scene`'s wire-endpoint resolution.
+/// How a wire's source/target end attaches to the rest of the scene. Most wires attach both
+/// ends directly to a pin (`ToPins`), but a wire can instead be "tapped" off of another
+/// wire's line -- its saved `SourcePinAddress`/ `TargetPinAddress` still names the real
+/// originating pin (needed for colour/bit-count/simulation-state lookups), but that end's
+/// *position* must be resolved along the referenced wire's segment instead of at the pin
+/// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, IntoPrimitive, TryFromPrimitive)]
 #[repr(i32)]
 pub enum WireConnectionType {
@@ -514,13 +497,8 @@ pub struct WireDescription {
 	/// that this wire's tap-point sits on, when `connection_type !=
 	/// ToPins`. `-1` / unused otherwise.
 	pub connected_wire_segment_index: i32,
-	/// Cached world-space position of the source end, as last saved to
-	/// disk. Only meaningful (and only used) when `connection_type ==
-	/// ToWireSource`: it's the point that gets re-projected onto the
-	/// referenced wire's segment to find this wire's actual source
-	/// position (mirrors `WireInstance.GetAttachmentPoint`'s use of
-	/// `originalWireConnectionPoint`). Ignored for pin-attached sources,
-	/// since those resolve directly from the pin's live position instead.
+	/// Cached world-space position of the source end, as last saved to disk. Ignored for pin-
+	/// attached sources, since those resolve directly from the pin's live position instead.
 	pub cached_source_point: Vec2,
 	/// Same as `cached_source_point`, but for the target end; only
 	/// meaningful when `connection_type == ToWireTarget`.
@@ -551,13 +529,11 @@ impl WireDescription {
 	}
 
 	/// A wire whose *source* end taps onto an existing wire's segment
-	/// (`WireConnectionType::ToWireSource`) instead of attaching to a
-	/// pin directly -- used when a wire is placed by starting the drag
-	/// from another wire's line rather than a pin. `source_pin_address`
-	/// must still be the tapped wire's own real originating pin (needed
-	/// for colour/bit-count/simulation-state lookups -- see
-	/// `render::scene::draw_wires`'s doc comment), not an address
-	/// describing the tap point itself.
+	/// (`WireConnectionType::ToWireSource`) instead of attaching to a pin directly -- used when
+	/// a wire is placed by starting the drag from another wire's line rather than a pin.
+	/// `source_pin_address` must still be the tapped wire's own real originating pin (needed for
+	/// colour/bit-count/simulation-state lookups -- see `render::scene::draw_wires`'s doc
+	/// comment), not an address describing the tap point itself.
 	pub fn new_tapped_source(
 		source_pin_address: PinAddress,
 		target_pin_address: PinAddress,
@@ -577,13 +553,9 @@ impl WireDescription {
 		}
 	}
 
-	/// The mirror of [`Self::new_tapped_source`] for a wire whose *target*
-	/// end lands on an existing wire's line (`WireConnectionType::ToWireTarget`)
-	/// -- how an input is fed from the middle of another wire ("wiring into
-	/// a wire"). `target_pin_address` is the tapped wire's resolved real
-	/// target pin (see `viewer::bus_wiring` for the bus-corrected form),
-	/// and `tap_point` seeds `cached_target_point` so rendering re-projects
-	/// this end onto the anchor segment exactly like a source-side tap.
+	/// The mirror of [`Self::new_tapped_source`] for a wire whose *target* end lands on an
+	/// existing wire's line (`WireConnectionType::ToWireTarget`) -- how an input is fed from the
+	/// middle of another wire ("wiring into a wire").
 	pub fn new_tapped_target(
 		source_pin_address: PinAddress,
 		target_pin_address: PinAddress,
@@ -696,13 +668,8 @@ impl ChipLibrary {
 		self.by_name.get(&name.to_ascii_lowercase()).map(std::sync::Arc::as_ref)
 	}
 
-	/// Removes a chip from the library (by name, same case-insensitive
-	/// lookup as everything else here), returning it if it was present.
-	/// Used by the viewer's save/rename/replace flow (see
-	/// `viewer::save_flow`'s save flows) to drop an in-memory entry
-	/// that's being superseded -- e.g. the chip being backed-up-then-
-	/// overwritten by a `Replace`, or an old identity that's being
-	/// renamed away entirely.
+	/// Removes a chip from the library (by name, same case-insensitive lookup as everything else
+	/// here), returning it if it was present.
 	pub fn remove(&mut self, name: &str) -> Option<ChipDescription> {
 		self.by_name.remove(&name.to_ascii_lowercase()).map(|arc| std::sync::Arc::try_unwrap(arc).unwrap_or_else(|arc| (*arc).clone()))
 	}

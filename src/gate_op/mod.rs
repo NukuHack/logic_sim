@@ -1,18 +1,10 @@
-//! Optimized gate evaluation: pack a gate's pins into a small integer and
-//! evaluate via table lookup or a native function instead of walking the
-//! subchip graph.
-//!
-//! - `word`: `WireWord`, the packed-integer representation pins are converted to/from.
-//! - `eval`: `OptimizedGate` and its implementations (`Lut`, `Native`, `NativeList`) --
-//!   the actual fast path, usable today.
-//! - `caching`: *when* to build/use a `Lut` per combinational chip --
-//!   `Simulator::step_sub_chip` (in `sim.rs`) calls straight into this
-//!   module's `process_cached_chip`/`recalculate_cached_luts` for every
-//!   non-builtin subchip it steps. Toggled at runtime by
-//!   `Simulator::caching.use_caching`, itself driven by the customization
-//!   checkbox (`ProjectDescription::prefs_use_caching`, see
-//!   `render::editor_ui::CACHING_OPTIONS`) via
-//!   `viewer::sim_thread::SimHandle::set_use_caching`.
+//! Optimized gate evaluation: pack a gate's pins into a small integer and evaluate via table
+//! lookup or a native function instead of walking the subchip graph. - `word`: `WireWord`,
+//! the packed-integer representation pins are converted to/from. - `eval`: `OptimizedGate`
+//! and its implementations (`Lut`, `Native`, `NativeList`) -- the actual fast path, usable
+//! today. - `caching`: *when* to build/use a `Lut` per combinational chip --
+//! `Simulator::step_sub_chip` (in `sim.rs`) calls straight into this module's
+//! `process_cached_chip`/`recalculate_cached_luts` for every non-builtin subchip it steps.
 
 mod caching;
 mod eval;

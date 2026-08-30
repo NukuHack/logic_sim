@@ -3,34 +3,13 @@
 
 use crate::structs::Vec2;
 
-/// Offsets every point of a polyline sideways by a constant perpendicular
-/// `distance` (positive = to the left of each segment's direction of
-/// travel, i.e. rotate the segment direction +90 degrees; negative = to
-/// the right), producing a new polyline that stays exactly `distance` away
-/// from the original at every point along it -- including through bends,
-/// via a proper miter join at each interior vertex, rather than naively
-/// offsetting each segment independently and leaving a gap/overlap where
-/// two differently-offset segments would otherwise meet.
-///
-/// This one function backs two different uses in this module:
-///  - `add_polyline` calls it twice (once with `+thickness/2`, once with
-///    `-thickness/2`) to get a stroked ribbon's two edges.
-///  - wire drawing calls it once per bit-strand, with that strand's own
-///    constant centreline offset, to lay out each strand's path before
-///    stroking *that* with `add_polyline` at a single strand's thickness.
-///
-/// At an interior vertex, the offset direction is the (normalized) sum of
-/// the incoming and outgoing segments' own perpendicular normals -- the
-/// angle bisector -- scaled up by `1 / cos(theta / 2)` (`theta` being the
-/// angle between the two segments) so the offset point still sits exactly
-/// `distance` away from *both* adjacent (infinite) segment lines, not just
-/// nearer one of them. This is the standard "miter join" used for stroking
-/// polylines. For a perfect 180-degree reversal (incoming and outgoing
-/// directions exactly opposite, so their normals cancel to zero and the
-/// bisector is undefined) this falls back to just the incoming segment's
-/// own normal; the miter scale is also clamped (`MITER_LIMIT`) so a very
-/// sharp near-reversal bend doesn't spike out to an enormous, visually
-/// broken offset point.
+/// Offsets every point of a polyline sideways by a constant perpendicular `distance`
+/// (positive = to the left of each segment's direction of travel, i.e. rotate the segment
+/// direction +90 degrees; negative = to the right), producing a new polyline that stays
+/// exactly `distance` away from the original at every point along it -- including through
+/// bends, via a proper miter join at each interior vertex, rather than naively offsetting
+/// each segment independently and leaving a gap/overlap where two differently-offset segments
+/// would otherwise meet.
 pub fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
 	const MITER_LIMIT: f32 = 4.0;
 	let n = points.len();

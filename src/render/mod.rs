@@ -1,12 +1,5 @@
-//! Rendering layer: the first slice of the ported `Graphics/` + `Game/Interaction` code from the
-//! original C# project. Split into `foundation` (geometry primitives + point-in-shape hit tests
-//! shared by everything above), `layout` (grid/pin/chip-size math), `theme` (colour palette),
-//! `camera` (pan/zoom transform), `scene` (chip descriptions -> coloured triangles), `ui_kit`
-//! (shared button/label/text-field primitives), `editor_ui` and `menu_ui` (in-editor and startup
-//! overlays built from `ui_kit`), `context_menu` (generic right-click popup), `ui_stack` (the
-//! ordered layer stack every visible surface is pushed onto -- rendering composites it
-//! front-to-back and input dispatch walks it top-first), and `gpu` (the wgpu device/pipeline/draw
-//! call). Only `gpu` needs a real adapter, so only it skips `cargo test`.
+//! Rendering layer: the first slice of the ported `Graphics/` + `Game/Interaction` code from
+//! the original C# project.
 
 pub mod camera;
 pub mod context_menu;

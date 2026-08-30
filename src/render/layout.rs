@@ -24,15 +24,8 @@ pub const GRID_THICKNESS: f32 = 0.0035;
 /// Minimum on-screen size of a chip body that has no pins/name to size it.
 pub const MIN_CHIP_SIZE: f32 = GRID_SIZE;
 
-/// Stacks `pins` from the top downward along one edge of a chip and returns
-/// (total chip height, per-pin grid-space y offset from the chip's
-/// vertical centre). Offsets are centred so they land symmetrically inside
-/// a chip body rect that is itself centred on the chip's position and
-/// spans `[-height/2, +height/2]` -- without this centring, the pin stack
-/// (which is naturally built top-down starting from an arbitrary y=0
-/// reference) ends up sitting entirely in the bottom half of the body,
-/// leaving the top half empty. Direct port of
-/// `SubChipHelper.CalculateDefaultPinLayout`, plus this centring step.
+/// Stacks `pins` from the top downward along one edge of a chip and returns (total chip
+/// height, per-pin grid-space y offset from the chip's vertical centre).
 pub fn calculate_default_pin_layout(pins: &[PinBitCount]) -> (f32, Vec<f32>) {
 	let mut grid_y: i32 = 0; // top, before centring
 	let mut pin_grid_y_vals = Vec::with_capacity(pins.len());
@@ -75,13 +68,8 @@ pub fn calculate_min_chip_size_for_pins(inputs: &[PinBitCount], outputs: &[PinBi
 	Vec2::new(min_width.max(GRID_SIZE), min_height.max(GRID_SIZE))
 }
 
-/// Rough average glyph width, as a fraction of font size, for the
-/// proportional sans-serif font used for chip names. This module has no
-/// access to real font metrics (that lives in the text-rendering layer,
-/// `render::gpu`'s glyphon integration) so this is a deliberate estimate,
-/// not a measurement -- close enough to size a chip body so its name
-/// isn't clipped, mirroring (approximately) what
-/// `Draw.CalculateTextBoundsSize` would return in the original.
+/// Rough average glyph width, as a fraction of font size, for the proportional sans-serif
+/// font used for chip names.
 pub const AVG_CHAR_WIDTH_RATIO: f32 = 0.62;
 
 /// Estimated world-space width needed to draw `text` at `font_size`. See
@@ -91,22 +79,11 @@ pub fn estimate_text_width(text: &str, font_size: f32) -> f32 {
 	text.chars().count() as f32 * font_size * AVG_CHAR_WIDTH_RATIO
 }
 
-/// Minimum footprint of a chip body given its pins *and* its name label
-/// (when the label is actually drawn on the body, i.e. `name_location !=
-/// Hidden`). Mirrors `SubChipHelper.CalculateMinChipSize`'s union of pin
-/// bounds and name-text bounds.
-///
-/// This is the fix for labels effectively not rendering: sizing a body
-/// from its pins alone (`calculate_min_chip_size_for_pins`) very often
-/// gives a body far narrower than its name -- e.g. a single-input,
-/// single-output chip is only `GRID_SIZE * 2` (0.25 world units) wide,
-/// nowhere near enough room for a name like "Full Adder". Since
-/// `render::scene::build_scene` uses the chip body's width as the text
-/// label's wrap/clip width, an under-sized body means the label's text is
-/// clipped down to a sliver and is effectively invisible on screen even
-/// though the geometry/label data is technically being produced. Callers
-/// building subchip placements should use this (not the pins-only
-/// variant) so labels always have room to actually draw.
+/// Minimum footprint of a chip body given its pins *and* its name label (when the label is
+/// actually drawn on the body, i.e. Since `render::scene::build_scene` uses the chip body's
+/// width as the text label's wrap/clip width, an under-sized body means the label's text is
+/// clipped down to a sliver and is effectively invisible on screen even though the
+/// geometry/label data is technically being produced.
 pub fn calculate_min_chip_size(inputs: &[PinBitCount], outputs: &[PinBitCount], desc: &ChipDescription, font_size: f32) -> Vec2 {
 	let name = &desc.name;
 	// 7-segment/RGB/dot displays draw live pixel content that's illegible at their pin-count-only
@@ -127,13 +104,11 @@ pub fn calculate_min_chip_size(inputs: &[PinBitCount], outputs: &[PinBitCount], 
 	Vec2::new(pins_size.x.max(name_width + padding), pins_size.y)
 }
 
-/// World-space footprint enforced as a floor for `SevenSegmentDisplay`/`DisplayRgb`/`DisplayDot`
-/// bodies, which otherwise size down to `calculate_min_chip_size_for_pins`'s pin-count-only result
-/// (as small as `GRID_SIZE * 2` wide, since their name is `Hidden` and can't widen them the way an
-/// ordinary chip's label does) -- far too small to read the pixel/segment content drawn on them.
-/// `None` for chip types that aren't one of these three displays, so callers can widen a placed
-/// subchip's already-computed size (component-wise `max` against this) without needing their own
-/// type match.
+/// World-space footprint enforced as a floor for
+/// `SevenSegmentDisplay`/`DisplayRgb`/`DisplayDot` bodies, which otherwise size down to
+/// `calculate_min_chip_size_for_pins`'s pin-count-only result (as small as `GRID_SIZE * 2`
+/// wide, since their name is `Hidden` and can't widen them the way an ordinary chip's label
+/// does) -- far too small to read the pixel/segment content drawn on them.
 pub fn display_min_size(chip_type: ChipType) -> Option<Vec2> {
 	match chip_type {
 		ChipType::SevenSegmentDisplay => Some(Vec2::splat(GRID_SIZE) * 10.0),
@@ -143,16 +118,10 @@ pub fn display_min_size(chip_type: ChipType) -> Option<Vec2> {
 	}
 }
 
-/// Minimum on-screen thickness (in device pixels) grid lines should keep,
-/// regardless of `GRID_THICKNESS` or camera zoom. Below this, a thin flat
-/// quad -- this renderer draws lines as plain triangles, with no
-/// line-antialiasing pass like the original's `Draw.LineThickAA` -- covers
-/// less than a pixel and rasterizes inconsistently from line to line
-/// depending on its exact sub-pixel offset: some lines land on a pixel,
-/// their neighbours don't. That's what makes a zoomed-out grid look like
-/// it's "falling apart" / uneven rather than a uniform mesh, since
-/// `GRID_THICKNESS` alone (0.0035 world units) drops well under a pixel
-/// as soon as the camera zooms out even moderately.
+/// Minimum on-screen thickness (in device pixels) grid lines should keep, regardless of
+/// `GRID_THICKNESS` or camera zoom. That's what makes a zoomed-out grid look like it's
+/// "falling apart" / uneven rather than a uniform mesh, since `GRID_THICKNESS` alone (0.0035
+/// world units) drops well under a pixel as soon as the camera zooms out even moderately.
 pub const GRID_MIN_PIXEL_THICKNESS: f32 = 1.5;
 
 /// World-space thickness to actually draw grid lines at for a given
@@ -166,26 +135,20 @@ pub fn grid_line_thickness(zoom: f32) -> f32 {
 	GRID_THICKNESS.max(GRID_MIN_PIXEL_THICKNESS / zoom)
 }
 
-/// Body footprint for a chip's own boundary dev-pin, drawn in the scene as
-/// a tiny one-pin "component" (see `render::scene::build_scene`'s dev-pin
-/// drawing). Reuses the ordinary pins-only sizing formula with a single
-/// pin of `bit_count` on it, so a dev-pin's body -- like any other chip's
-/// body -- grows with the bit width it carries (e.g. an 8-bit dev-pin is
-/// visibly larger than a 1-bit one), rather than every dev-pin sharing one
-/// fixed placeholder size regardless of width.
+/// Body footprint for a chip's own boundary dev-pin, drawn in the scene as a tiny one-pin
+/// "component" (see `render::scene::build_scene`'s dev-pin drawing). Reuses the ordinary
+/// pins-only sizing formula with a single pin of `bit_count` on it, so a dev-pin's body --
+/// like any other chip's body -- grows with the bit width it carries (e.g. an 8-bit dev-pin
+/// is visibly larger than a 1-bit one), rather than every dev-pin sharing one fixed
+/// placeholder size regardless of width.
 pub fn dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
 	calculate_min_chip_size_for_pins(&[bit_count], &[])
 }
 
-/// Radius of the clickable circle drawn for a 1-bit *input* dev-pin's
-/// body: twice the ordinary connection-pin radius (`PIN_RADIUS`), so the
-/// thing a player actually has to click to toggle a switch is
-/// comfortably bigger than a plain wire-attachment pin, not the same
-/// tiny size. Also doubles as the side length of the square cell used
-/// for each individual bit of a *wider* input (see
-/// `INPUT_BIT_CELL_SIZE`) -- both trace back to this one constant so a
-/// 4/8-bit input's per-bit cells read as the same scale as the 1-bit
-/// case's circle, not an arbitrary unrelated size.
+/// Radius of the clickable circle drawn for a 1-bit *input* dev-pin's body: twice the
+/// ordinary connection-pin radius (`PIN_RADIUS`), so the thing a player actually has to click
+/// to toggle a switch is comfortably bigger than a plain wire-attachment pin, not the same
+/// tiny size.
 pub const INPUT_BIT_CIRCLE_RADIUS: f32 = PIN_RADIUS * 2.0;
 
 /// Side length of the square clickable cell drawn for each individual
