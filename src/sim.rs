@@ -393,7 +393,7 @@ impl Simulator {
 				// into the table) -- fall through to a real step below.
 			} else if !self.caching.not_combinational_chip_cache.contains(name.as_ref()) {
 				let mut caching = std::mem::take(&mut self.caching);
-				crate::gate_op::recalculate_cached_luts(self, &mut caching, chip_idx);
+				crate::gate_op::recalculate_chip_cache(self, &mut caching, chip_idx);
 				self.caching = caching;
 
 				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {

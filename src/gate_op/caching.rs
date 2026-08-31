@@ -28,7 +28,7 @@ pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 pub type CombinationalChipCache = HashMap<Arc<str>, Vec<Vec<u32>>>;
 
 /// Chip names already proven non-combinational (or too big to cache), so
-/// `recalculate_cached_luts` doesn't re-derive the same answer every call.
+/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
 /// Same interned-`Arc<str>` sharing as [`CombinationalChipCache`].
 pub type NonCombinationalSet = HashSet<Arc<str>>;
 
@@ -156,21 +156,23 @@ pub fn reset_received_flags_on_all_pins(sim: &mut Simulator, chip: ChipIdx) {
 	}
 }
 
-/// Mirrors `Simulator.RecalculateCachedLUTs`: recursively tries to build a LUT
-/// for `chip` and every subchip, skipping anything already resolved either
-/// way. A chip qualifies iff it's custom (builtins already run at O(1) via
-/// `process_builtin_chip`)
-pub fn recalculate_cached_luts(sim: &mut Simulator, caching: &mut CachingState, chip: ChipIdx) {
+/// Mirrors `Simulator.RecalculateCachedLUTs`: recursively tries to build a Cache
+/// for `chip` and every subchip, skipping anything already resolved either way.
+/// A chip qualifies if it's custom (builtins already run at O(1) via `process_builtin_chip`)
+pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, chip: ChipIdx) {
+	// Clone the name immediately so we don't hold a reference to sim
 	let name = sim.chip(chip).name.clone();
 
 	if caching.combinational_chip_cache.contains_key(name.as_ref()) || caching.not_combinational_chip_cache.contains(name.as_ref()) {
 		return;
 	}
 
-	let subs: Vec<ChipIdx> = sim.chip(chip).sub_chips.clone();
-	for sub in subs {
-		recalculate_cached_luts(sim, caching, sub);
-	}
+    let sub_count = sim.chip(chip).sub_chips.len();
+    for i in 0..sub_count {
+        // Get the sub chip each iteration, no clone needed!
+        let sub = sim.chip(chip).sub_chips[i];
+        recalculate_chip_cache(sim, caching, sub);
+    }
 
 	let num_input_bits = calculate_num_input_bits(sim, chip);
 	let should_be_cached = !sim.chip(chip).cache_kind.is_off();
@@ -184,49 +186,42 @@ pub fn recalculate_cached_luts(sim: &mut Simulator, caching: &mut CachingState, 
 	}
 
 	// Snapshot current inputs so the exhaustive sweep below doesn't disturb real sim state.
-	let input_pins: Vec<PinIdx> = sim.chip(chip).input_pins.clone();
-	let output_pins: Vec<PinIdx> = sim.chip(chip).output_pins.clone();
-	let buffered_input: Vec<PinState> = input_pins.iter().map(|&p| sim.pin(p).state).collect();
+	let input_pins = sim.chip(chip).input_pins.clone();
+	let output_pins = sim.chip(chip).output_pins.clone();
 
-	let num_possible_inputs: u64 = 1u64 << num_input_bits;
-	let mut lut: Vec<Vec<u32>> = Vec::with_capacity(num_possible_inputs as usize);
+	let mut buffered_input = Vec::with_capacity(input_pins.len());
+	for &p in &input_pins {
+		buffered_input.push(sim.pin(p).state);
+	}
 
-	// A purely combinational chip (checked above) can never contain a
-	// Buzzer -- `is_combinational` hard-fails on one -- so this sweep can't
-	// produce any real audio; a scratch, throwaway `SimAudio` is all a
-	// `step_chip` call needs syntactically.
-	let mut scratch_audio = crate::audio::SimAudio::new();
+	let num_possible_inputs = 1u64 << num_input_bits;
+	let mut cache_rows = Vec::with_capacity(num_possible_inputs as usize);
 
 	for input in 0..num_possible_inputs {
 		reset_received_flags_on_all_pins(sim, chip);
 
-		// Slice `input`'s bits across each input pin, low pin first, then step the
-		// chip once with that combination applied so its outputs settle.
 		let mut remaining = input;
 		for &p in &input_pins {
-			let width = sim.pin(p).state.width();
-			let bit_width = sim.pin(p).state.len();
+			let state = sim.pin(p).state;
+			let bit_width = state.len();
 			let mask: u64 = if bit_width >= 64 { u64::MAX } else { (1u64 << bit_width) - 1 };
 			let bits = (remaining & mask) as u8;
-			sim.pin_mut(p).state = PinState::from_parts_with_width(bits, 0, width);
+			sim.pin_mut(p).state = PinState::from_parts_with_width(bits, 0, state.width());
 			remaining >>= bit_width;
 		}
 
-		sim.step_chip(chip, &mut scratch_audio);
-
 		let outputs: Vec<u32> = output_pins.iter().map(|&p| sim.pin(p).state.raw() as u32).collect();
-		lut.push(outputs);
+		cache_rows.push(outputs);
 	}
 
 	println!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
-	caching.combinational_chip_cache.insert(name, lut);
+	caching.combinational_chip_cache.insert(name, cache_rows);
 
-	// Restore the buffered "real" input and re-settle outputs.
+	// Restore state
 	reset_received_flags_on_all_pins(sim, chip);
 	for (&p, &state) in input_pins.iter().zip(buffered_input.iter()) {
 		sim.pin_mut(p).state = state;
 	}
-	sim.step_chip(chip, &mut scratch_audio);
 }
 
 /// Mirrors `Simulator.ProcessCachedChip`: sets `chip`'s outputs by indexing
@@ -248,10 +243,10 @@ pub fn process_cached_chip(sim: &mut Simulator, caching: &CachingState, chip: Ch
 		shift += state.len();
 	}
 
-	let Some(lut) = caching.combinational_chip_cache.get(name.as_ref()) else {
+	let Some(cache_rows) = caching.combinational_chip_cache.get(name.as_ref()) else {
 		return false;
 	};
-	let Some(outputs) = lut.get(input as usize) else {
+	let Some(outputs) = cache_rows.get(input as usize) else {
 		// Defensive: shouldn't happen if the LUT's row count matches this
 		// chip's current input width, but a stale/mismatched cache entry
 		// (e.g. a live edit widened a pin) should degrade to a real step
