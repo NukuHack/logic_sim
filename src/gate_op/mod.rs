@@ -16,5 +16,5 @@ pub use caching::{
 	CombinationalChipCache, NonCombinationalSet, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING,
 };
 pub use eval::{Lut, Native, NativeList, OptimizedGate};
-pub use recognize::recognize;
+pub use recognize::{recognize, registry, Candidate, Formula};
 pub use word::{WideWord, WireWord};

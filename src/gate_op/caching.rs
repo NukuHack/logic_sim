@@ -167,12 +167,12 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 		return;
 	}
 
-    let sub_count = sim.chip(chip).sub_chips.len();
-    for i in 0..sub_count {
-        // Get the sub chip each iteration, no clone needed!
-        let sub = sim.chip(chip).sub_chips[i];
-        recalculate_chip_cache(sim, caching, sub);
-    }
+	let sub_count = sim.chip(chip).sub_chips.len();
+	for i in 0..sub_count {
+		// Get the sub chip each iteration, no clone needed!
+		let sub = sim.chip(chip).sub_chips[i];
+		recalculate_chip_cache(sim, caching, sub);
+	}
 
 	let num_input_bits = calculate_num_input_bits(sim, chip);
 	let should_be_cached = !sim.chip(chip).cache_kind.is_off();

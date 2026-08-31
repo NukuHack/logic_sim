@@ -18,6 +18,13 @@ pub trait WireWord: Clone + Eq + Send + Sync + 'static {
 	/// This word's value as a `Vec` index. Only meaningful for word sizes small
 	/// enough to serve as a dense lookup-table index (see `WideWord`).
 	fn as_index(&self) -> usize;
+
+	/// This word's bits widened to `u64`, same low-bit-first layout as
+	/// `pack`/`unpack`. Lets code that only cares about the bit pattern (e.g.
+	/// `recognize`) work uniformly across `u8..u128` without being generic
+	/// over which one it got. Only meaningful for widths <= 64; wider words
+	/// are truncated to their low 64 bits (see `WideWord`'s impl).
+	fn to_u64(&self) -> u64;
 }
 
 macro_rules! impl_wire_word {
@@ -34,6 +41,9 @@ macro_rules! impl_wire_word {
 			}
 			fn as_index(&self) -> usize {
 				*self as usize
+			}
+			fn to_u64(&self) -> u64 {
+				*self as u64 // truncating for u128, which is fine: to_u64's contract is low-64-bits-only
 			}
 		}
 	)*};
@@ -61,5 +71,8 @@ impl WireWord for WideWord {
 	}
 	fn as_index(&self) -> usize {
 		unreachable!("WideWord inputs are too wide for a dense Lut; use Native/NativeList instead")
+	}
+	fn to_u64(&self) -> u64 {
+		self.bits.first().copied().unwrap_or(0)
 	}
 }
