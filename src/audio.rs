@@ -245,7 +245,7 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 				let frames_played = (data.len() / channels) as u64;
 				samples_elapsed_callback.fetch_add(frames_played, std::sync::atomic::Ordering::Relaxed);
 			},
-			|err| eprintln!("audio stream error: {err}"),
+			|err| log::error!("audio stream error: {err}"),
 			None,
 		)
 		.map_err(|e| format!("failed to build audio stream: {e}"))?;
@@ -284,7 +284,7 @@ fn promote_worker_to_realtime() {
 				pollster::block_on(connection.call_method(Some(service), path, Some(interface), "MakeThreadRealtimeWithPID", &(pid, tid, priority)))
 					.map(|_: zbus::Message| ());
 			if call.is_ok() {
-				eprintln!("audio: worker thread promoted to SCHED_FIFO {priority} via rtkit");
+				log::debug!("audio: worker thread promoted to SCHED_FIFO {priority} via rtkit");
 				return;
 			}
 		}

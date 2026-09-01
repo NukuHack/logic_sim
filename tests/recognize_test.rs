@@ -261,8 +261,8 @@ fn recognizes_bitwise_and_wide() {
 		(0..2).map(|idx| (result >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 2, &lut).expect("Bitwise AND should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![true, false]); // 01 & 11 = 01
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![false, true]); // 11 & 10 = 10
+	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![true, false]);
+	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![false, true]);
 }
 
 #[test]

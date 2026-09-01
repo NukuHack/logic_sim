@@ -220,6 +220,10 @@ impl CacheKind {
 		(*self).into()
 	}
 
+	pub fn is_none(&self) -> bool {
+		matches!(self, Self::None)
+	}
+
 	pub fn is_off(&self) -> bool {
 		matches!(self, Self::Off)
 	}

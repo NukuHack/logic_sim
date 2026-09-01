@@ -643,7 +643,7 @@ impl App {
 					state.renderer.resize(size.width, size.height);
 				}
 				Err(wgpu::SurfaceError::OutOfMemory) => event_loop.exit(),
-				Err(e) => eprintln!("render error: {e:?}"),
+				Err(e) => log::error!("render error: {e:?}"),
 			}
 
 			// Bare-bones FPS counter: tick once per rendered frame, dump
@@ -651,7 +651,7 @@ impl App {
 			self.fps_frames += 1;
 			let elapsed = self.fps_since.elapsed();
 			if elapsed.as_secs_f32() >= 3.0 {
-				println!("fps: {:.1}", self.fps_frames as f32 / elapsed.as_secs_f32());
+				log::debug!("fps: {:.1}", self.fps_frames as f32 / elapsed.as_secs_f32());
 				self.fps_frames = 0;
 				self.fps_since = std::time::Instant::now();
 			}

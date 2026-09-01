@@ -258,12 +258,14 @@ pub fn recognize<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: 
 	Some(Box::new(Native::new(in_bits, out_bits, candidate.config, candidate.formula)))
 }
 
+pub type RecFn = fn(Bits, u32, u32, Bits) -> Bits;
+#[allow(unused)]
 /// Like [`recognize`], but hands back the matched candidate's raw `(config, formula)` pair
 /// instead of a boxed `Native`, for callers that already track their own `in_bits`/`out_bits`
 /// (e.g. [`super::caching`], which wants to store just the two words needed to call `formula`
 /// directly against a chip's cache entry, without an extra allocation or vtable indirection
 /// per cached chip).
-pub fn recognize_formula<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<(Bits, fn(Bits, u32, u32, Bits) -> Bits)> {
+pub fn recognize_formula<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<(Bits, RecFn)> {
 	find_candidate(in_bits, out_bits, lut).map(|c| (c.config, c.formula))
 }
 

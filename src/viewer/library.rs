@@ -191,7 +191,7 @@ pub(crate) fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, s
 			!owner_gone(w.source_pin_address) && !owner_gone(w.target_pin_address)
 		});
 		if let Err(e) = Saver::save_chip(paths, &v.project_name, &v.library, &pristine) {
-			eprintln!("warning: failed to resave affected chip '{parent_name}': {e}");
+			log::warn!("failed to resave affected chip '{parent_name}': {e}");
 			continue;
 		}
 		*v.library.get_mut(&parent_name) = pristine;

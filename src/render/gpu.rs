@@ -103,7 +103,7 @@ impl Renderer {
 			.expect("Failed to create wgpu device");
 
 		let info = adapter.get_info();
-		eprintln!("wgpu: using adapter '{}' ({:?} backend, {:?})", info.name, info.backend, info.device_type);
+		log::debug!("wgpu: using adapter '{}' ({:?} backend, {:?})", info.name, info.backend, info.device_type);
 
 		let caps = surface.get_capabilities(&adapter);
 		let surface_format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
@@ -187,7 +187,7 @@ impl Renderer {
 		});
 
 		let font_system = FontSystem::new();
-		eprintln!("glyphon: {} font face(s) available", font_system.db().faces().count());
+		log::debug!("glyphon: {} font face(s) available", font_system.db().faces().count());
 		let swash_cache = SwashCache::new();
 		let text_cache = TextCache::new(&device);
 		let text_viewport = TextViewport::new(&device, &text_cache);

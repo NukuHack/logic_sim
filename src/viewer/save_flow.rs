@@ -92,7 +92,7 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 	let mut desc = v.prefs.clone();
 	match Saver::save_project_description(paths, &mut desc) {
 		Ok(()) => v.prefs = desc,
-		Err(e) => eprintln!("warning: failed to update project description: {e}"),
+		Err(e) => log::warn!("failed to update project description: {e}"),
 	}
 }
 
@@ -111,7 +111,7 @@ fn rename_starred_chip(v: &mut ViewerState, paths: &SavePaths, old_name: &str, n
 		let mut desc = v.prefs.clone();
 		match Saver::save_project_description(paths, &mut desc) {
 			Ok(()) => v.prefs = desc,
-			Err(e) => eprintln!("warning: failed to update project description: {e}"),
+			Err(e) => log::warn!("failed to update project description: {e}"),
 		}
 	}
 }
@@ -189,7 +189,7 @@ fn resave_affected_parent_chips(v: &mut ViewerState, paths: &SavePaths, target_n
 			}
 		}
 		if let Err(e) = Saver::save_chip(paths, &v.project_name, &v.library, &pristine) {
-			eprintln!("warning: failed to resave affected chip '{parent_name}': {e}");
+			log::warn!("failed to resave affected chip '{parent_name}': {e}");
 			continue;
 		}
 		*v.library.get_mut(&parent_name) = pristine;
@@ -315,7 +315,7 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
 		Ok(()) => {
 			if let Err(e) = Saver::delete_chip(paths, &v.project_name, &old_name, false) {
-				eprintln!("warning: renamed '{old_name}' to '{new_name}' but failed to remove the old file: {e}");
+				log::warn!("renamed '{old_name}' to '{new_name}' but failed to remove the old file: {e}");
 			}
 			v.library.remove(&old_name);
 			v.library.add(new_desc);

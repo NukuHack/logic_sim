@@ -750,7 +750,7 @@ fn roundtrip_chip_with_all_features() {
 	});
 
 	let json = serialize_chip_description(&original).unwrap();
-	print!("{}", json);
+	log::debug!("{}", json);
 	let roundtrip = parse_chip_description(&json).unwrap();
 
 	// Compare everything

@@ -5,7 +5,7 @@
 
 fn main() {
 	if let Err(e) = logic_sim::viewer::run() {
-		eprintln!("event loop error: {e}");
+		log::error!("event loop error: {e}");
 		std::process::exit(1);
 	}
 }

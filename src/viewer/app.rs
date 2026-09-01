@@ -17,6 +17,46 @@ use crate::{default_chip_collections, default_starred_list, ChipDescription, Chi
 /// dismissing itself -- no interaction required.
 pub(crate) const STATUS_TOAST_LINGER: std::time::Duration = std::time::Duration::from_secs(7);
 
+use chrono::Local;
+use env_logger::{Builder, Env};
+use std::io::Write;
+use std::sync::OnceLock;
+use std::thread::ThreadId;
+
+static REAL_ID: OnceLock<ThreadId> = OnceLock::new();
+
+fn get_real_id() -> ThreadId {
+	*REAL_ID.get_or_init(|| std::thread::current().id())
+}
+
+fn init_logger() {
+	// init the basic id
+	REAL_ID.get_or_init(|| std::thread::current().id());
+
+	// This allows setting RUST_LOG=debug, RUST_LOG=warn, etc.
+	let env = Env::default()
+        .filter_or("RUST_LOG", "info")  // Default to INFO if not set
+        .write_style_or("RUST_LOG_STYLE", "auto");
+
+	let mut builder = Builder::from_env(env);
+
+	builder.format(|buf: &mut env_logger::fmt::Formatter, record: &log::Record<'_>| {
+		let timestamp = Local::now().format("%H:%M;%S.%3f").to_string();
+		let thread_id = std::thread::current().id();
+
+		// Use buf.write_* or buf.finish()
+		if get_real_id() != thread_id {
+			writeln!(buf, "{} {:?} [{}] {}", timestamp, thread_id, record.level(), record.args())
+		} else {
+			writeln!(buf, "{} [{}] {}", timestamp, record.level(), record.args())
+		}
+	});
+
+	builder.init();
+
+	log::debug!("current time: {}", Local::now().format("%Y.%m.%d"));
+}
+
 /// The window + wgpu renderer pair both screens draw into.
 pub(crate) struct RenderState {
 	pub(crate) window: std::sync::Arc<winit::window::Window>,
@@ -87,7 +127,7 @@ impl App {
 		let audio_player = match crate::audio::spawn_player(std::sync::Arc::clone(&audio)) {
 			Ok(player) => Some(player),
 			Err(reason) => {
-				eprintln!("audio disabled: {reason}");
+				log::warn!("audio disabled: {reason}");
 				None
 			}
 		};
@@ -333,10 +373,10 @@ pub(crate) fn create_render_state(window: std::sync::Arc<winit::window::Window>,
 
 /// Entry point: sets up logging + save paths, then runs the event loop.
 pub fn run() -> Result<(), winit::error::EventLoopError> {
-	env_logger::init();
+	init_logger();
 
 	let data_dir = std::env::args().nth(1).map(std::path::PathBuf::from).unwrap_or_else(SavePaths::unity_persistent_data_dir);
-	eprintln!("using save data directory: {}", data_dir.display());
+	log::debug!("using save data directory: {}", data_dir.display());
 	SavePaths::ensure_directory_exists(&data_dir).ok();
 
 	let mut app = App::new(SavePaths::new(data_dir));

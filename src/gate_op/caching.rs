@@ -205,12 +205,12 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 	}
 
 	let num_input_bits = calculate_num_input_bits(sim, chip);
-	let should_be_cached = !sim.chip(chip).cache_kind.is_off();
+	let should_be_cached = sim.chip(chip).cache_kind.is_none();
 	let within_budget = should_be_cached && num_input_bits <= MAX_NUM_INPUT_BITS_WHEN_USER_CACHING;
 
 	let is_custom = sim.chip(chip).chip_type == crate::description::ChipType::Custom;
 	if !is_custom || !within_budget || !is_combinational(sim, chip) {
-		println!("[cache] '{name}' will not be cached (custom={is_custom}, within_budget={within_budget}, input_bits={num_input_bits})");
+		log::debug!("[cache] '{name}' will not be cached (custom={is_custom}, within_budget={within_budget}, input_bits={num_input_bits})");
 		caching.not_combinational_chip_cache.insert(name);
 		return;
 	}
@@ -227,6 +227,11 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 	let num_possible_inputs = 1u64 << num_input_bits;
 	let mut cache_rows = Vec::with_capacity(num_possible_inputs as usize);
 
+	// A purely combinational chip (checked above) can never contain a
+	// Buzzer -- `is_combinational` hard-fails on one -- so this sweep can't
+	// produce any real audio; a scratch, throwaway `SimAudio` is all a
+	// `step_chip` call needs syntactically.
+	let mut scratch_audio = crate::audio::SimAudio::new();
 	for input in 0..num_possible_inputs {
 		reset_received_flags_on_all_pins(sim, chip);
 
@@ -239,12 +244,13 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 			sim.pin_mut(p).state = PinState::from_parts_with_width(bits, 0, state.width());
 			remaining >>= bit_width;
 		}
+		sim.step_chip(chip, &mut scratch_audio);
 
 		let outputs: Vec<u32> = output_pins.iter().map(|&p| sim.pin(p).state.raw() as u32).collect();
 		cache_rows.push(outputs);
 	}
 
-	println!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
+	log::warn!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
 	caching.combinational_chip_cache.insert(name, cache_rows);
 
 	// Restore state
