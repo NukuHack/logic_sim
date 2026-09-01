@@ -1,4 +1,4 @@
-use logic_sim::gate_op::{recognize, registry, Formula, Lut, OptimizedGate};
+use logic_sim::gate_op::{recognize, registry, Lut, Native, OptimizedGate};
 use logic_sim::pin_state::LogicState;
 
 fn eval_bools(gate: &dyn OptimizedGate, in_bits: u32, out_bits: u32, input: &[bool]) -> Vec<bool> {
@@ -23,10 +23,10 @@ fn lut_for(in_bits: u32, out_bits: u32, f: impl Fn(&[bool]) -> Vec<bool>) -> Lut
 	Lut::new(table.into_boxed_slice())
 }
 
-/// Helper to create a Formula from a registry candidate by name
-fn formula_from_candidate(name: &str, in_bits: u32, out_bits: u32) -> Formula {
+/// Helper to create a Native from a registry candidate by name
+fn formula_from_candidate(name: &str, in_bits: u32, out_bits: u32) -> Native {
 	let candidate = registry().iter().find(|c| c.name() == name).expect(name);
-	Formula::new(in_bits, out_bits, candidate.config(), candidate.formula())
+	Native::new(in_bits, out_bits, candidate.config(), candidate.formula())
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn unrecognized_table_returns_none() {
 }
 
 /// The actual motivating case: a 40-in/21-out adder is far too wide to ever materialize as a
-/// `Lut` (2^40 rows), so this exercises `Formula` eval directly instead of round-tripping
+/// `Lut` (2^40 rows), so this exercises `Native` eval directly instead of round-tripping
 /// through `recognize`, matching how a wide gate would need to be recognized structurally
 /// rather than by an exhaustive table diff in real use.
 #[test]
@@ -252,8 +252,6 @@ fn recognizes_equals6_as_xnor_2n() {
 	assert_eq!(eval_bools(&*gate, 6, 1, &[true, false, true, true, false, true]), vec![true]);
 	assert_eq!(eval_bools(&*gate, 6, 1, &[true, false, true, true, false, false]), vec![false]);
 }
-/*
-// incorrect recognised
 #[test]
 fn recognizes_bitwise_and_wide() {
 	let lut = lut_for(4, 2, |b| {
@@ -264,9 +262,8 @@ fn recognizes_bitwise_and_wide() {
 	});
 	let gate = recognize(4, 2, &lut).expect("Bitwise AND should be recognized");
 	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![true, false]); // 01 & 11 = 01
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![false, true]); // 11 & 01 = 01
+	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![false, true]); // 11 & 10 = 10
 }
- */
 
 #[test]
 fn recognizes_bitwise_or_wide() {
@@ -461,4 +458,77 @@ fn recognizes_wide_equality() {
 	// Test non-matching halves
 	input[10] = false;
 	assert_eq!(eval_bools(&*gate, 16, 1, &input), vec![false]);
+}
+
+/// `find_candidate` checks the all-ones ("last") row before doing the full sweep as a fast
+/// rejection anchor. AND2 and OR2 agree on every row except the all-ones one (AND2: 1, OR2:
+/// 1 too -- so use AND2 vs. NAND2, which disagree exactly there: NAND2(1,1)=0, AND2(1,1)=1).
+/// A genuine AND2 table must therefore still be recognized as AND2, not incorrectly bounced
+/// by the anchor check.
+#[test]
+fn anchor_row_check_does_not_reject_a_true_match() {
+	let lut = lut_for(2, 1, |b| vec![b[0] & b[1]]);
+	let gate = recognize(2, 1, &lut).expect("AND2 should still be recognized with the anchor pre-check in place");
+	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 2, 1, &[false, false]), vec![false]);
+}
+
+/// A table that matches AND2 everywhere except the very last (all-ones) row: the anchor
+/// check should reject this immediately, and no other candidate in the registry should
+/// accidentally match it either.
+#[test]
+fn table_mismatching_only_at_last_row_is_rejected() {
+	let lut = lut_for(2, 1, |b| {
+		if b[0] && b[1] {
+			vec![false] // AND2 says `true` here; this table disagrees only on this row
+		} else {
+			vec![b[0] & b[1]]
+		}
+	});
+	assert!(recognize(2, 1, &lut).is_none());
+}
+
+/// Mirror of the previous case at a wider width, so the anchor check's "last row" is
+/// `2^in_bits - 1` for a non-trivial `in_bits` rather than the trivial 2-bit case above.
+#[test]
+fn wide_table_mismatching_only_at_last_row_is_rejected() {
+	let lut = lut_for(6, 1, |b| {
+		if b.iter().all(|&x| x) {
+			vec![false] // AND_N/AND6 says `true` on the all-ones row; this table disagrees only there
+		} else {
+			vec![b.iter().all(|&x| x)]
+		}
+	});
+	assert!(recognize(6, 1, &lut).is_none());
+}
+
+/// A table that matches AND2's formula only at the last row but disagrees everywhere else
+/// must still be rejected: passing the anchor check is necessary but not sufficient, so the
+/// full sweep after it has to catch this.
+#[test]
+fn table_matching_only_at_last_row_is_rejected() {
+	let lut = lut_for(2, 1, |b| {
+		if b[0] && b[1] {
+			vec![true] // agrees with AND2 here
+		} else {
+			vec![!(b[0] & b[1])] // disagrees with AND2 (and everything else) elsewhere
+		}
+	});
+	assert!(recognize(2, 1, &lut).is_none());
+}
+
+/// Sanity check at a size (2^20 rows) large enough that an accidental O(candidates *
+/// 2^in_bits) blow-up, rather than the intended fast anchor-based rejection, would make this
+/// test noticeably slow -- correctness is what's asserted, the point is that it still
+/// finishes quickly.
+#[test]
+fn recognizes_wide_and_with_many_input_bits() {
+	let in_bits = 20;
+	let lut = lut_for(in_bits, 1, |b| vec![b.iter().all(|&x| x)]);
+	let gate = recognize(in_bits, 1, &lut).expect("20-input AND should be recognized");
+	assert_eq!(eval_bools(&*gate, in_bits, 1, &vec![true; in_bits as usize]), vec![true]);
+	let mut one_false = vec![true; in_bits as usize];
+	one_false[19] = false;
+	assert_eq!(eval_bools(&*gate, in_bits, 1, &one_false), vec![false]);
 }

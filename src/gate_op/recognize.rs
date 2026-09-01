@@ -1,66 +1,26 @@
 //! Recognizes a materialized [`Lut`] as a known gate pattern (AND, adder, etc.) and, on a
-//! match, hands back a [`Formula`] that computes the same function from a tiny closed-form
+//! match, hands back a [`Native`] that computes the same function from a tiny closed-form
 //! expression over packed bits instead of a stored table.
 //!
 //! Why this matters: a `Lut<In, Out>` is only as cheap as its table is small. A 20-input gate
 //! is already a million-row table; a handful of bits more and it stops being buildable at all.
-//! `Formula` is O(1) to evaluate and O(1) to store regardless of width, so recognizing a wide
+//! `Native` is O(1) to evaluate and O(1) to store regardless of width, so recognizing a wide
 //! `Lut` as e.g. `ADDER_N` turns an expensive (or outright impossible) table into a couple of
 //! shifts, masks and an add. Recognition itself streams the candidate's output row-by-row
 //! against the real table and bails at the first mismatch, so a non-matching candidate is
 //! usually rejected in a handful of comparisons rather than a full table diff.
 
-use super::eval::{Lut, OptimizedGate};
+use super::eval::{Bits, Lut, Native, OptimizedGate};
 use super::word::WireWord;
-use crate::pin_state::LogicState;
-
-/// Packed bits, up to 64 of them, low bit first -- the common currency both `Formula` and the
-/// candidate registry deal in. Using a plain `u64` (rather than `Vec<bool>`/generic `WireWord`)
-/// means every candidate check and every `Formula::eval` is pure register arithmetic: no heap
-/// allocation, no per-bit branches, no monomorphization per word type.
-type Bits = u64;
 
 /// `1` bits in positions `[0, n)`, saturating at `u64::MAX` for `n >= 64` instead of overflowing
 /// the shift. Every candidate formula below uses this to isolate an N-bit field.
 #[inline(always)]
-fn mask(n: u32) -> Bits {
+pub(crate) fn mask(n: u32) -> Bits {
 	if n >= 64 {
 		Bits::MAX
 	} else {
 		(1u64 << n) - 1
-	}
-}
-
-/// A gate evaluated from a closed-form function over packed bits rather than a stored table.
-/// This is what a matched candidate becomes: no table, so no memory cost and no cache-miss risk
-/// no matter how wide the gate is, at the cost of a few ALU ops per eval instead of one load.
-pub struct Formula {
-	in_bits: u32,
-	out_bits: u32,
-	config: Bits,
-	f: fn(Bits, u32, u32, Bits) -> Bits,
-}
-impl Formula {
-	pub fn new(in_bits: u32, out_bits: u32, config: Bits, f: fn(Bits, u32, u32, Bits) -> Bits) -> Self {
-		Self { in_bits, out_bits, config, f }
-	}
-}
-
-impl OptimizedGate for Formula {
-	fn eval(&self, input: &[LogicState], output: &mut [LogicState]) {
-		debug_assert_eq!(input.len() as u32, self.in_bits);
-		debug_assert_eq!(output.len() as u32, self.out_bits);
-
-		let mut word: Bits = 0;
-		for (i, s) in input.iter().enumerate() {
-			word |= (s.is_high() as Bits) << i;
-		}
-
-		let result = (self.f)(word, self.in_bits, self.out_bits, self.config);
-
-		for (i, slot) in output.iter_mut().enumerate() {
-			*slot = LogicState::from_bool((result >> i) & 1 == 1);
-		}
 	}
 }
 
@@ -279,7 +239,7 @@ pub fn registry() -> &'static [Candidate] {
 	})
 }
 
-/// Recognizes `lut` as a known gate pattern and, on a match, returns an equivalent [`Formula`]
+/// Recognizes `lut` as a known gate pattern and, on a match, returns an equivalent [`Native`]
 /// -- generic over `In`/`Out` so any real [`Lut<In, Out>`] can be handed in directly, not just
 /// the `u32`-packed shape a caller happens to have lying around.
 ///
@@ -290,9 +250,28 @@ pub fn registry() -> &'static [Candidate] {
 /// width (say 5 bits) is usually narrower than the container type chosen to hold it (`u8`).
 ///
 /// Returns `None` (rather than panicking or truncating) when the gate is too wide for this to
-/// even attempt: >64 bits either way is outside what a packed `u64` word, and therefore
-/// `Formula`, can represent.
+/// even attempt (>64 bits either way is outside what a packed `u64` word, and therefore
+/// `Native`, can represent), when `in_bits`/`out_bits` is zero, when `lut`'s table doesn't
+/// actually have `2^in_bits` rows, or when no candidate in the registry matches every row.
 pub fn recognize<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<Box<dyn OptimizedGate>> {
+	let candidate = find_candidate(in_bits, out_bits, lut)?;
+	Some(Box::new(Native::new(in_bits, out_bits, candidate.config, candidate.formula)))
+}
+
+/// Like [`recognize`], but hands back the matched candidate's raw `(config, formula)` pair
+/// instead of a boxed `Native`, for callers that already track their own `in_bits`/`out_bits`
+/// (e.g. [`super::caching`], which wants to store just the two words needed to call `formula`
+/// directly against a chip's cache entry, without an extra allocation or vtable indirection
+/// per cached chip).
+pub fn recognize_formula<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<(Bits, fn(Bits, u32, u32, Bits) -> Bits)> {
+	find_candidate(in_bits, out_bits, lut).map(|c| (c.config, c.formula))
+}
+
+/// Shared search behind [`recognize`]/[`recognize_formula`]: streams `lut`'s table against
+/// every applicable candidate's formula and returns the first exact match, bailing at the
+/// first mismatching row per candidate (see the module doc comment for why this is cheap even
+/// when nothing matches).
+fn find_candidate<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<&'static Candidate> {
 	if in_bits == 0 || in_bits > 64 || out_bits == 0 || out_bits > 64 {
 		return None;
 	}
@@ -300,8 +279,20 @@ pub fn recognize<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: 
 		return None; // table doesn't match the claimed width; nothing sane to compare against
 	}
 
+	// Anchor row checked before the full sweep: the all-ones input is cheap to compute and,
+	// in practice, is where most non-matching-but-`applicable` candidates (e.g. AND2 vs.
+	// NAND2, which agree on every row except this one) first diverge from `lut`. Checking it
+	// up front turns what would otherwise be a full O(2^in_bits) scan into O(1) for those
+	// cases; a genuine match still falls through to the exhaustive check below, since one
+	// matching row is never enough to prove equivalence on its own.
+	let last_row = lut.table.len() - 1;
+	let last_actual = lut.table[last_row].to_u64();
+
 	'candidates: for candidate in registry() {
 		if !(candidate.applicable)(in_bits, out_bits, candidate.config) {
+			continue;
+		}
+		if (candidate.formula)(last_row as Bits, in_bits, out_bits, candidate.config) != last_actual {
 			continue;
 		}
 		for (row, actual) in lut.table.iter().enumerate() {
@@ -310,8 +301,7 @@ pub fn recognize<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: 
 				continue 'candidates;
 			}
 		}
-		let _ = candidate.name; // available for logging/debugging at the call site if desired
-		return Some(Box::new(Formula { in_bits, out_bits, config: candidate.config, f: candidate.formula }));
+		return Some(candidate);
 	}
 	None
 }

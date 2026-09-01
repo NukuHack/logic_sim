@@ -37,17 +37,57 @@ impl<In: WireWord, Out: WireWord> OptimizedGate for Lut<In, Out> {
 	}
 }
 
-/// A hand-written closure standing in for a gate, e.g. `AND` as `|w: u8| w == 0b11`.
-/// Cheaper to build than a `Lut` (no table to fill) and just as fast to run.
-pub struct Native<In: WireWord, Out: WireWord> {
-	pub f: fn(In) -> Out,
+/// Packed-bits currency `Native` and [`super::recognize`]'s candidate registry both deal in:
+/// gate pins packed low-bit-first into one register-sized integer. A plain `u64` (rather than
+/// going through `WireWord`/`In::pack`) means every candidate check and every `Native::eval` is
+/// pure register arithmetic -- no monomorphization per word type, and no mismatch between the
+/// width `recognize` reasons about (`in_bits`/`out_bits`, checked against the real `Lut`) and
+/// the width baked into some concrete `In`/`Out` pair.
+pub type Bits = u64;
+
+/// A gate evaluated from a closed-form function over packed bits rather than a stored table,
+/// e.g. `AND2` as `|w, ..| (w & 0b11) == 0b11`. Cheaper to build than a `Lut` (no table to
+/// fill) and just as fast to run, at the cost of a few ALU ops per eval instead of one load --
+/// and unlike a `Lut`, its cost doesn't grow with gate width at all, so this is what
+/// [`super::recognize::recognize`] hands back for any pattern it matches (AND, adder, ...)
+/// regardless of how wide the gate is.
+///
+/// `in_bits`/`out_bits` are carried alongside `config` (rather than baked into a concrete
+/// `In`/`Out` type pair) so one `fn` pointer can serve an entire parametric family -- e.g.
+/// `AND_N` for any width, or the four carry-in/carry-out adder variants sharing one formula
+/// shape -- instead of needing a hand-written monomorphized function per width.
+pub struct Native {
+	in_bits: u32,
+	out_bits: u32,
+	config: Bits,
+	f: fn(Bits, u32, u32, Bits) -> Bits,
 }
 
-impl<In: WireWord, Out: WireWord> OptimizedGate for Native<In, Out> {
-	fn eval(&self, input: &[LogicState], output: &mut [LogicState]) {
-		(self.f)(In::pack(input)).unpack(output);
+impl Native {
+	pub fn new(in_bits: u32, out_bits: u32, config: Bits, f: fn(Bits, u32, u32, Bits) -> Bits) -> Self {
+		Self { in_bits, out_bits, config, f }
 	}
 }
+
+impl OptimizedGate for Native {
+	fn eval(&self, input: &[LogicState], output: &mut [LogicState]) {
+		debug_assert_eq!(input.len() as u32, self.in_bits);
+		debug_assert_eq!(output.len() as u32, self.out_bits);
+
+		let mut word: Bits = 0;
+		for (i, s) in input.iter().enumerate() {
+			word |= (s.is_high() as Bits) << i;
+		}
+
+		let result = (self.f)(word, self.in_bits, self.out_bits, self.config);
+
+		for (i, slot) in output.iter_mut().enumerate() {
+			*slot = LogicState::from_bool((result >> i) & 1 == 1);
+		}
+	}
+}
+
+// TODO : rework NativeList, since Native has changed a lot
 
 /// A short chain of native steps: `In -> Mid` once, then `Mid -> Mid` for each
 /// remaining step, then `Mid -> Out` to land on the final width. Pick `Mid`

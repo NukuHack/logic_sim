@@ -59,16 +59,40 @@ pub fn calculate_num_input_bits(sim: &Simulator, chip: ChipIdx) -> u32 {
 }
 
 /// Mirrors `SimChip.IsCombinational`: true iff this chip's outputs depend only
-/// on its current inputs (no memory, no feedback loop). Same three checks as the original
+/// on its current inputs (no memory, no feedback loop). Same three checks as the original.
+///
+/// Delegates to [`is_combinational_memoized`] with a fresh, call-local memo table: a chip's
+/// subchips can reference the same underlying chip definition more than once (e.g. two AND
+/// gates in one schematic), and without memoization each occurrence re-walks that shared
+/// subtree from scratch.
 pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
+	let mut memo = HashMap::new();
+	is_combinational_memoized(sim, chip, &mut memo)
+}
+
+/// Does the real work behind [`is_combinational`], keyed by chip id so repeated subchips
+/// within one call are only walked once. `memo` is local to a single top-level call rather
+/// than shared across calls: a chip's combinational-ness can only depend on its own subtree,
+/// so a fresh table per call is both correct and enough to eliminate the redundant re-walks
+/// that matter (a chip used many times inside one parent).
+fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<i32, bool>) -> bool {
 	use crate::description::ChipType as E;
+
+	let chip_id = sim.chip(chip).id;
+	if let Some(&result) = memo.get(&chip_id) {
+		return result;
+	}
 
 	let chip_type = sim.chip(chip).chip_type;
 	if chip_type.is_merge_type() || chip_type.is_bus_type() || chip_type.is_io_type() {
+		memo.insert(chip_id, true);
 		return true;
 	}
 	match chip_type {
-		E::Nand | E::TriStateBuffer => return true,
+		E::Nand | E::TriStateBuffer => {
+			memo.insert(chip_id, true);
+			return true;
+		}
 		E::Clock
 		| E::Pulse
 		| E::DevRam8Bit
@@ -80,6 +104,7 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 		| E::Key
 		| E::Buzzer
 		| E::KeyMods => {
+			memo.insert(chip_id, false);
 			return false;
 		}
 		_ => {}
@@ -88,19 +113,24 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 	for &sub in &sim.chip(chip).sub_chips {
 		for &p in &sim.chip(sub).input_pins {
 			if sim.pin(p).num_input_connections > 1 {
+				memo.insert(chip_id, false);
 				return false;
 			}
 		}
 	}
 	for &sub in &sim.chip(chip).sub_chips {
-		if !is_combinational(sim, sub) {
+		if !is_combinational_memoized(sim, sub, memo) {
+			memo.insert(chip_id, false);
 			return false;
 		}
 	}
 
-	// Cycle check via Kahn's algorithm over the subchip dependency graph.
+	// Cycle check via Kahn's algorithm over the subchip dependency graph. Adjacency uses a
+	// `HashSet` rather than a `Vec` so the "already recorded this edge" dedup check below is
+	// O(1) instead of O(edges-so-far) -- chips with many interconnected subchips would
+	// otherwise pay for that scan on every wire.
 	let sub_chips: Vec<ChipIdx> = sim.chip(chip).sub_chips.clone();
-	let mut graph: HashMap<i32, Vec<i32>> = HashMap::new();
+	let mut graph: HashMap<i32, HashSet<i32>> = HashMap::new();
 	let mut in_degree: HashMap<i32, i32> = HashMap::new();
 
 	for &sub in &sub_chips {
@@ -115,9 +145,7 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 				if target_id == sub_id {
 					continue; // self-loop within the same chip id shouldn't happen, but skip defensively
 				}
-				let edges = graph.entry(sub_id).or_default();
-				if !edges.contains(&target_id) {
-					edges.push(target_id);
+				if graph.entry(sub_id).or_default().insert(target_id) {
 					*in_degree.entry(target_id).or_insert(0) += 1;
 				}
 			}
@@ -139,7 +167,9 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 		}
 	}
 
-	visited == in_degree.len()
+	let result = visited == in_degree.len();
+	memo.insert(chip_id, result);
+	result
 }
 
 /// Mirrors `SimChip.ResetReceivedFlagsOnAllPins`: clears "already received
