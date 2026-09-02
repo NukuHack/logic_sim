@@ -75,8 +75,19 @@ impl PinState {
 	pub const HIGH: PinState = PinState::from_raw_with_width(LOGIC_HIGH as u16, PinBitCount::Bit1);
 	/// A single Disconnected bit at index 0 (its tristate flag set).
 	pub const OFF: PinState = PinState::from_raw_with_width((LOGIC_DISCONNECTED as u16) << 7, PinBitCount::Bit1);
-	/// Every wire of the word disconnected -- e.g. a pin nothing has ever driven.
+	/// Every wire of an 8-wide word disconnected. Only correct for a pin that's actually
+	/// 8-wide -- a narrower pin tagged with this reports itself as 8-wide until it's next
+	/// written, which throws off anything reading `width`/`len` in the meantime (mask
+	/// sizing, cached-LUT row counts, drawn pin shape, ...). Prefer
+	/// `disconnected_with_width` wherever the pin's real width is known.
 	pub const DISCONNECTED: PinState = PinState::from_raw((u8::MAX as u16) << 8);
+
+	/// Every wire of a `width`-wide word disconnected -- the correct default state for a
+	/// freshly-created pin of that width (e.g. a pin nothing has ever driven).
+	#[inline(always)]
+	pub const fn disconnected_with_width(width: PinBitCount) -> Self {
+		Self::from_parts_with_width(0, u8::MAX, width)
+	}
 
 	// --- width / length ---------------------------------------------------
 
@@ -415,6 +426,16 @@ mod tests {
 		assert_eq!(PinState::OFF.len(), 1);
 		assert_eq!(PinState::DISCONNECTED.len(), 8);
 		assert_eq!(PinState::from_raw_with_width(0, PinBitCount::Bit4).len(), 4);
+	}
+
+	#[test]
+	fn disconnected_with_width_tags_the_requested_width_not_bit8() {
+		for width in [PinBitCount::Bit1, PinBitCount::Bit4, PinBitCount::Bit8] {
+			let s = PinState::disconnected_with_width(width);
+			assert_eq!(s.width(), width);
+			assert_eq!(s.tristate_flags(), u8::MAX, "every wire starts disconnected");
+			assert_eq!(s.bit_states(), 0);
+		}
 	}
 
 	#[test]

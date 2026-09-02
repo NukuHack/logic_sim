@@ -5,6 +5,10 @@ TODO LIST :
 
 make everything inside costumize a dragging stuff, so the displays pozition and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
 
+Flat output buffer: cache_rows: Vec<Vec<u32>> does one heap allocation per row (many small allocs).
+	Switching to a single preallocated Vec<u32> with a fixed stride (num_outputs per row) would cut that too
+	I left this alone since it touches process_cached_chip, save_flow.rs, and sim_thread.rs, which is a big blast radius.
+
 FUTURE PLANS :
 
 - full dirty-tracking / partial re-render (React-style reconciliation): would
@@ -17,7 +21,12 @@ make sure opening a new chip (ctrl+n) always opens "New Chip" if it is not in th
 
 going into edit mode should make the entire wire network in edit mode, so everything that the wire is connected to
 
-separate the rendering from logic (rn lagging logic laggs the ui too)
+separate the rendering from logic (rn lagging logic laggs the ui too) :
+	Don't block the UI at all.
+	The lock-holding-worker-thread design means any nonzero sweep time is a freeze.
+	Kicking the logic to a separate thread (or dropping/reacquiring the sim lock between chunks) would keep rendering responsive during difficult stuff
+	regardless of how fast the logic itself runs.
+
 
 add components or some form of input that can run rust code (like toggling a setting with your own circuits)
 

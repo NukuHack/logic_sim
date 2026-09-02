@@ -4,7 +4,7 @@
 //! instead of `Rc<RefCell<..>>` everywhere this uses a flat-arena design: all pins live in one `Vec<SimPin>`
 //! and all chips in one `Vec<SimChip>`, indexed rather than referenced, keeping the hot loop allocation-free.
 
-use crate::description::{CacheKind, ChipDescription, ChipLibrary, ChipType, PinAddress};
+use crate::description::{CacheKind, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount};
 use crate::gate_op::CachingState;
 use crate::pin_state::PinState;
 use rand::rngs::StdRng;
@@ -44,12 +44,12 @@ pub struct SimPin {
 }
 
 impl SimPin {
-	fn new(id: i32, is_input: bool, parent_chip: ChipIdx) -> Self {
+	fn new(id: i32, is_input: bool, parent_chip: ChipIdx, bit_count: PinBitCount) -> Self {
 		Self {
 			id,
 			parent_chip,
 			is_input,
-			state: PinState::DISCONNECTED,
+			state: PinState::disconnected_with_width(bit_count),
 			connected_target_pins: Vec::new(),
 			last_updated_frame_index: 0,
 			latest_source_id: -1,
@@ -383,21 +383,66 @@ impl Simulator {
 			let name = Arc::clone(&self.chips[chip_idx.0].name);
 
 			if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {
-				if crate::gate_op::process_cached_chip(self, chip_idx) {
+				if self.process_cached_chip(chip_idx) {
 					return;
 				}
 				// A tri-state input declined the lookup (never enumerated
-				// into the table) -- fall through to a real step below.
+				// into the table) -- use the real simulation.
 			} else if !self.caching.not_combinational_chip_cache.contains(name.as_ref()) {
 				crate::gate_op::recalculate_chip_cache(self, chip_idx);
 
-				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) && crate::gate_op::process_cached_chip(self, chip_idx) {
+				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) && self.process_cached_chip(chip_idx) {
 					return;
 				}
 			}
 		}
-
 		self.step_chip(chip_idx, audio);
+	}
+
+	/// Mirrors `Simulator.ProcessCachedChip`: sets `chip_idx`'s outputs by indexing into its
+	/// LUT instead of simulating. Returns `false` ("fall back to a real step") if any input
+	/// pin is tri-state (never enumerated into the table), or if there's no LUT for this chip
+	/// yet.
+	///
+	/// Lives here so it can borrow `self.caching` (the cache row) and `self.pins`/`self.chips`
+	/// (to write the outputs) as the disjoint fields they are, instead of going through
+	/// `chip()`/`pin()`/`pin_mut()` helpers that each take all of `&self`/`&mut self` and so
+	/// can't be live at once. That let the old version end the cache borrow early by cloning
+	/// the row (and the input/output pin lists) before writing
+	pub(crate) fn process_cached_chip(&mut self, chip_idx: ChipIdx) -> bool {
+		let name = Arc::clone(&self.chips[chip_idx.0].name);
+
+		let num_inputs = self.chips[chip_idx.0].input_pins.len();
+		let mut input: u64 = 0;
+		let mut shift = 0u32;
+		for i in 0..num_inputs {
+			let p = self.chips[chip_idx.0].input_pins[i];
+			let state = self.pins[p.0].state;
+			if state.tristate_flags() != 0 {
+				return false;
+			}
+			input |= (state.bit_states() as u64) << shift;
+			shift += state.len();
+		}
+
+		let num_outputs = self.chips[chip_idx.0].output_pins.len();
+		{
+			let Some(cache) = self.caching.combinational_chip_cache.get(name.as_ref()) else {
+				return false;
+			};
+			let Some(row) = cache.get(input as usize) else {
+				// Defensive: shouldn't happen if the LUT's row count matches this chip's
+				// current input width, but a stale/mismatched cache entry (e.g. a live edit
+				// widened a pin) should degrade to a real step rather than panic.
+				return false;
+			};
+			for (i, data) in row.iter().enumerate().take(num_outputs) {
+				let p = self.chips[chip_idx.0].output_pins[i];
+				let width = self.pins[p.0].state.width();
+				self.pins[p.0].state = PinState::from_raw_with_width(*data as u16, width);
+			}
+		}
+		true
 	}
 
 	/// Like `step_chip`, but also determines (and records) a good traversal
@@ -548,7 +593,7 @@ impl Simulator {
 		let state = self.pcg_rng_state;
 		let mut result = ((state >> ((state >> 28).wrapping_add(4))) ^ state).wrapping_mul(277803737);
 		result = (result >> 22) ^ result;
-		result < u32::MAX / 2
+		result < (u32::MAX >> 1)
 	}
 
 	pub fn add_connection(&mut self, chip_idx: ChipIdx, source: PinAddress, target: PinAddress) {
@@ -673,7 +718,7 @@ impl Simulator {
 			E::TriStateBuffer => {
 				let data = in_state!(0);
 				let enable = in_state!(1).first_bit_high();
-				set_out!(0, if enable { data } else { PinState::DISCONNECTED });
+				set_out!(0, if enable { data } else { PinState::disconnected_with_width(data.width()) });
 			}
 			E::Key => {
 				let key_char = self.chips[chip_idx.0].internal_state.first().copied().unwrap_or(0) as u8 as char;
@@ -1025,14 +1070,14 @@ fn build_recursive(
 	let mut input_pins = Vec::with_capacity(desc.input_pins.len());
 	for p in &desc.input_pins {
 		let idx = PinIdx(pins.len());
-		pins.push(SimPin::new(p.id, true, chip_idx));
+		pins.push(SimPin::new(p.id, true, chip_idx, p.bit_count));
 		input_pins.push(idx);
 	}
 
 	let mut output_pins = Vec::with_capacity(desc.output_pins.len());
 	for p in &desc.output_pins {
 		let idx = PinIdx(pins.len());
-		pins.push(SimPin::new(p.id, false, chip_idx));
+		pins.push(SimPin::new(p.id, false, chip_idx, p.bit_count));
 		output_pins.push(idx);
 	}
 

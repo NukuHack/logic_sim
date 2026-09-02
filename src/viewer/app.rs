@@ -38,9 +38,7 @@ fn init_logger() {
 	// submission index N" on every poll, i.e. ~every frame) are dropped
 	// down to warn so they don't flood stdout. Override any of this with
 	// RUST_LOG, e.g. RUST_LOG=wgpu_core=info if you actually need it.
-	let env = Env::default()
-        .filter_or("RUST_LOG", "info,wgpu_core=warn,wgpu_hal=warn,wgpu=warn,naga=warn")
-        .write_style_or("RUST_LOG_STYLE", "auto");
+	let env = Env::default().filter_or("RUST_LOG", "info,wgpu_core=warn,wgpu_hal=warn,wgpu=warn,naga=warn").write_style_or("RUST_LOG_STYLE", "auto");
 
 	let mut builder = Builder::from_env(env);
 

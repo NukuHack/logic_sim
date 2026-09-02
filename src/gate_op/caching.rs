@@ -22,7 +22,7 @@ pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CachingState {
 	/// One row per input combination, keyed by chip name. Matches the original's
 	/// `Dictionary<string, uint[][]> combinationalChipCaches`. Each row is the
@@ -182,6 +182,32 @@ pub fn reset_received_flags_on_all_pins(sim: &mut Simulator, chip: ChipIdx) {
 	}
 }
 
+/// Flattens exactly the set of pins that [`reset_received_flags_on_all_pins`] would visit
+/// for `chip` (its own input/output pins, plus every pin of every subchip, recursively) into
+/// a single list, computed once.
+///
+/// The LUT sweep in [`recalculate_chip_cache`] calls the reset between *every* row.
+/// Walking the subchip tree fresh each time -- two heap-allocated `Vec`s per chip in the tree, per row
+/// turned what should be a cheap flag clear into the dominant cost of building a LUT for anything but a tiny chip.
+/// Collecting the pin list once before the loop and then just iterating over it each row keeps the exact same set of pins reset,
+/// in an allocation-free O(1)-per-row pass, instead of re-deriving the list from scratch every time.
+fn collect_all_pins_recursive(sim: &Simulator, chip: ChipIdx, out: &mut Vec<PinIdx>) {
+	out.extend(sim.chip(chip).input_pins.iter().copied());
+	out.extend(sim.chip(chip).output_pins.iter().copied());
+	let subs: Vec<ChipIdx> = sim.chip(chip).sub_chips.clone();
+	for sub in subs {
+		collect_all_pins_recursive(sim, sub, out);
+	}
+}
+
+/// Fast path used inside the LUT sweep: resets a pre-flattened pin list (see
+/// [`collect_all_pins_recursive`]) instead of re-walking the subchip tree.
+fn reset_received_flags_fast(sim: &mut Simulator, pins: &[PinIdx]) {
+	for &p in pins {
+		sim.pin_mut(p).num_inputs_received_this_frame = 0;
+	}
+}
+
 /// Mirrors `Simulator.RecalculateCachedLUTs`: recursively tries to build a Cache
 /// for `chip` and every subchip, skipping anything already resolved either way.
 /// A chip qualifies if it's custom (builtins already run at O(1) via `process_builtin_chip`)
@@ -237,13 +263,18 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	log::warn!("[cache] about to sweep '{name}': {num_input_bits} input bits, {num_possible_inputs} rows");
 	let mut cache_rows = Vec::with_capacity(num_possible_inputs as usize);
 
+	// Flattened once, up front -- see `collect_all_pins_recursive` -- so the reset below is a
+	// tight loop instead of a full, allocation-heavy subchip-tree walk on every single row.
+	let mut all_pins = Vec::new();
+	collect_all_pins_recursive(sim, chip, &mut all_pins);
+
 	// A purely combinational chip (checked above) can never contain a
 	// Buzzer -- `is_combinational` hard-fails on one -- so this sweep can't
 	// produce any real audio; a scratch, throwaway `SimAudio` is all a
 	// `step_chip` call needs syntactically.
 	let mut scratch_audio = crate::audio::SimAudio::new();
 	for input in 0..num_possible_inputs {
-		reset_received_flags_on_all_pins(sim, chip);
+		reset_received_flags_fast(sim, &all_pins);
 
 		let mut remaining = input;
 		for &p in &input_pins {
@@ -264,56 +295,9 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	sim.caching.combinational_chip_cache.insert(name, cache_rows);
 
 	// Restore state
-	reset_received_flags_on_all_pins(sim, chip);
+	reset_received_flags_fast(sim, &all_pins);
 	for (&p, &state) in input_pins.iter().zip(buffered_input.iter()) {
 		sim.pin_mut(p).state = state;
 	}
 	log::warn!("[cache] current time2: {}", chrono::Local::now().format("%H:%M;%S.%3f"));
-}
-
-/// Mirrors `Simulator.ProcessCachedChip`: sets `chip`'s outputs by indexing
-/// into its LUT instead of simulating. Returns `false` ("fall back to a real
-/// step") if any input pin is tri-state, since those combinations were never
-/// enumerated into the table, or if there's no LUT for this chip at all yet.
-///
-/// Takes `&mut Simulator` (rather than a separately-borrowed `&CachingState`, as before) for
-/// the same reason [`recalculate_chip_cache`] does: the lookup itself only needs a shared
-/// borrow of `sim.caching`, so it's scoped to a block that ends before the output pins are
-/// written, letting both happen through the one reference with no aliasing conflict and no
-/// window where the real cache isn't the one being consulted.
-pub fn process_cached_chip(sim: &mut Simulator, chip: ChipIdx) -> bool {
-	let name = sim.chip(chip).name.clone();
-
-	let input_pins: Vec<PinIdx> = sim.chip(chip).input_pins.clone();
-	let mut input: u64 = 0;
-	let mut shift = 0u32;
-	for &p in &input_pins {
-		let state = sim.pin(p).state;
-		if state.tristate_flags() != 0 {
-			return false;
-		}
-		input |= (state.bit_states() as u64) << shift;
-		shift += state.len();
-	}
-
-	let outputs: Vec<u32> = {
-		let Some(cache_rows) = sim.caching.combinational_chip_cache.get(name.as_ref()) else {
-			return false;
-		};
-		let Some(row) = cache_rows.get(input as usize) else {
-			// Defensive: shouldn't happen if the LUT's row count matches this
-			// chip's current input width, but a stale/mismatched cache entry
-			// (e.g. a live edit widened a pin) should degrade to a real step
-			// rather than panic.
-			return false;
-		};
-		row.clone()
-	};
-
-	let output_pins: Vec<PinIdx> = sim.chip(chip).output_pins.clone();
-	for (i, &p) in output_pins.iter().enumerate() {
-		let width = sim.pin(p).state.width();
-		sim.pin_mut(p).state = PinState::from_raw_with_width(outputs[i] as u16, width);
-	}
-	true
 }
