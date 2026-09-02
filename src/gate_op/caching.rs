@@ -16,16 +16,19 @@ use std::sync::Arc;
 /// Purely a Save-time decision -- nothing at runtime auto-caches anymore.
 pub const MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING: u32 = 12;
 
-/// Mirrors `MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`
-/// will make it inf when i implement Native and NativeList
+/// Mirrors `MAX_NUM_INPUT_BITS_WHEN_USER_CACHING`: the widest input a user-requested cache is
+/// allowed to build a `Lut` for. TODO: lift this once `Native`/`NativeList` back the cache path
+/// too, since they have no such width ceiling.
 pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
 pub trait CachedGate: std::fmt::Debug + Send + Sync {
-	/// Evaluate `input`
+	/// Looks up the cached row for `input` and writes its output words into `out`. Returns
+	/// `false` if `input` has no cached row, in which case `out` is left untouched and the
+	/// caller should fall back to a real step.
 	fn eval(&self, input: u64, out: &mut [u32]) -> bool;
 }
 
-/// lut
+/// A combinational chip's full truth table, one row per possible input combination.
 #[derive(Debug)]
 pub struct LutGate {
 	rows: Vec<Vec<u32>>,
@@ -253,9 +256,8 @@ fn reset_received_flags_fast(sim: &mut Simulator, pins: &[PinIdx]) {
 /// Reading and writing `sim.caching` directly closes that window: every level of the recursion,
 /// including the ones step_chip triggers, sees and updates the one real cache.
 pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
-	// Clone the name immediately so we don't hold a reference to sim
+	// Cloned up front so the borrow doesn't outlive the mutable `sim` accesses below.
 	let name = sim.chip(chip).name.clone();
-	let time = chrono::Local::now().format("%H:%M;%S.%3f");
 
 	if sim.caching.combinational_chip_cache.contains_key(name.as_ref()) || sim.caching.not_combinational_chip_cache.contains(name.as_ref()) {
 		return;
@@ -263,7 +265,8 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 
 	let sub_count = sim.chip(chip).sub_chips.len();
 	for i in 0..sub_count {
-		// Get the sub chip each iteration, no clone needed!
+		// Indexed by position rather than iterating a cloned `Vec`: the recursive call below
+		// takes `&mut Simulator`, so this can't hold a borrow of `sub_chips` across it.
 		let sub = sim.chip(chip).sub_chips[i];
 		recalculate_chip_cache(sim, sub);
 	}
@@ -278,7 +281,6 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		sim.caching.not_combinational_chip_cache.insert(name);
 		return;
 	}
-	log::warn!("[cache] current time1: {} for name {}", time, name);
 
 	// Snapshot current inputs so the exhaustive sweep below doesn't disturb real sim state.
 	let input_pins = sim.chip(chip).input_pins.clone();
@@ -290,7 +292,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	}
 
 	let num_possible_inputs = 1u64 << num_input_bits;
-	log::warn!("[cache] about to sweep '{name}': {num_input_bits} input bits, {num_possible_inputs} rows");
+	log::debug!("[cache] sweeping '{name}': {num_input_bits} input bits, {num_possible_inputs} rows");
 	let mut cache_rows = Vec::with_capacity(num_possible_inputs as usize);
 
 	// Flattened once, up front -- see `collect_all_pins_recursive` -- so the reset below is a
@@ -321,13 +323,12 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		cache_rows.push(outputs);
 	}
 
-	log::warn!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
+	log::debug!("[cache] cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
 	sim.caching.combinational_chip_cache.insert(name, Box::new(LutGate::new(cache_rows)));
 
-	// Restore state
+	// Restore the real input state the sweep overwrote, so the caller sees no side effects.
 	reset_received_flags_fast(sim, &all_pins);
 	for (&p, &state) in input_pins.iter().zip(buffered_input.iter()) {
 		sim.pin_mut(p).state = state;
 	}
-	log::warn!("[cache] current time2: {}", chrono::Local::now().format("%H:%M;%S.%3f"));
 }

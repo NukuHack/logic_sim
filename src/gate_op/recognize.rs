@@ -10,19 +10,8 @@
 //! against the real table and bails at the first mismatch, so a non-matching candidate is
 //! usually rejected in a handful of comparisons rather than a full table diff.
 
-use super::eval::{Bits, Lut, Native, OptimizedGate};
-use super::word::WireWord;
-
-/// `1` bits in positions `[0, n)`, saturating at `u64::MAX` for `n >= 64` instead of overflowing
-/// the shift. Every candidate formula below uses this to isolate an N-bit field.
-#[inline(always)]
-pub(crate) fn mask(n: u32) -> Bits {
-	if n >= 64 {
-		Bits::MAX
-	} else {
-		(1u64 << n) - 1
-	}
-}
+use super::bitvec::{self, bit_result};
+use super::eval::{Bits, Lut, Native, OptimizedGate, WireWord};
 
 /// One known gate pattern. `applicable` covers both fixed-shape gates (e.g. `AND2` wants
 /// exactly `i==2, o==1`) and parametric families (e.g. `AND_N` wants any `i>=2, o==1`) with the
@@ -38,7 +27,7 @@ pub struct Candidate {
 	name: &'static str,
 	config: Bits,
 	applicable: fn(in_bits: u32, out_bits: u32, config: Bits) -> bool,
-	formula: fn(Bits, u32, u32, Bits) -> Bits,
+	formula: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>,
 }
 impl Candidate {
 	pub fn name(&self) -> &'static str {
@@ -47,7 +36,7 @@ impl Candidate {
 	pub fn config(&self) -> Bits {
 		self.config
 	}
-	pub fn formula(&self) -> fn(Bits, u32, u32, Bits) -> Bits {
+	pub fn formula(&self) -> fn(&[Bits], u32, u32, Bits) -> Vec<Bits> {
 		self.formula
 	}
 }
@@ -58,36 +47,86 @@ pub fn registry() -> &'static [Candidate] {
 	REGISTRY.get_or_init(|| {
 		vec![
 			// NOT
-			Candidate { name: "NOT", config: 0, applicable: |i, o, _| i == 1 && o == 1, formula: |w, _, _, _| (!w) & 1 },
+			Candidate { name: "NOT", config: 0, applicable: |i, o, _| i == 1 && o == 1, formula: |w, _, _, _| bitvec::not(w, 1) },
 			// BUFFER
-			Candidate { name: "BUFFER", config: 0, applicable: |i, o, _| i == 1 && o == 1, formula: |w, _, _, _| w & 1 },
+			Candidate { name: "BUFFER", config: 0, applicable: |i, o, _| i == 1 && o == 1, formula: |w, _, _, _| bitvec::truncate(w, 1) },
 			// 2-input AND
-			Candidate { name: "AND2", config: 0, applicable: |i, o, _| i == 2 && o == 1, formula: |w, _, _, _| ((w & 0b11) == 0b11) as Bits },
+			Candidate {
+				name: "AND2",
+				config: 0,
+				applicable: |i, o, _| i == 2 && o == 1,
+				formula: |w, _, _, _| bit_result(bitvec::eq(&bitvec::and(w, &bitvec::mask(2)), &bitvec::mask(2))),
+			},
 			// 2-input OR
-			Candidate { name: "OR2", config: 0, applicable: |i, o, _| i == 2 && o == 1, formula: |w, _, _, _| ((w & 0b11) != 0) as Bits },
+			Candidate {
+				name: "OR2",
+				config: 0,
+				applicable: |i, o, _| i == 2 && o == 1,
+				formula: |w, _, _, _| bit_result(!bitvec::is_zero(&bitvec::and(w, &bitvec::mask(2)))),
+			},
 			// 2-input XOR
-			Candidate { name: "XOR2", config: 0, applicable: |i, o, _| i == 2 && o == 1, formula: |w, _, _, _| (w & 1) ^ ((w >> 1) & 1) },
+			Candidate {
+				name: "XOR2",
+				config: 0,
+				applicable: |i, o, _| i == 2 && o == 1,
+				formula: |w, _, _, _| bit_result(bitvec::popcount(&bitvec::and(w, &bitvec::mask(2))) & 1 == 1),
+			},
 			// 2-input NAND
-			Candidate { name: "NAND2", config: 0, applicable: |i, o, _| i == 2 && o == 1, formula: |w, _, _, _| ((w & 0b11) != 0b11) as Bits },
+			Candidate {
+				name: "NAND2",
+				config: 0,
+				applicable: |i, o, _| i == 2 && o == 1,
+				formula: |w, _, _, _| bit_result(!bitvec::eq(&bitvec::and(w, &bitvec::mask(2)), &bitvec::mask(2))),
+			},
 			// 2-input NOR
-			Candidate { name: "NOR2", config: 0, applicable: |i, o, _| i == 2 && o == 1, formula: |w, _, _, _| ((w & 0b11) == 0) as Bits },
+			Candidate {
+				name: "NOR2",
+				config: 0,
+				applicable: |i, o, _| i == 2 && o == 1,
+				formula: |w, _, _, _| bit_result(bitvec::is_zero(&bitvec::and(w, &bitvec::mask(2)))),
+			},
 			// 2-input XNOR
-			Candidate { name: "XNOR2", config: 0, applicable: |i, o, _| i == 2 && o == 1, formula: |w, _, _, _| 1 ^ ((w & 1) ^ ((w >> 1) & 1)) },
+			Candidate {
+				name: "XNOR2",
+				config: 0,
+				applicable: |i, o, _| i == 2 && o == 1,
+				formula: |w, _, _, _| bit_result(bitvec::popcount(&bitvec::and(w, &bitvec::mask(2))) & 1 == 0),
+			},
 			// N-input AND (fast: compare against all-ones)
-			Candidate { name: "AND_N", config: 0, applicable: |i, o, _| o == 1 && i >= 2, formula: |w, i, _, _| ((w & mask(i)) == mask(i)) as Bits },
+			Candidate {
+				name: "AND_N",
+				config: 0,
+				applicable: |i, o, _| o == 1 && i >= 2,
+				formula: |w, i, _, _| bit_result(bitvec::eq(&bitvec::and(w, &bitvec::mask(i)), &bitvec::mask(i))),
+			},
 			// N-input OR (fast: test nonzero)
-			Candidate { name: "OR_N", config: 0, applicable: |i, o, _| o == 1 && i >= 2, formula: |w, i, _, _| ((w & mask(i)) != 0) as Bits },
+			Candidate {
+				name: "OR_N",
+				config: 0,
+				applicable: |i, o, _| o == 1 && i >= 2,
+				formula: |w, i, _, _| bit_result(!bitvec::is_zero(&bitvec::and(w, &bitvec::mask(i)))),
+			},
 			// N-input XOR (fast: parity via popcount)
 			Candidate {
 				name: "XOR_N",
 				config: 0,
 				applicable: |i, o, _| o == 1 && i >= 2,
-				formula: |w, i, _, _| (w & mask(i)).count_ones() as Bits & 1,
+				formula: |w, i, _, _| bit_result(bitvec::popcount(&bitvec::and(w, &bitvec::mask(i))) & 1 == 1),
 			},
 			// N-input NAND (fast: compare against all-ones)
-			Candidate { name: "NAND_N", config: 0, applicable: |i, o, _| o == 1 && i >= 2, formula: |w, i, _, _| ((w & mask(i)) != mask(i)) as Bits },
+			Candidate {
+				name: "NAND_N",
+				config: 0,
+				applicable: |i, o, _| o == 1 && i >= 2,
+				formula: |w, i, _, _| bit_result(!bitvec::eq(&bitvec::and(w, &bitvec::mask(i)), &bitvec::mask(i))),
+			},
 			// N-input NOR (fast: test zero)
-			Candidate { name: "NOR_N", config: 0, applicable: |i, o, _| o == 1 && i >= 2, formula: |w, i, _, _| ((w & mask(i)) == 0) as Bits },
+			Candidate {
+				name: "NOR_N",
+				config: 0,
+				applicable: |i, o, _| o == 1 && i >= 2,
+				formula: |w, i, _, _| bit_result(bitvec::is_zero(&bitvec::and(w, &bitvec::mask(i)))),
+			},
 			// N-bit XNOR (2N inputs: equality comparison between two N-bit fields)
 			// Note: this is placed before general XNOR_N to ensure 2N-equality matching takes priority
 			Candidate {
@@ -96,8 +135,7 @@ pub fn registry() -> &'static [Candidate] {
 				applicable: |i, o, _| o == 1 && i >= 4 && i % 2 == 0,
 				formula: |w, i, _, _| {
 					let n = i >> 1; // divide by 2 faster than /
-					let m = mask(n);
-					(((w & m) ^ ((w >> n) & m)) == 0) as Bits
+					bit_result(bitvec::eq(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)))
 				},
 			},
 			// N-input XNOR (true XNOR: odd parity of inputs)
@@ -105,53 +143,41 @@ pub fn registry() -> &'static [Candidate] {
 				name: "XNOR_N",
 				config: 0,
 				applicable: |i, o, _| o == 1 && i >= 2,
-				formula: |w, i, _, _| ((w & mask(i)).count_ones() & 1) as Bits ^ 1, // XNOR is inverse of XOR
+				formula: |w, i, _, _| bit_result(bitvec::popcount(&bitvec::and(w, &bitvec::mask(i))) & 1 == 0), // XNOR is inverse of XOR
 			},
-			// N-bit NOT (fast: invert then mask)
-			Candidate { name: "NOT_N", config: 0, applicable: |i, o, _| i == o && i >= 2 && i <= 64, formula: |w, i, _, _| (!w) & mask(i) },
-			// N-bit BUFFER (fast: mask only)
-			Candidate { name: "BUFFER_N", config: 0, applicable: |i, o, _| i == o && i >= 2 && i <= 64, formula: |w, i, _, _| w & mask(i) },
-			// N-bit AND (fast: two masks and AND)
+			// N-bit NOT (fast: invert then mask) -- no width cap: `bitvec::not` works for any `i`
+			Candidate { name: "NOT_N", config: 0, applicable: |i, o, _| i == o && i >= 2, formula: |w, i, _, _| bitvec::not(w, i) },
+			// N-bit BUFFER (fast: mask only) -- no width cap: `bitvec::truncate` works for any `i`
+			Candidate { name: "BUFFER_N", config: 0, applicable: |i, o, _| i == o && i >= 2, formula: |w, i, _, _| bitvec::truncate(w, i) },
+			// N-bit AND (fast: two fields and AND)
 			Candidate {
 				name: "AND_N_WIDE",
 				config: 0,
 				applicable: |i, o, _| {
 					o == (i >> 1) && i >= 4 && (i & 1) == 0 && o >= 2 // bit ops faster
 				},
-				formula: |w, _i, o, _| {
-					let m = mask(o);
-					(w & m) & ((w >> o) & m)
-				},
+				formula: |w, _i, o, _| bitvec::and(&bitvec::field(w, 0, o), &bitvec::field(w, o, o)),
 			},
-			// N-bit OR (fast: two masks and OR)
+			// N-bit OR (fast: two fields and OR)
 			Candidate {
 				name: "OR_N_WIDE",
 				config: 0,
 				applicable: |i, o, _| o == (i >> 1) && i >= 4 && (i & 1) == 0 && o >= 2,
-				formula: |w, _i, o, _| {
-					let m = mask(o);
-					(w & m) | ((w >> o) & m)
-				},
+				formula: |w, _i, o, _| bitvec::or(&bitvec::field(w, 0, o), &bitvec::field(w, o, o)),
 			},
-			// N-bit XOR (fast: two masks and XOR)
+			// N-bit XOR (fast: two fields and XOR)
 			Candidate {
 				name: "XOR_N_WIDE",
 				config: 0,
 				applicable: |i, o, _| o == (i >> 1) && i >= 4 && (i & 1) == 0 && o >= 2,
-				formula: |w, _i, o, _| {
-					let m = mask(o);
-					(w & m) ^ ((w >> o) & m)
-				},
+				formula: |w, _i, o, _| bitvec::xor(&bitvec::field(w, 0, o), &bitvec::field(w, o, o)),
 			},
 			// N-bit XNOR (true bitwise XNOR: inverse of XOR for each bit position)
 			Candidate {
 				name: "XNOR_N_WIDE",
 				config: 0,
 				applicable: |i, o, _| o == (i >> 1) && i >= 4 && (i & 1) == 0 && o >= 2,
-				formula: |w, _i, o, _| {
-					let m = mask(o);
-					!((w & m) ^ ((w >> o) & m)) & m // XNOR is inverse of XOR
-				},
+				formula: |w, _i, o, _| bitvec::not(&bitvec::xor(&bitvec::field(w, 0, o), &bitvec::field(w, o, o)), o),
 			},
 			// ADDER_N (no carry-in, no carry-out)
 			Candidate {
@@ -166,10 +192,7 @@ pub fn registry() -> &'static [Candidate] {
 				},
 				formula: |w, i, _, _| {
 					let n = i / 2;
-					let m = mask(n);
-					let a = w & m;
-					let c = (w >> n) & m;
-					(a + c) & m
+					bitvec::truncate(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), n)
 				},
 			},
 			// ADDER_N (without carry-in, with carry-out)
@@ -185,10 +208,7 @@ pub fn registry() -> &'static [Candidate] {
 				},
 				formula: |w, i, o, _| {
 					let n = i / 2;
-					let m = mask(n);
-					let a = w & m;
-					let c = (w >> n) & m;
-					(a + c) & mask(o)
+					bitvec::truncate(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), o)
 				},
 			},
 			// ADDER_N (with carry-in, without carry-out)
@@ -206,11 +226,8 @@ pub fn registry() -> &'static [Candidate] {
 				formula: |w, i, _, _| {
 					let operand_bits = i - 1;
 					let n = operand_bits / 2;
-					let m = mask(n);
-					let a = w & m;
-					let c = (w >> n) & m;
-					let cin = (w >> (2 * n)) & 1;
-					(a + c + cin) & m
+					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), &bitvec::field(w, 2 * n, 1));
+					bitvec::truncate(&sum, n)
 				},
 			},
 			// ADDER_N (with carry-in and carry-out)
@@ -228,11 +245,8 @@ pub fn registry() -> &'static [Candidate] {
 				formula: |w, i, o, _| {
 					let operand_bits = i - 1;
 					let n = operand_bits / 2;
-					let m = mask(n);
-					let a = w & m;
-					let c = (w >> n) & m;
-					let cin = (w >> (2 * n)) & 1;
-					(a + c + cin) & mask(o)
+					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), &bitvec::field(w, 2 * n, 1));
+					bitvec::truncate(&sum, o)
 				},
 			},
 		]
@@ -249,16 +263,20 @@ pub fn registry() -> &'static [Candidate] {
 /// are taken explicitly rather than derived from `In`/`Out`'s storage type, since a gate's real
 /// width (say 5 bits) is usually narrower than the container type chosen to hold it (`u8`).
 ///
-/// Returns `None` (rather than panicking or truncating) when the gate is too wide for this to
-/// even attempt (>64 bits either way is outside what a packed `u64` word, and therefore
-/// `Native`, can represent), when `in_bits`/`out_bits` is zero, when `lut`'s table doesn't
-/// actually have `2^in_bits` rows, or when no candidate in the registry matches every row.
+/// Returns `None` (rather than panicking or truncating) when `in_bits`/`out_bits` is zero, when
+/// `lut`'s table doesn't actually have `2^in_bits` rows, or when no candidate in the registry
+/// matches every row. Note this cap is about `Lut` itself, not the `Native` this returns: a
+/// materialized table over more than ~64 input bits was never buildable in the first place
+/// (`2^65` rows), so `recognize` naturally never sees one -- but the `Native` it hands back has
+/// no such limit and is exactly as capable at 4000 bits as it is here (see
+/// `formula_from_candidate` + `Native::new` for building one directly at a width no `Lut` could
+/// ever hold).
 pub fn recognize<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<Box<dyn OptimizedGate>> {
 	let candidate = find_candidate(in_bits, out_bits, lut)?;
 	Some(Box::new(Native::new(in_bits, out_bits, candidate.config, candidate.formula)))
 }
 
-pub type RecFn = fn(Bits, u32, u32, Bits) -> Bits;
+pub type RecFn = fn(&[Bits], u32, u32, Bits) -> Vec<Bits>;
 #[allow(unused)]
 /// Like [`recognize`], but hands back the matched candidate's raw `(config, formula)` pair
 /// instead of a boxed `Native`, for callers that already track their own `in_bits`/`out_bits`
@@ -273,11 +291,15 @@ pub fn recognize_formula<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u3
 /// every applicable candidate's formula and returns the first exact match, bailing at the
 /// first mismatching row per candidate (see the module doc comment for why this is cheap even
 /// when nothing matches).
+///
+/// `lut.table` is indexed by a plain `usize`, so it can never hold more than `2^63`-ish rows to
+/// begin with; comparing each row's low word (`to_u64`) against the candidate formula's low
+/// output word is therefore lossless for every table this function will ever actually see.
 fn find_candidate<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut: &Lut<In, Out>) -> Option<&'static Candidate> {
-	if in_bits == 0 || in_bits > 64 || out_bits == 0 || out_bits > 64 {
+	if in_bits == 0 || out_bits == 0 {
 		return None;
 	}
-	if lut.table.len() as u64 != 1u64 << in_bits {
+	if lut.table.len() as u64 != 1u64.checked_shl(in_bits).unwrap_or(0) {
 		return None; // table doesn't match the claimed width; nothing sane to compare against
 	}
 
@@ -289,17 +311,19 @@ fn find_candidate<In: WireWord, Out: WireWord>(in_bits: u32, out_bits: u32, lut:
 	// matching row is never enough to prove equivalence on its own.
 	let last_row = lut.table.len() - 1;
 	let last_actual = lut.table[last_row].to_u64();
+	let eval_row = |candidate: &Candidate, row: usize| -> u64 {
+		(candidate.formula)(&[row as Bits], in_bits, out_bits, candidate.config).first().copied().unwrap_or(0)
+	};
 
 	'candidates: for candidate in registry() {
 		if !(candidate.applicable)(in_bits, out_bits, candidate.config) {
 			continue;
 		}
-		if (candidate.formula)(last_row as Bits, in_bits, out_bits, candidate.config) != last_actual {
+		if eval_row(candidate, last_row) != last_actual {
 			continue;
 		}
 		for (row, actual) in lut.table.iter().enumerate() {
-			let expected = (candidate.formula)(row as Bits, in_bits, out_bits, candidate.config);
-			if actual.to_u64() != expected {
+			if actual.to_u64() != eval_row(candidate, row) {
 				continue 'candidates;
 			}
 		}

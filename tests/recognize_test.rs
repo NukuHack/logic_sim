@@ -522,6 +522,44 @@ fn table_matching_only_at_last_row_is_rejected() {
 /// 2^in_bits) blow-up, rather than the intended fast anchor-based rejection, would make this
 /// test noticeably slow -- correctness is what's asserted, the point is that it still
 /// finishes quickly.
+/// Proves the actual point of unifying `Lut`/`Native`: a `Native` built directly (bypassing
+/// `Lut`, which could never materialize a table this wide) now works past the old 64-bit
+/// ceiling -- a 200-bit-wide N-input AND, evaluated with no table at all.
+#[test]
+fn native_handles_gates_wider_than_64_bits() {
+	let in_bits = 200u32;
+	let gate = formula_from_candidate("AND_N", in_bits, 1);
+
+	let all_true = vec![true; in_bits as usize];
+	assert_eq!(eval_bools(&gate, in_bits, 1, &all_true), vec![true]);
+
+	let mut one_false = all_true.clone();
+	one_false[150] = false; // bit 150 is past any single u64/u128 word
+	assert_eq!(eval_bools(&gate, in_bits, 1, &one_false), vec![false]);
+}
+
+/// Same idea for the adder: two 100-bit operands (200 input bits total, 101-bit sum) -- far
+/// beyond what the old `Bits = u64` `Native` could represent, let alone what a `Lut` could ever
+/// hold as a table.
+#[test]
+fn native_handles_a_100_bit_adder() {
+	let in_bits = 200u32;
+	let out_bits = 101u32; // with carry-out
+	let gate = formula_from_candidate("ADDER_N_COU", in_bits, out_bits);
+
+	let n = 100usize;
+	let mut input = vec![false; in_bits as usize];
+	// a = all-ones (2^100 - 1), c = 1 -> sum = 2^100, i.e. only the carry-out bit set.
+	for i in 0..n {
+		input[i] = true;
+	}
+	input[n] = true;
+
+	let out = eval_bools(&gate, in_bits, out_bits, &input);
+	assert!(out[..n].iter().all(|&b| !b), "low 100 bits should all be zero");
+	assert!(out[n], "bit 100 (the carry out of 2^100) should be set");
+}
+
 #[test]
 fn recognizes_wide_and_with_many_input_bits() {
 	let in_bits = 20;
