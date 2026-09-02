@@ -17,7 +17,6 @@ use crate::{default_chip_collections, default_starred_list, ChipDescription, Chi
 /// dismissing itself -- no interaction required.
 pub(crate) const STATUS_TOAST_LINGER: std::time::Duration = std::time::Duration::from_secs(7);
 
-use chrono::Local;
 use env_logger::{Builder, Env};
 use std::io::Write;
 use std::sync::OnceLock;
@@ -34,14 +33,19 @@ fn init_logger() {
 	REAL_ID.get_or_init(|| std::thread::current().id());
 
 	// This allows setting RUST_LOG=debug, RUST_LOG=warn, etc.
+	// Default: our own crate logs at info, but noisy third-party crates
+	// (wgpu/wgpu_core/wgpu_hal spam "Device::maintain: waiting for
+	// submission index N" on every poll, i.e. ~every frame) are dropped
+	// down to warn so they don't flood stdout. Override any of this with
+	// RUST_LOG, e.g. RUST_LOG=wgpu_core=info if you actually need it.
 	let env = Env::default()
-        .filter_or("RUST_LOG", "info")  // Default to INFO if not set
+        .filter_or("RUST_LOG", "info,wgpu_core=warn,wgpu_hal=warn,wgpu=warn,naga=warn")
         .write_style_or("RUST_LOG_STYLE", "auto");
 
 	let mut builder = Builder::from_env(env);
 
 	builder.format(|buf: &mut env_logger::fmt::Formatter, record: &log::Record<'_>| {
-		let timestamp = Local::now().format("%H:%M;%S.%3f").to_string();
+		let timestamp = chrono::Local::now().format("%H:%M;%S.%3f").to_string();
 		let thread_id = std::thread::current().id();
 
 		// Use buf.write_* or buf.finish()
@@ -54,7 +58,7 @@ fn init_logger() {
 
 	builder.init();
 
-	log::debug!("current time: {}", Local::now().format("%Y.%m.%d"));
+	log::debug!("current time: {}", chrono::Local::now().format("%Y.%m.%d"));
 }
 
 /// The window + wgpu renderer pair both screens draw into.

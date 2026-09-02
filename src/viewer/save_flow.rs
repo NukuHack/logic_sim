@@ -224,6 +224,12 @@ fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 	match Saver::save_chip(paths, &v.project_name, &v.library, &desc) {
 		Ok(()) => {
 			v.mark_saved(&name);
+			// This chip's definition just changed on disk -- any LUT built
+			// from its old behaviour (its own entry, or any parent chip's
+			// that embeds it) is now stale. Simply viewing/editing without
+			// saving never reaches this call, so the cache otherwise
+			// survives untouched (see `ViewerState::rebuild_sim`).
+			v.sim.clear_caching(&name);
 			if !removed_pins.is_empty() {
 				resave_affected_parent_chips(v, paths, &name, &removed_pins, None);
 			}
@@ -256,6 +262,9 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 		Ok(()) => {
 			v.library.add(new_desc);
 			v.mark_saved(new_name);
+			// New identity written to disk -- see the matching comment in
+			// `save_current_chip` for why this must invalidate the cache.
+			v.sim.clear_caching(&old_name);
 			// A Save-As is a new chip as far as starring goes
 			// (`isNewChip = ... || saveMode is SaveMode.SaveAs`); the single
 			// project-description write below persists both bookkeepings.
@@ -321,6 +330,10 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 			v.library.add(new_desc);
 			v.mark_saved(new_name);
 			v.mark_saved(&old_name);
+			// The old name's cache entry is now orphaned (nothing looks it
+			// up again) and the new name has none yet -- see the matching
+			// comment in `save_current_chip`.
+			v.sim.clear_caching(&old_name);
 			resave_affected_parent_chips(v, paths, &old_name, &removed_pins, Some(new_name));
 			register_chip_name_in_project(v, paths, Some(&old_name), new_name);
 			rename_starred_chip(v, paths, &old_name, new_name);
@@ -660,6 +673,48 @@ mod tests {
 		assert!(v.pending_wire.is_none());
 		assert!(v.selected_ids.is_empty());
 		assert_eq!(v.canvas_interaction, crate::viewer::chip_interaction::CanvasInteraction::None);
+	}
+
+	/// Switching which chip is being edited (`open_chip_by_name` ->
+	/// `restart_sim_fresh`) must not throw away the LUT cache built for
+	/// combinational chips: a cache entry has nothing to do with which
+	/// chip happens to be the *edited root* right now, so losing it on
+	/// every switch would force an expensive truth-table sweep to be
+	/// redone each time the user simply opens a different chip.
+	#[test]
+	fn caching_state_survives_switching_the_edited_root_chip() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
+		library.add(ChipDescription::new("OTHER", ChipType::Custom));
+
+		let root = crate::save_system::test_util::temp_dir("caching_survives_root_switch");
+		let paths = SavePaths::new(&root);
+		crate::create_project(&paths, "P").expect("project created");
+
+		let mut v =
+			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+
+		// Seed the cache as if ROOT's subtree had already been simulated
+		// and some chip's truth table built.
+		{
+			let mut sim = v.sim.lock();
+			sim.caching.combinational_chip_cache.insert("SEEDED".into(), vec![vec![0]]);
+			sim.caching.not_combinational_chip_cache.insert("SEEDED_NC".into());
+		}
+
+		open_chip_by_name(&mut v, &paths, &mut None, "OTHER");
+		assert_eq!(v.root_chip_name, "OTHER");
+
+		let sim = v.sim.lock();
+		assert!(
+			sim.caching.combinational_chip_cache.contains_key("SEEDED"),
+			"combinational LUT cache must carry across a root-chip switch, not be rebuilt from scratch"
+		);
+		assert!(
+			sim.caching.not_combinational_chip_cache.contains("SEEDED_NC"),
+			"the not-combinational memo set must also carry across a root-chip switch"
+		);
 	}
 
 	fn try_place_pending_components_via_public_path(v: &mut ViewerState) {

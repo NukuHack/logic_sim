@@ -13,7 +13,7 @@ mod word;
 
 pub use caching::{
 	calculate_num_input_bits, is_combinational, process_cached_chip, recalculate_chip_cache, reset_received_flags_on_all_pins, CachingState,
-	CombinationalChipCache, NonCombinationalSet, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING,
+	MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING,
 };
 pub use eval::{Bits, Lut, Native, NativeList, OptimizedGate};
 pub use recognize::{recognize, registry, Candidate};

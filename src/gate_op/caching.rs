@@ -20,24 +20,20 @@ pub const MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING: u32 = 12;
 /// will make it inf when i implement Native and NativeList
 pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
-/// One row per input combination, keyed by chip name. Matches the original's
-/// `Dictionary<string, uint[][]> combinationalChipCaches`. Each row is the
-/// chip's raw packed `PinState` word (bits + tri-state flags) per output
-/// pin, in output-pin order -- not just the bit values -- so a cache hit can
-/// reproduce a tri-state output exactly, not just a settled 0/1.
-pub type CombinationalChipCache = HashMap<Arc<str>, Vec<Vec<u32>>>;
-
-/// Chip names already proven non-combinational (or too big to cache), so
-/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
-/// Same interned-`Arc<str>` sharing as [`CombinationalChipCache`].
-pub type NonCombinationalSet = HashSet<Arc<str>>;
-
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CachingState {
-	pub combinational_chip_cache: CombinationalChipCache,
-	pub not_combinational_chip_cache: NonCombinationalSet,
+	/// One row per input combination, keyed by chip name. Matches the original's
+	/// `Dictionary<string, uint[][]> combinationalChipCaches`. Each row is the
+	/// chip's raw packed `PinState` word (bits + tri-state flags) per output
+	/// pin, in output-pin order -- not just the bit values -- so a cache hit can
+	/// reproduce a tri-state output exactly, not just a settled 0/1.
+	pub combinational_chip_cache: HashMap<Arc<str>, Vec<Vec<u32>>>,
+	/// Chip names already proven non-combinational (or too big to cache), so
+	/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
+	/// Same interned-`Arc<str>` sharing as [`combinational_chip_cache`].
+	pub not_combinational_chip_cache: HashSet<Arc<str>>,
 	pub use_caching: bool,
 }
 
@@ -189,11 +185,23 @@ pub fn reset_received_flags_on_all_pins(sim: &mut Simulator, chip: ChipIdx) {
 /// Mirrors `Simulator.RecalculateCachedLUTs`: recursively tries to build a Cache
 /// for `chip` and every subchip, skipping anything already resolved either way.
 /// A chip qualifies if it's custom (builtins already run at O(1) via `process_builtin_chip`)
-pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, chip: ChipIdx) {
+///
+/// Operates on `sim.caching` in place rather than taking a separate `&mut CachingState`
+/// parameter. The two used to be split apart so a caller holding `&mut Simulator` could pass
+/// both without aliasing it against itself -- but the exhaustive sweep below calls
+/// `sim.step_chip`, which can recurse back into a subchip that itself needs caching. With the
+/// cache living outside `sim` for the whole call (moved out via the caller's `mem::take`),
+/// that nested recursion saw an empty cache, silently rebuilt whatever it needed, and had that
+/// work discarded the moment this call returned and the caller's stale copy got written back
+/// over it -- the chip would then need re-caching (and re-logging) on its very next real step.
+/// Reading and writing `sim.caching` directly closes that window: every level of the recursion,
+/// including the ones step_chip triggers, sees and updates the one real cache.
+pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	// Clone the name immediately so we don't hold a reference to sim
 	let name = sim.chip(chip).name.clone();
+	let time = chrono::Local::now().format("%H:%M;%S.%3f");
 
-	if caching.combinational_chip_cache.contains_key(name.as_ref()) || caching.not_combinational_chip_cache.contains(name.as_ref()) {
+	if sim.caching.combinational_chip_cache.contains_key(name.as_ref()) || sim.caching.not_combinational_chip_cache.contains(name.as_ref()) {
 		return;
 	}
 
@@ -201,7 +209,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 	for i in 0..sub_count {
 		// Get the sub chip each iteration, no clone needed!
 		let sub = sim.chip(chip).sub_chips[i];
-		recalculate_chip_cache(sim, caching, sub);
+		recalculate_chip_cache(sim, sub);
 	}
 
 	let num_input_bits = calculate_num_input_bits(sim, chip);
@@ -211,9 +219,10 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 	let is_custom = sim.chip(chip).chip_type == crate::description::ChipType::Custom;
 	if !is_custom || !within_budget || !is_combinational(sim, chip) {
 		log::debug!("[cache] '{name}' will not be cached (custom={is_custom}, within_budget={within_budget}, input_bits={num_input_bits})");
-		caching.not_combinational_chip_cache.insert(name);
+		sim.caching.not_combinational_chip_cache.insert(name);
 		return;
 	}
+	log::warn!("[cache] current time1: {} for name {}", time, name);
 
 	// Snapshot current inputs so the exhaustive sweep below doesn't disturb real sim state.
 	let input_pins = sim.chip(chip).input_pins.clone();
@@ -225,6 +234,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 	}
 
 	let num_possible_inputs = 1u64 << num_input_bits;
+	log::warn!("[cache] about to sweep '{name}': {num_input_bits} input bits, {num_possible_inputs} rows");
 	let mut cache_rows = Vec::with_capacity(num_possible_inputs as usize);
 
 	// A purely combinational chip (checked above) can never contain a
@@ -251,20 +261,27 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, caching: &mut CachingState, c
 	}
 
 	log::warn!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
-	caching.combinational_chip_cache.insert(name, cache_rows);
+	sim.caching.combinational_chip_cache.insert(name, cache_rows);
 
 	// Restore state
 	reset_received_flags_on_all_pins(sim, chip);
 	for (&p, &state) in input_pins.iter().zip(buffered_input.iter()) {
 		sim.pin_mut(p).state = state;
 	}
+	log::warn!("[cache] current time2: {}", chrono::Local::now().format("%H:%M;%S.%3f"));
 }
 
 /// Mirrors `Simulator.ProcessCachedChip`: sets `chip`'s outputs by indexing
 /// into its LUT instead of simulating. Returns `false` ("fall back to a real
 /// step") if any input pin is tri-state, since those combinations were never
 /// enumerated into the table, or if there's no LUT for this chip at all yet.
-pub fn process_cached_chip(sim: &mut Simulator, caching: &CachingState, chip: ChipIdx) -> bool {
+///
+/// Takes `&mut Simulator` (rather than a separately-borrowed `&CachingState`, as before) for
+/// the same reason [`recalculate_chip_cache`] does: the lookup itself only needs a shared
+/// borrow of `sim.caching`, so it's scoped to a block that ends before the output pins are
+/// written, letting both happen through the one reference with no aliasing conflict and no
+/// window where the real cache isn't the one being consulted.
+pub fn process_cached_chip(sim: &mut Simulator, chip: ChipIdx) -> bool {
 	let name = sim.chip(chip).name.clone();
 
 	let input_pins: Vec<PinIdx> = sim.chip(chip).input_pins.clone();
@@ -279,15 +296,18 @@ pub fn process_cached_chip(sim: &mut Simulator, caching: &CachingState, chip: Ch
 		shift += state.len();
 	}
 
-	let Some(cache_rows) = caching.combinational_chip_cache.get(name.as_ref()) else {
-		return false;
-	};
-	let Some(outputs) = cache_rows.get(input as usize) else {
-		// Defensive: shouldn't happen if the LUT's row count matches this
-		// chip's current input width, but a stale/mismatched cache entry
-		// (e.g. a live edit widened a pin) should degrade to a real step
-		// rather than panic.
-		return false;
+	let outputs: Vec<u32> = {
+		let Some(cache_rows) = sim.caching.combinational_chip_cache.get(name.as_ref()) else {
+			return false;
+		};
+		let Some(row) = cache_rows.get(input as usize) else {
+			// Defensive: shouldn't happen if the LUT's row count matches this
+			// chip's current input width, but a stale/mismatched cache entry
+			// (e.g. a live edit widened a pin) should degrade to a real step
+			// rather than panic.
+			return false;
+		};
+		row.clone()
 	};
 
 	let output_pins: Vec<PinIdx> = sim.chip(chip).output_pins.clone();

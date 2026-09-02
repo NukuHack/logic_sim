@@ -383,26 +383,16 @@ impl Simulator {
 			let name = Arc::clone(&self.chips[chip_idx.0].name);
 
 			if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {
-				let caching = std::mem::take(&mut self.caching);
-				let hit = crate::gate_op::process_cached_chip(self, &caching, chip_idx);
-				self.caching = caching;
-				if hit {
+				if crate::gate_op::process_cached_chip(self, chip_idx) {
 					return;
 				}
 				// A tri-state input declined the lookup (never enumerated
 				// into the table) -- fall through to a real step below.
 			} else if !self.caching.not_combinational_chip_cache.contains(name.as_ref()) {
-				let mut caching = std::mem::take(&mut self.caching);
-				crate::gate_op::recalculate_chip_cache(self, &mut caching, chip_idx);
-				self.caching = caching;
+				crate::gate_op::recalculate_chip_cache(self, chip_idx);
 
-				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {
-					let caching = std::mem::take(&mut self.caching);
-					let hit = crate::gate_op::process_cached_chip(self, &caching, chip_idx);
-					self.caching = caching;
-					if hit {
-						return;
-					}
+				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) && crate::gate_op::process_cached_chip(self, chip_idx) {
+					return;
 				}
 			}
 		}

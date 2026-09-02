@@ -114,14 +114,6 @@ impl SimHandle {
 		lock_sim(&self.sim)
 	}
 
-	/// Swaps in a freshly built simulator (structural edit / chip switch /
-	/// project open). Blocks until any in-flight step finishes, then
-	/// replaces the arena wholesale -- the worker picks up whatever sits
-	/// inside on its next pass, so no restart signalling is needed.
-	pub(crate) fn replace(&self, sim: Simulator) {
-		*self.lock() = sim;
-	}
-
 	// ---- Keyboard state feeding (the old direct field writes) ----
 
 	/// Flips one bit of an input dev-pin's player-driven state -- what
@@ -218,6 +210,20 @@ impl SimHandle {
 	/// exactly like `set_paused`/`set_target_ticks_per_second` above.
 	pub(crate) fn set_use_caching(&self, enabled: bool) {
 		self.lock().caching.use_caching = enabled;
+	}
+
+	/// Captures the built-up LUT cache out of the outgoing simulator
+	pub(crate) fn capture_caching_state(&self, mut sim: Simulator) {
+		let mut guard = self.lock();
+		sim.caching = std::mem::take(&mut guard.caching);
+		*guard = sim;
+	}
+
+	/// Drops one cached LUT
+	pub(crate) fn clear_caching(&self, name: &str) {
+		let mut sim = self.lock();
+		sim.caching.combinational_chip_cache.remove(name);
+		sim.caching.not_combinational_chip_cache.remove(name);
 	}
 }
 
@@ -434,7 +440,7 @@ mod tests {
 	#[test]
 	fn replace_swaps_in_the_new_arena_for_subsequent_reads() {
 		let h = handle(true, 1);
-		h.replace(blank_simulator());
+		*h.lock() = blank_simulator();
 		assert_eq!(frame(&h), 0, "a replaced simulator starts from frame zero");
 		// One lock scope: a second `lock()` inside the same statement would
 		// deadlock the non-reentrant mutex.
@@ -444,6 +450,32 @@ mod tests {
 			sim.find_sub_chip(root, 9999)
 		};
 		assert_eq!(no_such_chip, None, "the blank arena has no subchips to find");
+	}
+
+	/// Regression: a rebuild must never leave the *live* simulator (what
+	/// the worker thread is still stepping) with an emptied LUT cache --
+	/// not even for the instant it takes to install the replacement. A
+	/// version that took the cache out with an earlier, separate lock
+	/// (before `Simulator::build`ing the replacement) would leave exactly
+	/// that window open.
+	#[test]
+	fn replacing_moves_the_caching_state_without_ever_leaving_the_live_sim_empty() {
+		let h = handle(true, 1);
+		h.lock().caching.combinational_chip_cache.insert("ADDER".into(), vec![vec![0]]);
+		h.lock().caching.not_combinational_chip_cache.insert("NOT_COMB".into());
+
+		h.capture_caching_state(blank_simulator());
+
+		// The cache travelled into the newly installed (now live) simulator.
+		let live = h.lock();
+		assert!(
+			live.caching.combinational_chip_cache.contains_key("ADDER"),
+			"replace_carrying_caching_state must carry the cache into the new simulator"
+		);
+		assert!(
+			live.caching.not_combinational_chip_cache.contains("NOT_COMB"),
+			"replace_carrying_caching_state must carry the cache into the new simulator"
+		);
 	}
 
 	#[test]

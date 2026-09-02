@@ -520,7 +520,8 @@ impl ViewerState {
 		sim.driven_inputs = driven_inputs;
 		sim.restore_internal_states(&internal_states);
 		sim.restore_pin_states(&pin_states);
-		self.sim.replace(sim);
+		// Carry the LUT cache across too
+		self.sim.capture_caching_state(sim);
 		self.sync_sim_clock_pref();
 	}
 
@@ -536,7 +537,7 @@ impl ViewerState {
 		sim.held_keys = held_keys;
 		sim.key_modifiers = key_modifiers;
 		sim.driven_inputs = driven_inputs;
-		self.sim.replace(sim);
+		self.sim.capture_caching_state(sim);
 		self.sync_sim_clock_pref();
 	}
 
