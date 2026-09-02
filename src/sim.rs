@@ -427,16 +427,18 @@ impl Simulator {
 
 		let num_outputs = self.chips[chip_idx.0].output_pins.len();
 		{
-			let Some(cache) = self.caching.combinational_chip_cache.get(name.as_ref()) else {
+			let Some(gate) = self.caching.combinational_chip_cache.get(name.as_ref()) else {
 				return false;
 			};
-			let Some(row) = cache.get(input as usize) else {
-				// Defensive: shouldn't happen if the LUT's row count matches this chip's
-				// current input width, but a stale/mismatched cache entry (e.g. a live edit
-				// widened a pin) should degrade to a real step rather than panic.
+			// Reused scratch buffer would need to live on `self`, which `eval`'s
+			// `&self.caching` borrow already prevents mutably touching -- `num_outputs`
+			// is small enough (a chip's output-pin count) that this allocation isn't
+			// worth threading storage through the trait to avoid.
+			let mut out = vec![0u32; num_outputs];
+			if !gate.eval(input, &mut out) {
 				return false;
-			};
-			for (i, data) in row.iter().enumerate().take(num_outputs) {
+			}
+			for (i, data) in out.iter().enumerate() {
 				let p = self.chips[chip_idx.0].output_pins[i];
 				let width = self.pins[p.0].state.width();
 				self.pins[p.0].state = PinState::from_raw_with_width(*data as u16, width);

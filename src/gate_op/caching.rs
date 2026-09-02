@@ -20,16 +20,46 @@ pub const MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING: u32 = 12;
 /// will make it inf when i implement Native and NativeList
 pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
+pub trait CachedGate: std::fmt::Debug + Send + Sync {
+	/// Evaluate `input`
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool;
+}
+
+/// lut
+#[derive(Debug)]
+pub struct LutGate {
+	rows: Vec<Vec<u32>>,
+}
+
+impl LutGate {
+	pub fn new(rows: Vec<Vec<u32>>) -> Self {
+		Self { rows }
+	}
+}
+
+impl CachedGate for LutGate {
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
+		let Some(row) = self.rows.get(input as usize) else {
+			// Defensive: shouldn't happen if the LUT's row count matches this chip's
+			// current input width, but a stale/mismatched cache entry (e.g. a live edit
+			// widened a pin) should degrade to a real step rather than panic.
+			return false;
+		};
+		let n = out.len().min(row.len());
+		out[..n].copy_from_slice(&row[..n]);
+		true
+	}
+}
+
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
 #[derive(Debug)]
 pub struct CachingState {
-	/// One row per input combination, keyed by chip name. Matches the original's
-	/// `Dictionary<string, uint[][]> combinationalChipCaches`. Each row is the
-	/// chip's raw packed `PinState` word (bits + tri-state flags) per output
-	/// pin, in output-pin order -- not just the bit values -- so a cache hit can
-	/// reproduce a tri-state output exactly, not just a settled 0/1.
-	pub combinational_chip_cache: HashMap<Arc<str>, Vec<Vec<u32>>>,
+	/// Keyed by chip name. Matches the original's
+	/// `Dictionary<string, uint[][]> combinationalChipCaches`, except the value
+	/// is now any [`CachedGate`] rather than being tied to the flat-LUT
+	/// representation directly.
+	pub combinational_chip_cache: HashMap<Arc<str>, Box<dyn CachedGate>>,
 	/// Chip names already proven non-combinational (or too big to cache), so
 	/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
 	/// Same interned-`Arc<str>` sharing as [`combinational_chip_cache`].
@@ -292,7 +322,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	}
 
 	log::warn!("[cache] Cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
-	sim.caching.combinational_chip_cache.insert(name, cache_rows);
+	sim.caching.combinational_chip_cache.insert(name, Box::new(LutGate::new(cache_rows)));
 
 	// Restore state
 	reset_received_flags_fast(sim, &all_pins);

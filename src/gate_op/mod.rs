@@ -12,7 +12,7 @@ mod recognize;
 mod word;
 
 pub use caching::{
-	calculate_num_input_bits, is_combinational, recalculate_chip_cache, reset_received_flags_on_all_pins, CachingState,
+	calculate_num_input_bits, is_combinational, recalculate_chip_cache, reset_received_flags_on_all_pins, CachedGate, CachingState, LutGate,
 	MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING,
 };
 pub use eval::{Bits, Lut, Native, NativeList, OptimizedGate};
