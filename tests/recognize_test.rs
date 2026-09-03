@@ -1,26 +1,43 @@
-use logic_sim::gate_op::{recognize, registry, Lut, Native, OptimizedGate};
+use logic_sim::gate_op::{recognize, registry, CachedGate, Lut, Native};
 use logic_sim::pin_state::LogicState;
 
-fn eval_bools(gate: &dyn OptimizedGate, in_bits: u32, out_bits: u32, input: &[bool]) -> Vec<bool> {
+/// Evaluates a `recognize()`-returned (or otherwise narrow: <=64 input bits, a single <=32-bit
+/// output field) gate through the real [`CachedGate`] entry point -- the one
+/// `process_cached_chip` actually calls -- packing/unpacking through `u64`/`u32` rather than
+/// `LogicState` slices.
+fn eval_bools(gate: &dyn CachedGate, out_bits: u32, input: &[bool]) -> Vec<bool> {
+	let packed: u64 = input.iter().enumerate().fold(0, |acc, (i, &b)| acc | ((b as u64) << i));
+	let mut out = [0u32; 1];
+	assert!(gate.eval(packed, &mut out), "eval should succeed for an in-range, single-field input");
+	(0..out_bits).map(|i| (out[0] >> i) & 1 == 1).collect()
+}
+
+/// Evaluates a [`Native`] gate too wide for [`CachedGate`]'s `u64`/single-`u32` bridge (more
+/// than 64 input bits, or more than 32 output bits) through its arbitrary-width `eval_wide`
+/// instead.
+fn eval_bools_wide(gate: &Native, in_bits: u32, out_bits: u32, input: &[bool]) -> Vec<bool> {
 	let states: Vec<LogicState> = input.iter().map(|&b| LogicState::from_bool(b)).collect();
 	assert_eq!(states.len(), in_bits as usize);
 	let mut out = vec![LogicState::Low; out_bits as usize];
-	gate.eval(&states, &mut out);
+	gate.eval_wide(&states, &mut out);
 	out.iter().map(|s| s.is_high()).collect()
 }
 
-/// Builds an actual `Lut<u64, u64>` (the "real" wide type, not a toy stand-in) by evaluating
-/// a reference bool-slice function over every row -- used only to set up test fixtures.
-fn lut_for(in_bits: u32, out_bits: u32, f: impl Fn(&[bool]) -> Vec<bool>) -> Lut<u64, u64> {
+/// Builds a single-field [`Lut`] (one packed `u32` covering the gate's whole output) by
+/// evaluating a reference bool-slice function over every row -- used only to set up test
+/// fixtures. Mirrors [`logic_sim::gate_op::build_lut`], just driven by a bool-slice fn instead
+/// of a `u64 -> u64` one, which reads more naturally in these tests.
+fn lut_for(in_bits: u32, out_bits: u32, f: impl Fn(&[bool]) -> Vec<bool>) -> Lut {
 	let rows = 1u64 << in_bits;
 	let mut table = Vec::with_capacity(rows as usize);
 	for i in 0..rows {
 		let bits: Vec<bool> = (0..in_bits).map(|b| (i >> b) & 1 == 1).collect();
 		let out = f(&bits);
 		assert_eq!(out.len() as u32, out_bits);
-		table.push(out.iter().enumerate().fold(0u64, |acc, (idx, &b)| acc | ((b as u64) << idx)));
+		let packed = out.iter().enumerate().fold(0u32, |acc, (idx, &b)| acc | ((b as u32) << idx));
+		table.push(vec![packed]);
 	}
-	Lut::new(table.into_boxed_slice())
+	Lut::new(table)
 }
 
 /// Helper to create a Native from a registry candidate by name
@@ -33,24 +50,24 @@ fn formula_from_candidate(name: &str, in_bits: u32, out_bits: u32) -> Native {
 fn recognizes_and2() {
 	let lut = lut_for(2, 1, |b| vec![b[0] & b[1]]);
 	let gate = recognize(2, 1, &lut).expect("AND2 should be recognized");
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false]), vec![false]);
 }
 
 #[test]
 fn recognizes_xor3_as_xor_n() {
 	let lut = lut_for(3, 1, |b| vec![b[0] ^ b[1] ^ b[2]]);
 	let gate = recognize(3, 1, &lut).expect("XOR3 should be recognized");
-	assert_eq!(eval_bools(&*gate, 3, 1, &[true, true, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 3, 1, &[true, true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, false]), vec![false]);
 }
 
 #[test]
 fn recognizes_equals4() {
 	let lut = lut_for(4, 1, |b| vec![b[..2] == b[2..]]);
 	let gate = recognize(4, 1, &lut).expect("EQUALS4 should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, false, true, false]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, false, false, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false, true, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false, false, false]), vec![false]);
 }
 
 #[test]
@@ -62,12 +79,12 @@ fn recognizes_adder2() {
 		(0..3).map(|idx| (sum >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 3, &lut).expect("ADDER2 should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 3, &[true, true, true, false]), vec![false, false, true]);
+	assert_eq!(eval_bools(&*gate, 3, &[true, true, true, false]), vec![false, false, true]);
 }
 
 #[test]
 fn unrecognized_table_returns_none() {
-	let lut = Lut::<u64, u64>::new(vec![7u64; 4].into_boxed_slice());
+	let lut = Lut::new(vec![vec![7u32]; 4]);
 	assert!(recognize(2, 1, &lut).is_none());
 }
 
@@ -92,7 +109,7 @@ fn formula_handles_wide_adder_without_a_table() {
 	let c: u64 = (0..n).fold(0, |acc, i| acc | ((input[n + i] as u64) << i));
 	let expected = a + c;
 
-	let out = eval_bools(&gate, in_bits, out_bits, &input);
+	let out = eval_bools(&gate, out_bits, &input);
 	let actual: u64 = out.iter().enumerate().fold(0, |acc, (i, &b)| acc | ((b as u64) << i));
 	assert_eq!(actual, expected);
 }
@@ -119,7 +136,7 @@ fn recognizes_all_four_adder_variants() {
 		(0..2).map(|idx| (sum >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 2, &lut).expect("adder without carry-out should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, true, false]), vec![false, false]); // 3+1=4 -> 0b100, truncated to 00
+	assert_eq!(eval_bools(&*gate, 2, &[true, true, true, false]), vec![false, false]); // 3+1=4 -> 0b100, truncated to 00
 
 	// With cin, with cout: in=5 (a1a0 c1c0 cin), out=3.
 	let lut = lut_for(5, 3, |b| {
@@ -130,7 +147,7 @@ fn recognizes_all_four_adder_variants() {
 		(0..3).map(|idx| (sum >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(5, 3, &lut).expect("adder with carry-in should be recognized");
-	assert_eq!(eval_bools(&*gate, 5, 3, &[true, false, false, false, true]), vec![false, true, false]); // 1+0+1=2
+	assert_eq!(eval_bools(&*gate, 3, &[true, false, false, false, true]), vec![false, true, false]); // 1+0+1=2
 
 	// With cin, no cout: in=5, out=2.
 	let lut = lut_for(5, 2, |b| {
@@ -141,7 +158,7 @@ fn recognizes_all_four_adder_variants() {
 		(0..2).map(|idx| (sum >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(5, 2, &lut).expect("adder with carry-in, no carry-out should be recognized");
-	assert_eq!(eval_bools(&*gate, 5, 2, &[true, true, true, true, true]), vec![true, true]);
+	assert_eq!(eval_bools(&*gate, 2, &[true, true, true, true, true]), vec![true, true]);
 	// 3+3+1=7 -> truncated to 0b11
 }
 
@@ -149,108 +166,108 @@ fn recognizes_all_four_adder_variants() {
 fn recognizes_or2() {
 	let lut = lut_for(2, 1, |b| vec![b[0] | b[1]]);
 	let gate = recognize(2, 1, &lut).expect("OR2 should be recognized");
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[false, false]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false]), vec![true]);
 }
 
 #[test]
 fn recognizes_nand2() {
 	let lut = lut_for(2, 1, |b| vec![!(b[0] & b[1])]);
 	let gate = recognize(2, 1, &lut).expect("NAND2 should be recognized");
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[false, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false]), vec![true]);
 }
 
 #[test]
 fn recognizes_nor2() {
 	let lut = lut_for(2, 1, |b| vec![!(b[0] | b[1])]);
 	let gate = recognize(2, 1, &lut).expect("NOR2 should be recognized");
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[false, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false]), vec![true]);
 }
 
 #[test]
 fn recognizes_xnor2() {
 	let lut = lut_for(2, 1, |b| vec![!(b[0] ^ b[1])]);
 	let gate = recognize(2, 1, &lut).expect("XNOR2 should be recognized");
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[false, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false]), vec![true]);
 }
 
 #[test]
 fn recognizes_not() {
 	let lut = lut_for(1, 1, |b| vec![!b[0]]);
 	let gate = recognize(1, 1, &lut).expect("NOT should be recognized");
-	assert_eq!(eval_bools(&*gate, 1, 1, &[true]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 1, 1, &[false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[false]), vec![true]);
 }
 
 #[test]
 fn recognizes_buffer() {
 	let lut = lut_for(1, 1, |b| vec![b[0]]);
 	let gate = recognize(1, 1, &lut).expect("BUFFER should be recognized");
-	assert_eq!(eval_bools(&*gate, 1, 1, &[true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 1, 1, &[false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[false]), vec![false]);
 }
 
 #[test]
 fn recognizes_and4_as_and_n() {
 	let lut = lut_for(4, 1, |b| vec![b[0] & b[1] & b[2] & b[3]]);
 	let gate = recognize(4, 1, &lut).expect("AND4 should be recognized as AND_N");
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, true, true, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, true, true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true, false]), vec![false]);
 }
 
 #[test]
 fn recognizes_or5_as_or_n() {
 	let lut = lut_for(5, 1, |b| vec![b[0] | b[1] | b[2] | b[3] | b[4]]);
 	let gate = recognize(5, 1, &lut).expect("OR5 should be recognized as OR_N");
-	assert_eq!(eval_bools(&*gate, 5, 1, &[false, false, false, false, false]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 5, 1, &[false, false, false, false, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false, false, false, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false, false, false, true]), vec![true]);
 }
 
 #[test]
 fn recognizes_xor6_as_xor_n() {
 	let lut = lut_for(6, 1, |b| vec![b[0] ^ b[1] ^ b[2] ^ b[3] ^ b[4] ^ b[5]]);
 	let gate = recognize(6, 1, &lut).expect("XOR6 should be recognized as XOR_N");
-	assert_eq!(eval_bools(&*gate, 6, 1, &[true, false, true, false, true, false]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 6, 1, &[true, true, true, false, true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false, true, false, true, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true, false, true, false]), vec![false]);
 }
 
 #[test]
 fn recognizes_nand4_as_nand_n() {
 	let lut = lut_for(4, 1, |b| vec![!(b[0] & b[1] & b[2] & b[3])]);
 	let gate = recognize(4, 1, &lut).expect("NAND4 should be recognized as NAND_N");
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, true, true, true]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, true, true, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true, true]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true, false]), vec![true]);
 }
 
 #[test]
 fn recognizes_nor4_as_nor_n() {
 	let lut = lut_for(4, 1, |b| vec![!(b[0] | b[1] | b[2] | b[3])]);
 	let gate = recognize(4, 1, &lut).expect("NOR4 should be recognized as NOR_N");
-	assert_eq!(eval_bools(&*gate, 4, 1, &[false, false, false, false]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 4, 1, &[false, false, false, true]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false, false, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false, false, true]), vec![false]);
 }
 
 #[test]
 fn recognizes_xnor4_as_xnor_n() {
 	let lut = lut_for(4, 1, |b| vec![!(b[0] ^ b[1] ^ b[2] ^ b[3])]);
 	let gate = recognize(4, 1, &lut).expect("XNOR4 should be recognized as XNOR_N");
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, false, true, false]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 4, 1, &[true, true, true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false, true, false]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true, true, false]), vec![false]);
 }
 
 #[test]
 fn recognizes_equals6_as_xnor_2n() {
 	let lut = lut_for(6, 1, |b| vec![b[..3] == b[3..]]);
 	let gate = recognize(6, 1, &lut).expect("EQUALS6 should be recognized as XNOR_2N");
-	assert_eq!(eval_bools(&*gate, 6, 1, &[true, false, true, true, false, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 6, 1, &[true, false, true, true, false, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false, true, true, false, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false, true, true, false, false]), vec![false]);
 }
 #[test]
 fn recognizes_bitwise_and_wide() {
@@ -261,8 +278,8 @@ fn recognizes_bitwise_and_wide() {
 		(0..2).map(|idx| (result >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 2, &lut).expect("Bitwise AND should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![true, false]);
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![false, true]);
+	assert_eq!(eval_bools(&*gate, 2, &[true, false, true, true]), vec![true, false]);
+	assert_eq!(eval_bools(&*gate, 2, &[true, true, false, true]), vec![false, true]);
 }
 
 #[test]
@@ -274,8 +291,8 @@ fn recognizes_bitwise_or_wide() {
 		(0..2).map(|idx| (result >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 2, &lut).expect("Bitwise OR should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![true, true]); // 01 | 11 = 11
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![true, true]);
+	assert_eq!(eval_bools(&*gate, 2, &[true, false, true, true]), vec![true, true]); // 01 | 11 = 11
+	assert_eq!(eval_bools(&*gate, 2, &[true, true, false, true]), vec![true, true]);
 	// 11 | 10 = 11
 }
 
@@ -288,8 +305,8 @@ fn recognizes_bitwise_xor_wide() {
 		(0..2).map(|idx| (result >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 2, &lut).expect("Bitwise XOR should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![false, true]); // 01 ^ 11 = 10
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![true, false]);
+	assert_eq!(eval_bools(&*gate, 2, &[true, false, true, true]), vec![false, true]); // 01 ^ 11 = 10
+	assert_eq!(eval_bools(&*gate, 2, &[true, true, false, true]), vec![true, false]);
 	// 11 ^ 10 = 01
 }
 
@@ -302,8 +319,8 @@ fn recognizes_bitwise_xnor_wide() {
 		(0..2).map(|idx| (result >> idx) & 1 == 1).collect()
 	});
 	let gate = recognize(4, 2, &lut).expect("Bitwise XNOR should be recognized");
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, false, true, true]), vec![true, false]); // ~(01 ^ 11) = ~10 = 01
-	assert_eq!(eval_bools(&*gate, 4, 2, &[true, true, false, true]), vec![false, true]);
+	assert_eq!(eval_bools(&*gate, 2, &[true, false, true, true]), vec![true, false]); // ~(01 ^ 11) = ~10 = 01
+	assert_eq!(eval_bools(&*gate, 2, &[true, true, false, true]), vec![false, true]);
 	// ~(11 ^ 10) = ~01 = 10
 }
 
@@ -311,14 +328,14 @@ fn recognizes_bitwise_xnor_wide() {
 fn recognizes_not_n_wide() {
 	let lut = lut_for(3, 3, |b| (0..3).map(|idx| !b[idx]).collect());
 	let gate = recognize(3, 3, &lut).expect("NOT_N should be recognized");
-	assert_eq!(eval_bools(&*gate, 3, 3, &[true, false, true]), vec![false, true, false]);
+	assert_eq!(eval_bools(&*gate, 3, &[true, false, true]), vec![false, true, false]);
 }
 
 #[test]
 fn recognizes_buffer_n_wide() {
 	let lut = lut_for(3, 3, |b| (0..3).map(|idx| b[idx]).collect());
 	let gate = recognize(3, 3, &lut).expect("BUFFER_N should be recognized");
-	assert_eq!(eval_bools(&*gate, 3, 3, &[true, false, true]), vec![true, false, true]);
+	assert_eq!(eval_bools(&*gate, 3, &[true, false, true]), vec![true, false, true]);
 }
 
 #[test]
@@ -331,26 +348,26 @@ fn recognizes_adder3_with_carry() {
 	});
 	let gate = recognize(6, 4, &lut).expect("3-bit adder with carry should be recognized");
 	// 5 + 7 = 12 (101 + 111 = 1100)
-	assert_eq!(eval_bools(&*gate, 6, 4, &[true, false, true, true, true, true]), vec![false, false, true, true]);
+	assert_eq!(eval_bools(&*gate, 4, &[true, false, true, true, true, true]), vec![false, false, true, true]);
 }
 
 #[test]
 fn rejects_wrong_table_size() {
 	// Table size doesn't match in_bits
-	let lut = Lut::<u64, u64>::new(vec![0u64; 3].into_boxed_slice());
+	let lut = Lut::new(vec![vec![0u32]; 3]);
 	assert!(recognize(2, 1, &lut).is_none());
 }
 
 #[test]
 fn rejects_zero_bits() {
-	let lut = Lut::<u64, u64>::new(vec![0u64; 1].into_boxed_slice());
+	let lut = Lut::new(vec![vec![0u32]; 1]);
 	assert!(recognize(0, 1, &lut).is_none());
 	assert!(recognize(1, 0, &lut).is_none());
 }
 
 #[test]
 fn rejects_too_wide() {
-	let lut = Lut::<u64, u64>::new(vec![0u64; 1].into_boxed_slice());
+	let lut = Lut::new(vec![vec![0u32]; 1]);
 	assert!(recognize(65, 1, &lut).is_none());
 	assert!(recognize(1, 65, &lut).is_none());
 }
@@ -362,12 +379,12 @@ fn formula_handles_64bit_operations() {
 	let mut input = vec![false; 64];
 	input[63] = true; // Set highest bit
 	let expected = input.clone();
-	let out = eval_bools(&gate, 64, 64, &input);
+	let out = eval_bools_wide(&gate, 64, 64, &input);
 	assert_eq!(out, expected);
 
 	// Test 64-bit NOT
 	let gate = formula_from_candidate("NOT_N", 64, 64);
-	let out = eval_bools(&gate, 64, 64, &input);
+	let out = eval_bools_wide(&gate, 64, 64, &input);
 	let expected: Vec<bool> = input.iter().map(|&b| !b).collect();
 	assert_eq!(out, expected);
 }
@@ -399,7 +416,7 @@ fn adder_variants_formula_correctness() {
 			input[2 * n] = true;
 		}
 
-		let out = eval_bools(&gate, in_bits, out_bits, &input);
+		let out = eval_bools(&gate, out_bits, &input);
 		let actual: u64 = out.iter().enumerate().fold(0, |acc, (i, &b)| acc | ((b as u64) << i));
 		let expected = a + c + cin;
 
@@ -435,8 +452,8 @@ fn recognizes_wide_and() {
 		v[3] = false;
 		v
 	};
-	assert_eq!(eval_bools(&*gate, 8, 1, &all_true), vec![true]);
-	assert_eq!(eval_bools(&*gate, 8, 1, &one_false), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &all_true), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &one_false), vec![false]);
 }
 
 #[test]
@@ -453,11 +470,11 @@ fn recognizes_wide_equality() {
 	input[8] = true;
 	input[9] = false;
 	input[10] = true;
-	assert_eq!(eval_bools(&*gate, 16, 1, &input), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &input), vec![true]);
 
 	// Test non-matching halves
 	input[10] = false;
-	assert_eq!(eval_bools(&*gate, 16, 1, &input), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &input), vec![false]);
 }
 
 /// `find_candidate` checks the all-ones ("last") row before doing the full sweep as a fast
@@ -469,9 +486,9 @@ fn recognizes_wide_equality() {
 fn anchor_row_check_does_not_reject_a_true_match() {
 	let lut = lut_for(2, 1, |b| vec![b[0] & b[1]]);
 	let gate = recognize(2, 1, &lut).expect("AND2 should still be recognized with the anchor pre-check in place");
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, true]), vec![true]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[true, false]), vec![false]);
-	assert_eq!(eval_bools(&*gate, 2, 1, &[false, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, true]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &[true, false]), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &[false, false]), vec![false]);
 }
 
 /// A table that matches AND2 everywhere except the very last (all-ones) row: the anchor
@@ -531,11 +548,11 @@ fn native_handles_gates_wider_than_64_bits() {
 	let gate = formula_from_candidate("AND_N", in_bits, 1);
 
 	let all_true = vec![true; in_bits as usize];
-	assert_eq!(eval_bools(&gate, in_bits, 1, &all_true), vec![true]);
+	assert_eq!(eval_bools_wide(&gate, in_bits, 1, &all_true), vec![true]);
 
 	let mut one_false = all_true.clone();
 	one_false[150] = false; // bit 150 is past any single u64/u128 word
-	assert_eq!(eval_bools(&gate, in_bits, 1, &one_false), vec![false]);
+	assert_eq!(eval_bools_wide(&gate, in_bits, 1, &one_false), vec![false]);
 }
 
 /// Same idea for the adder: two 100-bit operands (200 input bits total, 101-bit sum) -- far
@@ -555,7 +572,7 @@ fn native_handles_a_100_bit_adder() {
 	}
 	input[n] = true;
 
-	let out = eval_bools(&gate, in_bits, out_bits, &input);
+	let out = eval_bools_wide(&gate, in_bits, out_bits, &input);
 	assert!(out[..n].iter().all(|&b| !b), "low 100 bits should all be zero");
 	assert!(out[n], "bit 100 (the carry out of 2^100) should be set");
 }
@@ -565,8 +582,8 @@ fn recognizes_wide_and_with_many_input_bits() {
 	let in_bits = 20;
 	let lut = lut_for(in_bits, 1, |b| vec![b.iter().all(|&x| x)]);
 	let gate = recognize(in_bits, 1, &lut).expect("20-input AND should be recognized");
-	assert_eq!(eval_bools(&*gate, in_bits, 1, &vec![true; in_bits as usize]), vec![true]);
+	assert_eq!(eval_bools(&*gate, 1, &vec![true; in_bits as usize]), vec![true]);
 	let mut one_false = vec![true; in_bits as usize];
 	one_false[19] = false;
-	assert_eq!(eval_bools(&*gate, in_bits, 1, &one_false), vec![false]);
+	assert_eq!(eval_bools(&*gate, 1, &one_false), vec![false]);
 }

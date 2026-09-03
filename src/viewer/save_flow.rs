@@ -699,7 +699,7 @@ mod tests {
 		// and some chip's truth table built.
 		{
 			let mut sim = v.sim.lock();
-			sim.caching.combinational_chip_cache.insert("SEEDED".into(), Box::new(crate::gate_op::LutGate::new(vec![vec![0]])));
+			sim.caching.combinational_chip_cache.insert("SEEDED".into(), Box::new(crate::gate_op::Lut::new(vec![vec![0]])));
 			sim.caching.not_combinational_chip_cache.insert("SEEDED_NC".into());
 		}
 

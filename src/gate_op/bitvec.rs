@@ -1,11 +1,18 @@
-//! Arbitrary-width bit-vector helpers behind [`super::eval::Native`]'s formulas.
+//! Arbitrary-width bit-vector helpers behind [`super::eval::Native`]/[`super::eval::NativeList`]'s
+//! formulas.
 //!
-//! Bits are packed low-word-first, low-bit-first within each word -- the same layout
-//! `WireWord` uses for its fixed-size integers -- except these free functions operate on plain
-//! `&[Bits]`/`Vec<Bits>` slices instead of a concrete `u8..u128`/`WideWord` type. That's what
-//! lets `Native` drop its old `In: WireWord` bound entirely: a gate of *any* width packs into
-//! `words_for(bits)` words and every formula below (`and`/`add`/`field`/...) already works over
-//! however many words that turns out to be, so there's no 64-bit ceiling left to hit.
+//! Bits are packed low-word-first, low-bit-first within each word, and these free functions
+//! operate on plain `&[Bits]`/`Vec<Bits>` slices rather than any fixed-size integer type -- a
+//! gate of *any* width packs into `words_for(bits)` words and every formula below
+//! (`and`/`add`/`field`/...) already works over however many words that turns out to be, so
+//! there's no 64-bit ceiling to hit.
+//!
+//! `eval` (via `Native`/`NativeList`) runs one of these formulas per gate per simulation step,
+//! so the boolean-result helpers (`all_ones_masked`/`any_set_masked`/`parity_masked`/
+//! `fields_equal`) are written to return a plain `bool` computed by scanning `a` in place --
+//! zero heap allocations -- rather than by building masked/compared `Vec<Bits>` copies the way
+//! composing `eq`/`and`/`mask` would. `recognize`'s registry (`AND2`, `OR_N`, `XNOR_2N`, ...)
+//! uses these directly, since they back the most common gates in any circuit.
 
 use crate::{gate_op::Bits, pin_state::LogicState};
 
@@ -18,6 +25,14 @@ pub fn words_for(bits: u32) -> usize {
 	} else {
 		((bits - 1) / WORD_BITS + 1) as usize
 	}
+}
+
+/// Splits `n` into a full-word count and the bit-width of the partial word above them (0 if `n`
+/// divides evenly) -- every masking/truncating helper below needs to know which word is the
+/// last significant one and how much of it counts, so this is computed once and shared rather
+/// than re-derived per helper.
+fn full_words_and_remainder(n: u32) -> (usize, u32) {
+	((n / WORD_BITS) as usize, n % WORD_BITS)
 }
 
 /// Packs a `LogicState` slice into words, low pin first -- same convention as `WireWord::pack`,
@@ -41,21 +56,6 @@ pub fn unpack_words(words: &[Bits], out: &mut [LogicState]) {
 	}
 }
 
-/// All-ones for the low `n` bits, zero above -- the arbitrary-width analogue of `recognize`'s
-/// old `mask(n) -> u64`.
-pub fn mask(n: u32) -> Vec<Bits> {
-	let mut out = vec![0 as Bits; words_for(n)];
-	let full_words = (n / WORD_BITS) as usize;
-	for w in out.iter_mut().take(full_words) {
-		*w = Bits::MAX;
-	}
-	let rem = n % WORD_BITS;
-	if rem != 0 {
-		out[full_words] = ((1 as Bits) << rem) - 1;
-	}
-	out
-}
-
 fn zip_map(a: &[Bits], b: &[Bits], f: impl Fn(Bits, Bits) -> Bits) -> Vec<Bits> {
 	let len = a.len().max(b.len());
 	(0..len).map(|i| f(a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0))).collect()
@@ -70,39 +70,137 @@ pub fn or(a: &[Bits], b: &[Bits]) -> Vec<Bits> {
 pub fn xor(a: &[Bits], b: &[Bits]) -> Vec<Bits> {
 	zip_map(a, b, |x, y| x ^ y)
 }
-/// Bitwise NOT of `a`, masked down to `n` bits (there's no fixed-width type to bound the
-/// inversion otherwise).
+
+/// Bitwise NOT of the low `n` bits of `a`, one word per output word. Masks the partial top word
+/// inline instead of building an inverted copy and a separate mask `Vec` to AND it against, so
+/// this is one allocation (the output itself) instead of three.
 pub fn not(a: &[Bits], n: u32) -> Vec<Bits> {
-	and(&a.iter().map(|&x| !x).collect::<Vec<_>>(), &mask(n))
+	if n == 0 {
+		return Vec::new();
+	}
+	let (full_words, rem) = full_words_and_remainder(n);
+	(0..words_for(n))
+		.map(|i| {
+			let w = !a.get(i).copied().unwrap_or(0);
+			if i < full_words {
+				w
+			} else {
+				w & (((1 as Bits) << rem) - 1)
+			}
+		})
+		.collect()
 }
 
-pub fn is_zero(a: &[Bits]) -> bool {
-	a.iter().all(|&w| w == 0)
+/// True iff every one of the low `n` bits of `a` is set -- the allocation-free core of `AND`
+/// gates (`AND2`/`AND_N`/`NAND2`/`NAND_N`), scanned word-by-word in place instead of composing
+/// `eq(&and(a, &mask(n)), &mask(n))`, which would build three throwaway `Vec`s to answer what's
+/// really a single pass over `a`.
+pub fn all_ones_masked(a: &[Bits], n: u32) -> bool {
+	if n == 0 {
+		return true;
+	}
+	let (full_words, rem) = full_words_and_remainder(n);
+	for i in 0..full_words {
+		if a.get(i).copied().unwrap_or(0) != Bits::MAX {
+			return false;
+		}
+	}
+	if rem != 0 {
+		let m = ((1 as Bits) << rem) - 1;
+		if a.get(full_words).copied().unwrap_or(0) & m != m {
+			return false;
+		}
+	}
+	true
 }
-pub fn eq(a: &[Bits], b: &[Bits]) -> bool {
-	is_zero(&xor(a, b))
+
+/// True iff any of the low `n` bits of `a` is set -- the `OR`/`NOR` counterpart of
+/// [`all_ones_masked`], same in-place scan instead of `!is_zero(&and(a, &mask(n)))`.
+pub fn any_set_masked(a: &[Bits], n: u32) -> bool {
+	if n == 0 {
+		return false;
+	}
+	let (full_words, rem) = full_words_and_remainder(n);
+	for i in 0..full_words {
+		if a.get(i).copied().unwrap_or(0) != 0 {
+			return true;
+		}
+	}
+	if rem != 0 {
+		let m = ((1 as Bits) << rem) - 1;
+		if a.get(full_words).copied().unwrap_or(0) & m != 0 {
+			return true;
+		}
+	}
+	false
 }
-pub fn popcount(a: &[Bits]) -> u32 {
-	a.iter().map(|w| w.count_ones()).sum()
+
+/// Parity (odd popcount) of the low `n` bits of `a` -- the `XOR`/`XNOR` counterpart, replacing
+/// `popcount(&and(a, &mask(n))) & 1 == 1` with a running count over `a` directly.
+pub fn parity_masked(a: &[Bits], n: u32) -> bool {
+	if n == 0 {
+		return false;
+	}
+	let (full_words, rem) = full_words_and_remainder(n);
+	let mut ones = 0u32;
+	for i in 0..full_words {
+		ones += a.get(i).copied().unwrap_or(0).count_ones();
+	}
+	if rem != 0 {
+		let m = ((1 as Bits) << rem) - 1;
+		ones += (a.get(full_words).copied().unwrap_or(0) & m).count_ones();
+	}
+	ones & 1 == 1
+}
+
+/// The `word_index`-th packed word (0-indexed from the low bit) of the `n`-bit field starting
+/// at bit `start` -- `field`'s per-word core, split out so [`fields_equal`] can compare two
+/// fields word-by-word without materializing either one first.
+fn field_word(a: &[Bits], start: u32, word_index: usize) -> Bits {
+	let word_shift = (start / WORD_BITS) as usize + word_index;
+	let bit_shift = start % WORD_BITS;
+	let lo = a.get(word_shift).copied().unwrap_or(0) >> bit_shift;
+	let hi = if bit_shift == 0 { 0 } else { a.get(word_shift + 1).copied().unwrap_or(0).checked_shl(WORD_BITS - bit_shift).unwrap_or(0) };
+	lo | hi
 }
 
 /// Extracts the `n`-bit field starting at bit `start`, i.e. `(a >> start) & mask(n)` -- the
 /// building block every candidate below uses to split a packed word into named operands (`a`,
-/// `c`, `cin`, ...) regardless of how many words wide the whole gate is.
+/// `c`, `cin`, ...) regardless of how many words wide the whole gate is. Masks the partial top
+/// word inline rather than ANDing the whole result against a separately built mask `Vec`.
 pub fn field(a: &[Bits], start: u32, n: u32) -> Vec<Bits> {
 	if n == 0 {
 		return Vec::new();
 	}
-	let word_shift = (start / WORD_BITS) as usize;
-	let bit_shift = start % WORD_BITS;
-	let out_len = words_for(n);
-	let mut out = vec![0 as Bits; out_len];
-	for (i, slot) in out.iter_mut().enumerate() {
-		let lo = a.get(word_shift + i).copied().unwrap_or(0) >> bit_shift;
-		let hi = if bit_shift == 0 { 0 } else { a.get(word_shift + i + 1).copied().unwrap_or(0).checked_shl(WORD_BITS - bit_shift).unwrap_or(0) };
-		*slot = lo | hi;
+	let (full_words, rem) = full_words_and_remainder(n);
+	(0..words_for(n))
+		.map(|w| {
+			let word = field_word(a, start, w);
+			if w < full_words {
+				word
+			} else {
+				word & (((1 as Bits) << rem) - 1)
+			}
+		})
+		.collect()
+}
+
+/// True iff the `n`-bit fields starting at `start_a` and `start_b` are equal -- the `XNOR_2N`
+/// building block, compared word-by-word via [`field_word`] so neither field is ever
+/// materialized as its own `Vec` just to be diffed and discarded.
+pub fn fields_equal(a: &[Bits], start_a: u32, start_b: u32, n: u32) -> bool {
+	if n == 0 {
+		return true;
 	}
-	and(&out, &mask(n))
+	let (full_words, rem) = full_words_and_remainder(n);
+	for w in 0..words_for(n) {
+		let diff = field_word(a, start_a, w) ^ field_word(a, start_b, w);
+		let m = if w < full_words { Bits::MAX } else { ((1 as Bits) << rem) - 1 };
+		if diff & m != 0 {
+			return false;
+		}
+	}
+	true
 }
 
 /// Ripple-carry add across as many words as needed, growing the result by a word if the final
@@ -124,9 +222,23 @@ pub fn add(a: &[Bits], b: &[Bits]) -> Vec<Bits> {
 }
 
 /// Masks `a` down to exactly `n` bits (drops any excess words, zeroes any excess high bits in
-/// the top remaining word).
+/// the top remaining word). Masks the partial top word inline instead of ANDing against a
+/// separately built mask `Vec`, same one-allocation shape as [`not`]/[`field`].
 pub fn truncate(a: &[Bits], n: u32) -> Vec<Bits> {
-	and(a, &mask(n))
+	if n == 0 {
+		return Vec::new();
+	}
+	let (full_words, rem) = full_words_and_remainder(n);
+	(0..words_for(n))
+		.map(|i| {
+			let w = a.get(i).copied().unwrap_or(0);
+			if i < full_words {
+				w
+			} else {
+				w & (((1 as Bits) << rem) - 1)
+			}
+		})
+		.collect()
 }
 
 /// Wraps a single-bit boolean result as the one-word `Vec<Bits>` every 1-output-bit candidate

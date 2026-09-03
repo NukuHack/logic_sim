@@ -1,49 +1,85 @@
-//! Evaluation strategies for optimized gates, exposed behind the object-safe `OptimizedGate`
-//! trait so `SimChip` can store any gate width uniformly. Includes the precomputed-truth-table
-//! `Lut` fast path, the closed-form `Native`/`NativeList` fast paths, and the `WireWord` trait
-//! (with its impls for the built-in integer types) that packs gate pin states into fixed-width
-//! integers for fast evaluation.
+//! The fast-path gate evaluators: the precomputed-truth-table [`Lut`], and the closed-form
+//! [`Native`]/[`NativeList`] (with the `Bits`-word helpers in `bitvec` that back their
+//! formulas). All three implement [`CachedGate`], the one evaluator trait `Simulator` needs --
+//! see `sim::process_cached_chip`, the only real caller today, for the shape this is built
+//! around: a chip's input pins packed low-bit-first into a single `u64`, and one raw packed
+//! word written back per output pin.
 
 use super::bitvec::{pack_words, unpack_words};
 use crate::pin_state::LogicState;
-use std::marker::PhantomData;
-
-/// Object-safe evaluator so `SimChip` can hold any width of optimized gate
-/// behind one pointer-sized field, instead of making `SimChip` (and everything
-/// that stores one) generic over `In`/`Out`.
-pub trait OptimizedGate: Send + Sync {
-	fn eval(&self, input: &[LogicState], output: &mut [LogicState]);
-}
-
-/// A precomputed truth table: every input combination mapped straight to its
-/// output. `table` is indexed directly by the packed input word, so eval is a
-/// single array read with no hashing -- this is the fast path and should be
-/// preferred whenever the full table fits in memory (see the auto/user caching
-/// budgets in `caching.rs`).
-pub struct Lut<In: WireWord, Out: WireWord> {
-	pub table: Box<[Out]>,
-	_input: PhantomData<In>,
-}
-
-impl<In: WireWord, Out: WireWord> Lut<In, Out> {
-	pub fn new(table: Box<[Out]>) -> Self {
-		Self { table, _input: PhantomData }
-	}
-}
-
-impl<In: WireWord, Out: WireWord> OptimizedGate for Lut<In, Out> {
-	fn eval(&self, input: &[LogicState], output: &mut [LogicState]) {
-		if let Some(val) = self.table.get(In::pack(input).as_index()) {
-			val.clone().unpack(output);
-		}
-	}
-}
 
 /// Small per-instance parameter (carry-in/carry-out flags and the like) passed alongside a
-/// formula. Deliberately still a plain `u64`, not a [`bitvec::Word`] vector: every use of
-/// `config` across the registry is a handful of flag bits, never gate-width-dependent, so there
-/// is nothing to gain from making it arbitrary-width too.
+/// formula, and the word size [`Native`]/[`NativeList`] formulas operate on. Deliberately a
+/// plain `u64`, not some arbitrary-width vector type: a formula already takes a `&[Bits]` slice
+/// when it needs more than one word (see `bitvec`), so `Bits` itself only has to be "one word",
+/// not "big enough for any gate".
 pub type Bits = u64;
+
+/// The one evaluator trait every fast-path gate representation
+/// implements, so `CachingState`/`SimChip` can store any of them uniformly behind one
+/// pointer-sized field.
+///
+/// Shaped directly around `process_cached_chip`, its only real caller: `input` is a chip's
+/// input pins packed low-bit-first into one `u64` (see `caching::calculate_num_input_bits` and
+/// `MAX_NUM_INPUT_BITS_WHEN_USER_CACHING` for why 64 bits is enough for every chip that can
+/// actually reach this path), and `out` gets one raw packed word per output pin, matching
+/// `PinState::from_raw_with_width`. This is *not* one bit per output wire -- an output pin can itself be multiple wires (a nibble/byte bus), and
+/// `out`'s job is to hand each such pin back its own raw value, not a single bit-vector spanning
+/// every pin.
+pub trait CachedGate: std::fmt::Debug + Send + Sync {
+	/// Evaluates `input` into `out`. Returns `false` if this evaluator has nothing for `input`
+	/// (e.g. an out-of-range `Lut` row from a stale cache entry, or an `out` slice the wrong
+	/// length), in which case `out` is left untouched and the caller should fall back to a real
+	/// step.
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool;
+}
+
+/// A combinational chip's full truth table, one row per possible input combination, one packed
+/// `u32` per output pin. Indexed directly by `input`, so eval is a single array read with no
+/// hashing -- this is the fast path and should be preferred whenever the full table fits in
+/// memory (see the auto/user caching budgets in `caching.rs`).
+#[derive(Debug)]
+pub struct Lut {
+	rows: Box<[Box<[u32]>]>,
+}
+
+impl Lut {
+	pub fn new(rows: Vec<Vec<u32>>) -> Self {
+		Self { rows: rows.into_iter().map(Vec::into_boxed_slice).collect() }
+	}
+
+	/// Row count, i.e. `2^in_bits` for a fully-built table.
+	pub fn len(&self) -> usize {
+		self.rows.len()
+	}
+
+	pub fn is_empty(&self) -> bool {
+		self.rows.is_empty()
+	}
+
+	/// The packed fields for input row `input`, or `None` if out of range.
+	pub fn row(&self, input: u64) -> Option<&[u32]> {
+		self.rows.get(input as usize).map(|r| &**r)
+	}
+}
+
+impl CachedGate for Lut {
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
+		let Some(row) = self.row(input) else {
+			// Defensive: shouldn't happen if the LUT's row count matches this chip's
+			// current input width, but a stale/mismatched cache entry (e.g. a live edit
+			// widened a pin) should degrade to a real step rather than panic.
+			return false;
+		};
+		let n = out.len().min(row.len());
+		out[..n].copy_from_slice(&row[..n]);
+		true
+	}
+}
+
+type SizedFn = fn(&[Bits], u32, Bits) -> Vec<Bits>;
+type NativeFn = fn(&[Bits], Bits) -> Vec<Bits>;
+type DuoSizedFn = fn(&[Bits], u32, u32, Bits) -> Vec<Bits>;
 
 /// A gate evaluated from a closed-form function over packed bits rather than a stored table,
 /// e.g. `AND2` as `|w, ..| (w & 0b11) == 0b11`. Cheaper to build than a `Lut` (no table to
@@ -52,35 +88,35 @@ pub type Bits = u64;
 /// [`super::recognize::recognize`] hands back for any pattern it matches (AND, adder, ...)
 /// regardless of how wide the gate is.
 ///
-/// Unified from what used to be two separate designs: a `Lut`-style generic type parameter
-/// (which only ever covered widths a concrete `WireWord` impl could hold, capping out at 128
-/// bits and leaving `WideWord` unable to serve as a `Native` word at all) and an earlier
-/// `Native` hardcoded to a single `u64` word (capping every formula at 64 input/output bits).
-/// `Native` now takes neither: it packs its input into as many [`bitvec::Word`]s as `in_bits`
-/// needs and hands that slice straight to `f`, so a formula written against the `bitvec` helpers
-/// (`and`/`add`/`field`/...) is correct for a 4-bit gate and a 4000-bit gate alike -- genuinely
-/// unlimited input width, with the same small, readable closed-form `f` as before instead of an
-/// opaque stored table.
+/// Packs its input into as many `Bits` words as `in_bits` needs and hands that slice straight
+/// to `f`, so a formula written against the `bitvec` helpers is
+/// correct for every gate -- genuinely unlimited input width, with
+/// the same small, readable closed-form `f` regardless of size. [`Self::eval_wide`] is where
+/// that unlimited width is actually exercised (`recognize` and its tests use it directly); the
+/// [`CachedGate`] impl below is the narrower `u64`-in/single-`u32`-out bridge
+/// `process_cached_chip` can call today
 ///
-/// `in_bits`/`out_bits` are carried alongside `config` (rather than baked into a concrete type
-/// parameter) so one `fn` pointer can serve an entire parametric family -- e.g. `AND_N` for any
-/// width, or the four carry-in/carry-out adder variants sharing one formula shape -- instead of
-/// needing a hand-written monomorphized function per width.
+/// `in_bits`/`out_bits` are carried alongside `config`
+/// so one `fn` pointer can serve an entire parametric family
+#[derive(Debug)]
 pub struct Native {
 	in_bits: u32,
 	out_bits: u32,
 	config: Bits,
-	f: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>,
+	f: DuoSizedFn,
 }
 
 impl Native {
 	pub fn new(in_bits: u32, out_bits: u32, config: Bits, f: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>) -> Self {
 		Self { in_bits, out_bits, config, f }
 	}
-}
 
-impl OptimizedGate for Native {
-	fn eval(&self, input: &[LogicState], output: &mut [LogicState]) {
+	/// Arbitrary-width eval: packs/unpacks through `LogicState` slices directly instead of
+	/// going through [`CachedGate::eval`]'s `u64`/single-`u32` bridge, so a gate wider than 64
+	/// input bits or 32 output bits (impossible for any `Lut`, and past what today's only
+	/// `CachedGate` caller can hand in) still evaluates correctly. This is what `recognize` and
+	/// its wide-gate tests call.
+	pub fn eval_wide(&self, input: &[LogicState], output: &mut [LogicState]) {
 		debug_assert_eq!(input.len() as u32, self.in_bits);
 		debug_assert_eq!(output.len() as u32, self.out_bits);
 
@@ -90,95 +126,63 @@ impl OptimizedGate for Native {
 	}
 }
 
-// TODO: rework NativeList to match Native's current arbitrary-width design; it still assumes
-// the old fixed-width `WireWord` shape at each step.
-
-/// A short chain of native steps: `In -> Mid` once, then `Mid -> Mid` for each
-/// remaining step, then `Mid -> Out` to land on the final width. Pick `Mid`
-/// wide enough for the widest intermediate value in the chain (e.g. a carry
-/// bit beyond the nominal output width).
-pub struct NativeList<In: WireWord, Mid: WireWord, Out: WireWord> {
-	pub first: fn(In) -> Mid,
-	pub rest: Vec<fn(Mid) -> Mid>,
-	pub last: fn(Mid) -> Out,
-}
-
-impl<In: WireWord, Mid: WireWord, Out: WireWord> OptimizedGate for NativeList<In, Mid, Out> {
-	fn eval(&self, input: &[LogicState], output: &mut [LogicState]) {
-		let mid = self.rest.iter().fold((self.first)(In::pack(input)), |w, f| f(w));
-		(self.last)(mid).unpack(output);
+impl CachedGate for Native {
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
+		if self.in_bits > 64 || self.out_bits > 32 || out.len() != 1 {
+			return false;
+		}
+		let result = (self.f)(&[input], self.in_bits, self.out_bits, self.config);
+		out[0] = result.first().copied().unwrap_or(0) as u32;
+		true
 	}
 }
 
-/// A gate's pins packed into one integer, sized to fit that gate exactly (a 4-bit
-/// gate uses `u8`, not `u128`). Packing lets evaluation work on a cheap integer
-/// instead of walking a `&[LogicState]` slice every time.
+/// A chain of native steps: `first` applied once to the packed input, then each of
+/// `rest` in order, then `last` to land on the final output width. Pick a step's return width
+/// wider than the nominal output width when it needs headroom (e.g. a carry bit beyond the
+/// final sum), and mask back down in a later step.
 ///
-/// `Clone` rather than `Copy`: every inline int type is `Copy` for free, but
-/// `WideWord` owns a heap-allocated `Box<[u64]>` and can't be.
-pub trait WireWord: Clone + Eq + Send + Sync + 'static {
-	/// Packs each `LogicState` in `bits` into one bit, low pin first.
-	fn pack(bits: &[LogicState]) -> Self;
-	/// Unpacks back into per-pin states, inverse of `pack`.
-	fn unpack(self, out: &mut [LogicState]);
-	/// This word's value as a `Vec` index. Only meaningful for word sizes small
-	/// enough to serve as a dense lookup-table index (see `WideWord`).
-	fn as_index(&self) -> usize;
-
-	/// This word's bits widened to `u64`, same low-bit-first layout as
-	/// `pack`/`unpack`. Lets code that only cares about the bit pattern (e.g.
-	/// `recognize`) work uniformly across `u8..u128` without being generic
-	/// over which one it got. Only meaningful for widths <= 64; wider words
-	/// are truncated to their low 64 bits (see `WideWord`'s impl).
-	fn to_u64(&self) -> u64;
+/// Reworked onto the same arbitrary-width `&[Bits]` shape [`Native`] uses instead of the old
+/// fixed-width `WireWord`-bounded design -- so a chain is exactly as unlimited-width as a
+/// single-step `Native` formula is, which is what actually lets it back the cache path in the
+/// future.
+#[derive(Debug)]
+pub struct NativeList {
+	in_bits: u32,
+	out_bits: u32,
+	config: Bits,
+	first: SizedFn,
+	rest: Vec<NativeFn>,
+	last: SizedFn,
 }
 
-macro_rules! impl_wire_word {
-	($($t:ty),*) => {$(
-		impl WireWord for $t {
-			fn pack(bits: &[LogicState]) -> Self {
-				bits.iter().enumerate()
-					.fold(0, |acc, (i, b)| acc | ((b.is_high() as $t) << i))
-			}
-			fn unpack(self, out: &mut [LogicState]) {
-				for (i, slot) in out.iter_mut().enumerate() {
-					*slot = LogicState::from_bool((self >> i) & 1 == 1);
-				}
-			}
-			fn as_index(&self) -> usize {
-				*self as usize
-			}
-			fn to_u64(&self) -> u64 {
-				*self as u64 // truncating for u128, which is fine: to_u64's contract is low-64-bits-only
-			}
+impl NativeList {
+	pub fn new(in_bits: u32, out_bits: u32, config: Bits, first: SizedFn, rest: Vec<NativeFn>, last: SizedFn) -> Self {
+		Self { in_bits, out_bits, config, first, rest, last }
+	}
+
+	fn run(&self, words: &[Bits]) -> Vec<Bits> {
+		let mid = self.rest.iter().fold((self.first)(words, self.in_bits, self.config), |w, step| step(&w, self.config));
+		(self.last)(&mid, self.out_bits, self.config)
+	}
+
+	/// Arbitrary-width eval, the `NativeList` counterpart of [`Native::eval_wide`].
+	pub fn eval_wide(&self, input: &[LogicState], output: &mut [LogicState]) {
+		debug_assert_eq!(input.len() as u32, self.in_bits);
+		debug_assert_eq!(output.len() as u32, self.out_bits);
+
+		let result = self.run(&pack_words(input));
+		unpack_words(&result, output);
+	}
+}
+
+impl CachedGate for NativeList {
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
+		if self.in_bits > 64 || self.out_bits > 32 || out.len() != 1 {
+			return false;
 		}
-	)*};
-}
-impl_wire_word!(u8, u16, u32, u64, u128);
-
-/// Escape hatch for buses wider than 128 wires; everything narrower uses one of
-/// the inline int types above instead. Not usable as a `Lut` index -- a dense
-/// table over a >128-bit input space isn't buildable, so `as_index` panics.
-#[derive(Clone, PartialEq, Eq)]
-pub struct WideWord {
-	bits: Box<[u64]>, // one bit per LogicState.is_high(); ceil(n_wires / 64) words
-}
-
-impl WireWord for WideWord {
-	fn pack(bits: &[LogicState]) -> Self {
-		let words = bits.chunks(64).map(|chunk| chunk.iter().enumerate().fold(0u64, |acc, (i, b)| acc | ((b.is_high() as u64) << i))).collect();
-		WideWord { bits: words }
-	}
-	fn unpack(self, out: &mut [LogicState]) {
-		for (i, slot) in out.iter_mut().enumerate() {
-			let word = self.bits[i / 64];
-			*slot = LogicState::from_bool((word >> (i % 64)) & 1 == 1);
-		}
-	}
-	fn as_index(&self) -> usize {
-		unreachable!("WideWord inputs are too wide for a dense Lut; use Native/NativeList instead")
-	}
-	fn to_u64(&self) -> u64 {
-		self.bits.first().copied().unwrap_or(0)
+		let result = self.run(&[input]);
+		out[0] = result.first().copied().unwrap_or(0) as u32;
+		true
 	}
 }

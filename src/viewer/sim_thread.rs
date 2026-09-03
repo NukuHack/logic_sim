@@ -461,7 +461,7 @@ mod tests {
 	#[test]
 	fn replacing_moves_the_caching_state_without_ever_leaving_the_live_sim_empty() {
 		let h = handle(true, 1);
-		h.lock().caching.combinational_chip_cache.insert("ADDER".into(), Box::new(crate::gate_op::LutGate::new(vec![vec![0]])));
+		h.lock().caching.combinational_chip_cache.insert("ADDER".into(), Box::new(crate::gate_op::Lut::new(vec![vec![0]])));
 		h.lock().caching.not_combinational_chip_cache.insert("NOT_COMB".into());
 
 		h.capture_caching_state(blank_simulator());

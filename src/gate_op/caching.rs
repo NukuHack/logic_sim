@@ -4,6 +4,7 @@
 //! is to build each such chip's truth table once and index into it afterwards instead of re-
 //! walking its subchip graph every single simulation frame.
 
+use super::eval::{CachedGate, Lut};
 use crate::pin_state::PinState;
 use crate::sim::{ChipIdx, PinIdx, Simulator};
 use std::collections::{HashMap, HashSet};
@@ -21,52 +22,17 @@ pub const MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING: u32 = 12;
 /// too, since they have no such width ceiling.
 pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
-pub trait CachedGate: std::fmt::Debug + Send + Sync {
-	/// Looks up the cached row for `input` and writes its output words into `out`. Returns
-	/// `false` if `input` has no cached row, in which case `out` is left untouched and the
-	/// caller should fall back to a real step.
-	fn eval(&self, input: u64, out: &mut [u32]) -> bool;
-}
-
-/// A combinational chip's full truth table, one row per possible input combination.
-#[derive(Debug)]
-pub struct LutGate {
-	rows: Vec<Vec<u32>>,
-}
-
-impl LutGate {
-	pub fn new(rows: Vec<Vec<u32>>) -> Self {
-		Self { rows }
-	}
-}
-
-impl CachedGate for LutGate {
-	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
-		let Some(row) = self.rows.get(input as usize) else {
-			// Defensive: shouldn't happen if the LUT's row count matches this chip's
-			// current input width, but a stale/mismatched cache entry (e.g. a live edit
-			// widened a pin) should degrade to a real step rather than panic.
-			return false;
-		};
-		let n = out.len().min(row.len());
-		out[..n].copy_from_slice(&row[..n]);
-		true
-	}
-}
-
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
 #[derive(Debug)]
 pub struct CachingState {
-	/// Keyed by chip name. Matches the original's
-	/// `Dictionary<string, uint[][]> combinationalChipCaches`, except the value
-	/// is now any [`CachedGate`] rather than being tied to the flat-LUT
-	/// representation directly.
+	/// Keyed by chip name. Replaces the original's `Dictionary<string, uint[][]> combinationalChipCaches`
 	pub combinational_chip_cache: HashMap<Arc<str>, Box<dyn CachedGate>>,
-	/// Chip names already proven non-combinational (or too big to cache), so
+	/// Chip names already proven non-combinational, so
 	/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
 	/// Same interned-`Arc<str>` sharing as [`combinational_chip_cache`].
 	pub not_combinational_chip_cache: HashSet<Arc<str>>,
+	/// same as any preference would be, just moved here for nicer access
 	pub use_caching: bool,
 }
 
@@ -220,7 +186,7 @@ pub fn reset_received_flags_on_all_pins(sim: &mut Simulator, chip: ChipIdx) {
 /// a single list, computed once.
 ///
 /// The LUT sweep in [`recalculate_chip_cache`] calls the reset between *every* row.
-/// Walking the subchip tree fresh each time -- two heap-allocated `Vec`s per chip in the tree, per row
+/// two heap-allocated `Vec`s per chip in the tree, per row
 /// turned what should be a cheap flag clear into the dominant cost of building a LUT for anything but a tiny chip.
 /// Collecting the pin list once before the loop and then just iterating over it each row keeps the exact same set of pins reset,
 /// in an allocation-free O(1)-per-row pass, instead of re-deriving the list from scratch every time.
@@ -244,17 +210,6 @@ fn reset_received_flags_fast(sim: &mut Simulator, pins: &[PinIdx]) {
 /// Mirrors `Simulator.RecalculateCachedLUTs`: recursively tries to build a Cache
 /// for `chip` and every subchip, skipping anything already resolved either way.
 /// A chip qualifies if it's custom (builtins already run at O(1) via `process_builtin_chip`)
-///
-/// Operates on `sim.caching` in place rather than taking a separate `&mut CachingState`
-/// parameter. The two used to be split apart so a caller holding `&mut Simulator` could pass
-/// both without aliasing it against itself -- but the exhaustive sweep below calls
-/// `sim.step_chip`, which can recurse back into a subchip that itself needs caching. With the
-/// cache living outside `sim` for the whole call (moved out via the caller's `mem::take`),
-/// that nested recursion saw an empty cache, silently rebuilt whatever it needed, and had that
-/// work discarded the moment this call returned and the caller's stale copy got written back
-/// over it -- the chip would then need re-caching (and re-logging) on its very next real step.
-/// Reading and writing `sim.caching` directly closes that window: every level of the recursion,
-/// including the ones step_chip triggers, sees and updates the one real cache.
 pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	// Cloned up front so the borrow doesn't outlive the mutable `sim` accesses below.
 	let name = sim.chip(chip).name.clone();
@@ -324,7 +279,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	}
 
 	log::debug!("[cache] cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
-	sim.caching.combinational_chip_cache.insert(name, Box::new(LutGate::new(cache_rows)));
+	sim.caching.combinational_chip_cache.insert(name, Box::new(Lut::new(cache_rows)));
 
 	// Restore the real input state the sweep overwrote, so the caller sees no side effects.
 	reset_received_flags_fast(sim, &all_pins);
