@@ -121,7 +121,7 @@ impl App {
 					Some(top) => format!("{} > {}", v.root_chip_name, top.name),
 					None => v.root_chip_name.clone(),
 				};
-				format!("Digital Logic Sim -- {} / {}", v.project_name, chip)
+				format!("Digital Logic Sim -- {} / {}", v.prefs.project_name, chip)
 			}
 		}
 	}

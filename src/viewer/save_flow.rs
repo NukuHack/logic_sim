@@ -173,7 +173,7 @@ fn resave_affected_parent_chips(v: &mut ViewerState, paths: &SavePaths, target_n
 		v.library.iter().filter(|d| d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(target_name))).map(|d| d.name.clone()).collect();
 
 	for parent_name in parent_names {
-		let Ok(mut pristine) = load_single_chip_from_disk(paths, &v.project_name, &parent_name) else { continue };
+		let Ok(mut pristine) = load_single_chip_from_disk(paths, &v.prefs.project_name, &parent_name) else { continue };
 		pristine.wires.retain(|w| {
 			let attaches_to_removed = |addr: crate::PinAddress| {
 				pristine
@@ -191,7 +191,7 @@ fn resave_affected_parent_chips(v: &mut ViewerState, paths: &SavePaths, target_n
 				}
 			}
 		}
-		if let Err(e) = Saver::save_chip(paths, &v.project_name, &v.library, &pristine) {
+		if let Err(e) = Saver::save_chip(paths, &v.prefs.project_name, &v.library, &pristine) {
 			log::warn!("failed to resave affected chip '{parent_name}': {e}");
 			continue;
 		}
@@ -203,7 +203,7 @@ fn resave_affected_parent_chips(v: &mut ViewerState, paths: &SavePaths, target_n
 /// no longer does -- what `UpdateAndSaveAffectedChips` diffs before
 /// scrubbing dangling wires out of parent chips.
 fn removed_boundary_pin_ids(v: &ViewerState, paths: &SavePaths, name: &str, desc: &ChipDescription) -> Vec<i32> {
-	let Ok(previous) = load_single_chip_from_disk(paths, &v.project_name, name) else { return Vec::new() };
+	let Ok(previous) = load_single_chip_from_disk(paths, &v.prefs.project_name, name) else { return Vec::new() };
 	let still_present = |id: i32| desc.input_pins.iter().chain(desc.output_pins.iter()).any(|p| p.id == id);
 	previous.input_pins.iter().chain(previous.output_pins.iter()).filter(|p| !still_present(p.id)).map(|p| p.id).collect()
 }
@@ -224,7 +224,7 @@ fn save_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option
 	let mut desc = v.library.get(&name).clone();
 	resolve_should_cache(v, &mut desc, &name);
 	v.library.get_mut(&name).cache_kind = desc.cache_kind;
-	match Saver::save_chip(paths, &v.project_name, &v.library, &desc) {
+	match Saver::save_chip(paths, &v.prefs.project_name, &v.library, &desc) {
 		Ok(()) => {
 			v.mark_saved(&name);
 			// This chip's definition just changed on disk -- any LUT built
@@ -261,7 +261,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 	new_desc.name = new_name.to_string();
 	resolve_should_cache(v, &mut new_desc, &old_name);
 
-	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
+	match Saver::save_chip(paths, &v.prefs.project_name, &v.library, &new_desc) {
 		Ok(()) => {
 			v.library.add(new_desc);
 			v.mark_saved(new_name);
@@ -275,7 +275,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 			register_chip_name_in_project(v, paths, None, new_name);
 
 			if !old_name.eq_ignore_ascii_case(new_name) {
-				match load_single_chip_from_disk(paths, &v.project_name, &old_name) {
+				match load_single_chip_from_disk(paths, &v.prefs.project_name, &old_name) {
 					Ok(pristine) => {
 						v.library.add(pristine);
 					}
@@ -303,7 +303,7 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 /// *current* name, is left untouched either way -- only the chip being
 /// overwritten at the destination name is backed up.
 fn replace_chip_with_current(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, new_name: &str) {
-	if let Err(e) = Saver::delete_chip(paths, &v.project_name, new_name, true) {
+	if let Err(e) = Saver::delete_chip(paths, &v.prefs.project_name, new_name, true) {
 		*status = Some(format!("Failed to back up existing '{new_name}': {e}"));
 		return;
 	}
@@ -324,9 +324,9 @@ fn rename_current_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Opti
 	new_desc.name = new_name.to_string();
 	resolve_should_cache(v, &mut new_desc, &old_name);
 
-	match Saver::save_chip(paths, &v.project_name, &v.library, &new_desc) {
+	match Saver::save_chip(paths, &v.prefs.project_name, &v.library, &new_desc) {
 		Ok(()) => {
-			if let Err(e) = Saver::delete_chip(paths, &v.project_name, &old_name, false) {
+			if let Err(e) = Saver::delete_chip(paths, &v.prefs.project_name, &old_name, false) {
 				log::warn!("renamed '{old_name}' to '{new_name}' but failed to remove the old file: {e}");
 			}
 			v.library.remove(&old_name);
@@ -456,7 +456,7 @@ fn discard_unsaved_changes(v: &mut ViewerState, paths: &SavePaths) {
 		v.unsaved_drafts.remove(&leaving.to_ascii_lowercase());
 		return;
 	}
-	if let Ok(pristine) = load_single_chip_from_disk(paths, &v.project_name, &leaving) {
+	if let Ok(pristine) = load_single_chip_from_disk(paths, &v.prefs.project_name, &leaving) {
 		v.library.add(pristine);
 	}
 }
@@ -477,7 +477,7 @@ pub(crate) fn active_chip_has_unsaved_changes(v: &ViewerState, paths: &SavePaths
 	// shape `Saver::save_chip` puts on disk -- so library-resolved
 	// `OutputPinColourInfo` (and bus `null`s) cancel out instead of
 	// reading as edits.
-	let saved_json = load_single_chip_from_disk(paths, &v.project_name, &name)
+	let saved_json = load_single_chip_from_disk(paths, &v.prefs.project_name, &name)
 		.ok()
 		.and_then(|pristine| crate::json::serialize_chip_description_for_save(&pristine, &v.library).ok());
 	let Some(saved_json) = saved_json else {

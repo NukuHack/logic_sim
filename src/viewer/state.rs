@@ -206,7 +206,6 @@ pub(crate) struct DeleteDragSweep {
 /// so [`crate::viewer::app::App`] can hold either this or the menu depending on `Screen`.
 #[derive(Default)]
 pub(crate) struct ViewerState {
-	pub(crate) project_name: String,
 	pub(crate) library: ChipLibrary,
 	pub(crate) root_chip_name: String,
 	/// The simulated world, stepped on its own background thread (see
@@ -425,7 +424,6 @@ impl ViewerState {
 		let root_desc = library.get_arc(&root_chip_name);
 		let sim = Simulator::build(&root_desc, &library);
 		let mut v = Self {
-			project_name: project_name.to_string(),
 			library,
 			sim: SimHandle::new(sim, std::sync::Arc::clone(&audio)),
 			root_chip_name,

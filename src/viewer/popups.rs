@@ -48,7 +48,7 @@ pub(crate) fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<Stri
 	match v.naming_purpose {
 		NamingPurpose::RenameProject => {
 			if !trimmed.is_empty() {
-				v.project_name = trimmed;
+				v.prefs.project_name = trimmed;
 			}
 		}
 		NamingPurpose::LabelComponent(id) => {
