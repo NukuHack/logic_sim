@@ -335,13 +335,13 @@ pub(crate) fn create_render_state(window: std::sync::Arc<winit::window::Window>,
 /// where its log files go) and the save paths, then runs the event loop.
 pub fn run() -> Result<(), winit::error::EventLoopError> {
 	let data_dir = std::env::args().nth(1).map(std::path::PathBuf::from).unwrap_or_else(SavePaths::unity_persistent_data_dir);
+	SavePaths::ensure_directory_exists(&data_dir).ok();
 
 	// Kept alive for the whole run on purpose: dropping the handle shuts
 	// the logger (and its log file) down.
 	let _logger = crate::logging::init(&data_dir);
 
 	log::debug!("using save data directory: {}", data_dir.display());
-	SavePaths::ensure_directory_exists(&data_dir).ok();
 
 	let mut app = App::new(SavePaths::new(data_dir));
 	app.menu.refresh_projects();

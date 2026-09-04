@@ -39,7 +39,7 @@ fn our_code_logs_at_debug_while_third_parties_stay_at_warn() {
 fn init_writes_a_log_file_next_to_the_save_data() {
 	let data_dir = scratch("logging");
 	let logger = init(&data_dir).expect("the logger installs into a writable directory");
-	log::info!("logging smoke test marker");
+	log::warn!("logging smoke test marker");
 	// Flush, then drop: closing the handle is what makes the file readable
 	// as a finished log rather than an open one.
 	logger.flush();
@@ -56,7 +56,7 @@ fn init_writes_a_log_file_next_to_the_save_data() {
 
 	let contents = std::fs::read_to_string(&files[0]).expect("the log file is readable");
 	assert!(contents.contains("logging smoke test marker"), "log file did not capture the record: {contents}");
-	assert!(contents.contains("INFO"), "log file records the level: {contents}");
+	assert!(contents.contains("WARN"), "log file records the level: {contents}");
 
 	let _ = std::fs::remove_dir_all(&data_dir);
 }
