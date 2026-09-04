@@ -435,11 +435,11 @@ impl Simulator {
 			// Performance optimization: Avoid heap allocation on every cached gate eval for chips with <= 32 output pins.
 			// Fast stack array for typical gates (1-32 outputs), falling back to Vec for rare wider chips.
 			let mut stack_out = [0u32; 32];
-			let mut heap_out: Vec<u32> = Vec::new();
+			let mut heap_out: Vec<u32>;
 			let out: &mut [u32] = if num_outputs <= 32 {
 				&mut stack_out[..num_outputs]
 			} else {
-				heap_out.resize(num_outputs, 0u32);
+				heap_out = vec![0u32; num_outputs];
 				heap_out.as_mut_slice()
 			};
 			if !gate.eval(input, out) {
