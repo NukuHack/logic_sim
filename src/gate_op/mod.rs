@@ -25,7 +25,7 @@ pub use caching::{
 	calculate_num_input_bits, is_combinational, recalculate_chip_cache, reset_received_flags_on_all_pins, CachingState,
 	MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING,
 };
-pub use eval::{Bits, CachedGate, Lut, Native, NativeList};
+pub use eval::{Bits, CachedGate, Lut, Native, NativeList, NativeMulti, NativeSplit};
 pub use recognize::{recognize, registry, Candidate};
 
 /// Largest input width a [`Lut`] table can be built at all: `1u64 << in_bits` (the row count)

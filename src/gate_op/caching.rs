@@ -260,6 +260,23 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	// produce any real audio; a scratch, throwaway `SimAudio` is all a
 	// `step_chip` call needs syntactically.
 	let mut scratch_audio = crate::audio::SimAudio::new();
+
+	// `step_chip`'s single reverse pass over `sub_chips` only produces a correct result once
+	// the subchips are sorted into "reverse of desired visitation" (i.e. topological) order --
+	// normally established lazily, the first time `Simulator` runs a real
+	// `run_simulation_step` (`needs_order_pass` / `step_chip_reorder`). This sweep can run
+	// before that's ever happened (e.g. right after `Simulator::build`, as these tests do),
+	// against subchips still sitting in raw load order -- so a lone `step_chip` call can
+	// evaluate a subchip before the subchip(s) feeding it have propagated their outputs.
+	// `step_chip_reorder` performs one real, dependency-driven evaluation pass (a subchip only
+	// becomes eligible once every one of its inputs has actually been received) and permanently
+	// swaps `sub_chips` into the order that produced, exactly like real simulation's first
+	// frame -- so running it once, up front, makes every subsequent plain `step_chip` call
+	// below correct in a single pass, recursively through any nested custom subchips too (see
+	// its own doc comment). Current input values don't matter here: the order this settles on
+	// depends only on the wiring graph, not on what bits happen to be flowing through it yet.
+	sim.step_chip_reorder(chip, &mut scratch_audio);
+
 	for input in 0..num_possible_inputs {
 		reset_received_flags_fast(sim, &all_pins);
 
@@ -274,12 +291,142 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		}
 		sim.step_chip(chip, &mut scratch_audio);
 
-		let outputs: Vec<u32> = output_pins.iter().map(|&p| sim.pin(p).state.raw() as u32).collect();
+		// `bit_states()`, not `raw()`: `raw()` also carries the tristate-flags byte, whose
+		// bits for wires past this pin's actual width are left over from that pin's initial
+		// `disconnected_with_width` state (all-ones) rather than meaningful data. `recognize`
+		// (and `Native`'s formulas) compare/produce plain 0/1-per-wire values, so folding that
+		// stale garbage into the row here would make an otherwise-matching candidate (e.g.
+		// `OR2`) fail every comparison and force a fallback to a stored `Lut` full of the same
+		// polluted values. `process_cached_chip` already mirrors this on the input side (see
+		// its `state.bit_states()` build of `input`), so this keeps row capture consistent
+		// with both how rows get compared and how they get replayed.
+		let outputs: Vec<u32> = output_pins.iter().map(|&p| sim.pin(p).state.bit_states() as u32).collect();
 		cache_rows.push(outputs);
 	}
 
+	// A plain `Native`'s `eval` only ever writes a single output word (see `CachedGate::eval`
+	// on `Native`), so a chip with more than one output pin can't be a bare `Native`. Two
+	// richer shapes get tried first, in order, before falling all the way back to a stored
+	// `Lut`:
+	//
+	//  1. `NativeSplit` -- every output pin's bits packed together into one combined word
+	//     (same low-bit-first convention the `input` loop above uses for input pins) and
+	//     recognized as a *single* pattern, e.g. an adder's N-bit sum pin plus a separate
+	//     1-bit carry-out pin as one `ADDER_N_COU`. Tried first since it catches cross-pin
+	//     patterns `NativeMulti` fundamentally can't (no candidate produces a lone carry bit
+	//     on its own).
+	//  2. `NativeMulti` -- each output pin recognized independently, e.g. `OUT1 = NOT(IN)` /
+	//     `OUT2 = BUFFER(IN)` as two separate pins. Catches combinations `NativeSplit` can't
+	//     (unrelated per-pin patterns with no shared combined-word shape), so it's worth
+	//     trying even after `NativeSplit` fails.
+	//
+	// Both need `cache_rows` itself, so they're computed before `cache_rows` gets consumed
+	// into the whole-chip `Lut` below (the ultimate fallback if neither matches).
+	let flattened_native: Option<super::eval::NativeSplit> = 'flatten: {
+		if output_pins.len() <= 1 {
+			break 'flatten None;
+		}
+		let mut out_layout = Vec::with_capacity(output_pins.len());
+		let mut total_out_bits = 0u32;
+		for &p in &output_pins {
+			let w = sim.pin(p).state.len();
+			out_layout.push((total_out_bits, w));
+			total_out_bits += w;
+		}
+		// `Lut`/`recognize` only ever compare a single packed `u32` field per row (see
+		// `MAX_LUT_OUTPUT_BITS`), so a combined word wider than that can't go through the
+		// same recognition path -- not worth trying to flatten.
+		if total_out_bits == 0 || total_out_bits > super::MAX_LUT_OUTPUT_BITS {
+			break 'flatten None;
+		}
+		let combined_rows: Vec<Vec<u32>> = cache_rows
+			.iter()
+			.map(|row| {
+				let mut combined: u64 = 0;
+				for (i, &(offset, _)) in out_layout.iter().enumerate() {
+					combined |= (row[i] as u64) << offset;
+				}
+				vec![combined as u32]
+			})
+			.collect();
+		let combined_lut = Lut::new(combined_rows);
+		match super::recognize::recognize_formula(num_input_bits, total_out_bits, &combined_lut) {
+			Some((config, formula)) => {
+				let native = super::eval::Native::new(num_input_bits, total_out_bits, config, formula);
+				Some(super::eval::NativeSplit::new(native, out_layout))
+			}
+			None => None,
+		}
+	};
+
+	let multi_pin_natives: Option<Vec<super::eval::Native>> = if flattened_native.is_some() || output_pins.len() <= 1 {
+		// Either already matched above, or there's at most one pin (handled by the plain
+		// `Native` path below) -- no need to also try the per-pin route.
+		None
+	} else {
+		let mut natives = Vec::with_capacity(output_pins.len());
+		'pins: for (pin_idx, &out_pin) in output_pins.iter().enumerate() {
+			let out_bits = sim.pin(out_pin).state.len();
+			let sub_rows: Vec<Vec<u32>> = cache_rows.iter().map(|row| vec![row[pin_idx]]).collect();
+			let sub_lut = Lut::new(sub_rows);
+			match super::recognize::recognize_formula(num_input_bits, out_bits, &sub_lut) {
+				Some((config, formula)) => natives.push(super::eval::Native::new(num_input_bits, out_bits, config, formula)),
+				None => {
+					natives.clear();
+					break 'pins;
+				}
+			}
+		}
+		if natives.len() == output_pins.len() {
+			Some(natives)
+		} else {
+			None
+		}
+	};
+
+	let lut = Lut::new(cache_rows);
+
+	let cached_gate: Box<dyn CachedGate> = match output_pins.len() {
+		1 => {
+			let out_pin = output_pins[0];
+			let out_bits = sim.pin(out_pin).state.len();
+			match super::recognize::recognize(num_input_bits, out_bits, &lut) {
+				Some(native) => {
+					log::debug!("[cache] '{name}' recognized as a known gate pattern -- using Native instead of a {num_possible_inputs}-row Lut");
+					native
+				}
+				None => {
+					log::debug!("[cache] '{name}' matched no known gate pattern -- storing the {num_possible_inputs}-row Lut as-is");
+					Box::new(lut)
+				}
+			}
+		}
+		n if n > 1 => {
+			if let Some(split) = flattened_native {
+				log::debug!(
+					"[cache] '{name}' has {n} output pins, recognized as a single pattern across their combined bits -- using NativeSplit instead of a {num_possible_inputs}-row Lut"
+				);
+				Box::new(split)
+			} else if let Some(natives) = multi_pin_natives {
+				log::debug!(
+					"[cache] '{name}' has {n} output pins, every one individually recognized as a known gate pattern -- using NativeMulti instead of a {num_possible_inputs}-row Lut"
+				);
+				Box::new(super::eval::NativeMulti::new(natives))
+			} else {
+				log::debug!(
+					"[cache] '{name}' has {n} output pins and matched neither a combined nor a per-pin gate pattern -- storing the {num_possible_inputs}-row Lut as-is"
+				);
+				Box::new(lut)
+			}
+		}
+		_ => {
+			log::debug!("[cache] '{name}' has no output pins -- storing the (degenerate) {num_possible_inputs}-row Lut as-is");
+			Box::new(lut)
+		}
+	};
+
 	log::debug!("[cache] cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
-	sim.caching.combinational_chip_cache.insert(name, Box::new(Lut::new(cache_rows)));
+	sim.caching.combinational_chip_cache.insert(name, cached_gate);
 
 	// Restore the real input state the sweep overwrote, so the caller sees no side effects.
 	reset_received_flags_fast(sim, &all_pins);

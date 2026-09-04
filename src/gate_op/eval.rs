@@ -111,6 +111,17 @@ impl Native {
 		Self { in_bits, out_bits, config, f }
 	}
 
+	/// Runs this `Native`'s formula against a packed `u64` input and hands back the raw
+	/// combined output word (low `out_bits` bits meaningful, no per-pin splitting and no
+	/// truncation to a single `u32`) -- the building block [`NativeSplit`] needs to get at
+	/// every output pin's bits before slicing them back apart. Unlike [`CachedGate::eval`]
+	/// (this type's narrower `u64`-in/single-`u32`-out bridge), this doesn't require or care
+	/// about `out_bits <= 32`; it's `NativeSplit::eval` that caps the *combined* width at 32
+	/// (see its doc comment), not this.
+	fn eval_combined(&self, input: u64) -> u64 {
+		(self.f)(&[input], self.in_bits, self.out_bits, self.config).first().copied().unwrap_or(0)
+	}
+
 	/// Arbitrary-width eval: packs/unpacks through `LogicState` slices directly instead of
 	/// going through [`CachedGate::eval`]'s `u64`/single-`u32` bridge, so a gate wider than 64
 	/// input bits or 32 output bits (impossible for any `Lut`, and past what today's only
@@ -183,6 +194,93 @@ impl CachedGate for NativeList {
 		}
 		let result = self.run(&[input]);
 		out[0] = result.first().copied().unwrap_or(0) as u32;
+		true
+	}
+}
+
+/// A chip with more than one output *pin*, each pin independently recognized as its own
+/// closed-form [`Native`] against the same shared input -- e.g. a chip with `OUT1 = NOT(IN)`
+/// and `OUT2 = BUFFER(IN)` as two separate 1-bit pins becomes two `Native`s (`NOT`, `BUFFER`)
+/// bundled here, rather than one `Lut` row per input combination.
+///
+/// `Native::eval` itself only ever fills a single `out` word (see its `CachedGate` impl), which
+/// is exactly why a plain `Native` can't represent a multi-pin chip on its own -- `NativeMulti`
+/// is the thin fan-out on top: run every entry's `eval` against the same `input`, one call per
+/// output pin, writing into that pin's own slot of the caller's `out` slice. Still O(1) per
+/// pin and stores no table, so a wide multi-pin chip (bus splitters composed with recognizable
+/// per-pin logic, etc) gets the same win a single-output `Native` already does.
+///
+/// Building one only makes sense when *every* output pin is individually recognizable --
+/// [`super::caching::recalculate_chip_cache`] falls back to a plain multi-column `Lut` the
+/// moment any single pin doesn't match a known pattern, since a partial `NativeMulti` (some
+/// pins closed-form, one pin only representable as a table) isn't a shape this type can hold.
+#[derive(Debug)]
+pub struct NativeMulti {
+	/// One entry per output pin, in the same order as the chip's `output_pins`.
+	entries: Vec<Native>,
+}
+
+impl NativeMulti {
+	pub fn new(entries: Vec<Native>) -> Self {
+		Self { entries }
+	}
+}
+
+impl CachedGate for NativeMulti {
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
+		if out.len() != self.entries.len() {
+			return false;
+		}
+		for (slot, native) in out.iter_mut().zip(self.entries.iter()) {
+			// Each `Native` only ever wants/fills a single-element `out` slice -- see its own
+			// `CachedGate::eval` -- so hand it a length-1 scratch slot rather than a sub-slice
+			// of the caller's buffer.
+			let mut single = [0u32];
+			if !native.eval(input, &mut single) {
+				return false;
+			}
+			*slot = single[0];
+		}
+		true
+	}
+}
+
+/// A single [`Native`] recognized against every output pin's bits packed together into one
+/// combined word -- pin 0's bits at the low end, then each subsequent pin's bits stacked above
+/// it, the same low-bit-first convention [`super::caching::recalculate_chip_cache`] already
+/// uses to pack multiple *input* pins into one word (see its `input |= ... << shift` loop).
+/// This is what lets something like an adder's N-bit sum pin plus a separate 1-bit carry-out
+/// pin still collapse to one `ADDER_N_COU` `Native`: read as two independent pins neither the
+/// sum alone (no carry info) nor the carry alone (no single-candidate shape) matches anything
+/// in the registry, but read as one `(n+1)`-bit combined word, it's exactly `ADDER_N_COU`'s
+/// output shape.
+///
+/// `eval` runs the wrapped `Native` once and slices the result back apart per `out_layout`, so
+/// this is exactly as O(1) as a plain `Native` -- one formula call regardless of how many
+/// output pins it's feeding.
+#[derive(Debug)]
+pub struct NativeSplit {
+	native: Native,
+	/// Each output pin's `(bit offset into the combined word, width)`, in output-pin order.
+	out_layout: Vec<(u32, u32)>,
+}
+
+impl NativeSplit {
+	pub fn new(native: Native, out_layout: Vec<(u32, u32)>) -> Self {
+		Self { native, out_layout }
+	}
+}
+
+impl CachedGate for NativeSplit {
+	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
+		if out.len() != self.out_layout.len() {
+			return false;
+		}
+		let combined = self.native.eval_combined(input);
+		for (slot, &(offset, width)) in out.iter_mut().zip(self.out_layout.iter()) {
+			let mask: u64 = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+			*slot = ((combined >> offset) & mask) as u32;
+		}
 		true
 	}
 }

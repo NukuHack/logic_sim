@@ -450,7 +450,7 @@ impl Simulator {
 	/// Like `step_chip`, but also determines (and records) a good traversal
 	/// order for the subchips as it goes, swapping them into place. Needed
 	/// once after any structural edit to the graph.
-	fn step_chip_reorder(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
+	pub(crate) fn step_chip_reorder(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
 		self.propagate_inputs(chip_idx);
 
 		let mut num_remaining = self.chips[chip_idx.0].sub_chips.len();
