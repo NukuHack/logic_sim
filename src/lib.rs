@@ -7,6 +7,7 @@ pub mod builtins;
 pub mod description;
 pub mod gate_op;
 pub mod json;
+pub mod logging;
 pub mod pin_state;
 pub mod render;
 pub mod save_system;

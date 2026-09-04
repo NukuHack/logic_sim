@@ -263,32 +263,38 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 /// the request: audio then just behaves as before.
 #[cfg(target_os = "linux")]
 fn promote_worker_to_realtime() {
-	std::thread::spawn(|| {
-		const THREAD_NAME: &str = "cpal_alsa_out";
-		// The worker was spawned during build_output_stream/play(), but give
-		// the scheduler a moment rather than failing on a naming race.
-		let tid = (0..10).find_map(|_| {
-			std::thread::sleep(std::time::Duration::from_millis(20));
-			read_thread_ids().into_iter().find(|(_, comm)| comm == THREAD_NAME).map(|(tid, _)| tid)
-		});
-		let Some(tid) = tid else { return };
+	// Named so the dbus round-trips it logs are attributable in the log file.
+	let spawned = std::thread::Builder::new()
+		.name("DLS_AudioRtKit".to_string())
+		.spawn(|| {
+			const THREAD_NAME: &str = "cpal_alsa_out";
+			// The worker was spawned during build_output_stream/play(), but give
+			// the scheduler a moment rather than failing on a naming race.
+			let tid = (0..10).find_map(|_| {
+				std::thread::sleep(std::time::Duration::from_millis(20));
+				read_thread_ids().into_iter().find(|(_, comm)| comm == THREAD_NAME).map(|(tid, _)| tid)
+			});
+			let Some(tid) = tid else { return };
 
-		let Ok(connection) = pollster::block_on(zbus::connection::Connection::system()) else { return };
-		let service = "org.freedesktop.RealtimeKit1";
-		let path = "/org/freedesktop/RealtimeKit1";
-		let interface = "org.freedesktop.RealtimeKit1";
-		let pid = std::process::id() as u64;
-		// rtkit's allowed ceiling varies by distro config; walk down until one sticks.
-		for priority in [20u32, 15, 10, 5] {
-			let call: Result<(), _> =
-				pollster::block_on(connection.call_method(Some(service), path, Some(interface), "MakeThreadRealtimeWithPID", &(pid, tid, priority)))
-					.map(|_: zbus::Message| ());
-			if call.is_ok() {
-				log::debug!("audio: worker thread promoted to SCHED_FIFO {priority} via rtkit");
-				return;
+			let Ok(connection) = pollster::block_on(zbus::connection::Connection::system()) else { return };
+			let service = "org.freedesktop.RealtimeKit1";
+			let path = "/org/freedesktop/RealtimeKit1";
+			let interface = "org.freedesktop.RealtimeKit1";
+			let pid = std::process::id() as u64;
+			// rtkit's allowed ceiling varies by distro config; walk down until one sticks.
+			for priority in [20u32, 15, 10, 5] {
+				let call: Result<(), _> =
+					pollster::block_on(connection.call_method(Some(service), path, Some(interface), "MakeThreadRealtimeWithPID", &(pid, tid, priority)))
+						.map(|_: zbus::Message| ());
+				if call.is_ok() {
+					log::debug!("audio: worker thread promoted to SCHED_FIFO {priority} via rtkit");
+					return;
+				}
 			}
-		}
-	});
+		});
+	if let Err(e) = spawned {
+		log::debug!("audio: could not spawn the rtkit helper thread: {e}");
+	}
 }
 
 /// Lists `(tid, comm)` for every thread of this process (`/proc/self/task`).
