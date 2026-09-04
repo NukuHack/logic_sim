@@ -27,6 +27,9 @@ impl Saver {
 	/// `description` before writing it out -- all three, every save,
 	/// exactly like the original.
 	pub fn save_project_description(paths: &SavePaths, description: &mut ProjectDescription) -> io::Result<()> {
+		if !crate::save_system::util::valid_file_name(&description.project_name) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project name"));
+		}
 		description.last_save_time = now_iso8601();
 		description.dls_version_last_saved = DLS_VERSION.to_string();
 		description.dls_version_earliest_compatible = crate::save_system::version::DLS_VERSION_EARLIEST_COMPATIBLE.to_string();
@@ -37,6 +40,9 @@ impl Saver {
 
 	/// Mirrors `Saver.RenameProject`.
 	pub fn rename_project(paths: &SavePaths, name_old: &str, name_new: &str) -> io::Result<()> {
+		if !crate::save_system::util::valid_file_name(name_old) || !crate::save_system::util::valid_file_name(name_new) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project name"));
+		}
 		let mut desc = Loader::load_project_description(paths, name_old)?;
 		desc.project_name = name_new.to_string();
 		std::fs::rename(paths.project_path(name_old), paths.project_path(name_new))?;
@@ -45,6 +51,9 @@ impl Saver {
 
 	/// Mirrors `Saver.DuplicateProject`.
 	pub fn duplicate_project(paths: &SavePaths, name_original: &str, name_duplicate: &str) -> io::Result<()> {
+		if !crate::save_system::util::valid_file_name(name_original) || !crate::save_system::util::valid_file_name(name_duplicate) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project name"));
+		}
 		copy_directory(&paths.project_path(name_original), &paths.project_path(name_duplicate), true)?;
 		let mut desc_new = Loader::load_project_description(paths, name_duplicate)?;
 		desc_new.project_name = name_duplicate.to_string();
@@ -57,6 +66,9 @@ impl Saver {
 	/// shape (per-output-pin entries; `null` for buses -- see
 	/// `json::serialize_chip_description_for_save`).
 	pub fn save_chip(paths: &SavePaths, project_name: &str, library: &ChipLibrary, chip_description: &ChipDescription) -> io::Result<()> {
+		if !crate::save_system::util::valid_file_name(project_name) || !crate::save_system::util::valid_file_name(&chip_description.name) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project or chip name"));
+		}
 		let data = serialize_chip_description_for_save(chip_description, library).map_err(json_err)?;
 		write_to_file(&data, &chip_file_path(paths, project_name, &chip_description.name))
 	}
@@ -64,6 +76,9 @@ impl Saver {
 	/// Mirrors `Saver.DeleteChip`: deletes the chip's save file, optionally
 	/// keeping a backup copy in `<project>/Deleted Chips/`.
 	pub fn delete_chip(paths: &SavePaths, project_name: &str, chip_name: &str, backup_in_deleted_folder: bool) -> io::Result<()> {
+		if !crate::save_system::util::valid_file_name(project_name) || !crate::save_system::util::valid_file_name(chip_name) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project or chip name"));
+		}
 		let file_path = chip_file_path(paths, project_name, chip_name);
 
 		if backup_in_deleted_folder {
@@ -78,6 +93,9 @@ impl Saver {
 
 	/// Mirrors `Saver.DeleteProject`.
 	pub fn delete_project(paths: &SavePaths, project_name: &str, backup_in_deleted_folder: bool) -> io::Result<()> {
+		if !crate::save_system::util::valid_file_name(project_name) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project name"));
+		}
 		let project_path = paths.project_path(project_name);
 
 		if backup_in_deleted_folder {

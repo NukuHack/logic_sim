@@ -32,6 +32,9 @@ impl Loader {
 	/// Mirrors `Loader.LoadProjectDescription`. Errors if no project
 	/// description file exists at the expected path.
 	pub fn load_project_description(paths: &SavePaths, project_name: &str) -> io::Result<ProjectDescription> {
+		if !crate::save_system::util::valid_file_name(project_name) {
+			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project name"));
+		}
 		let path = paths.project_description_path(project_name);
 		let text = std::fs::read_to_string(&path)
 			.map_err(|e| io::Error::new(e.kind(), format!("No project description found at {}: {e}", path.display())))?;
@@ -93,6 +96,10 @@ impl Loader {
 
 		let mut custom_chips: Vec<ChipDescription> = Vec::with_capacity(description.all_custom_chip_names.len());
 		for chip_name in &description.all_custom_chip_names {
+			// Skip invalid chip names to prevent path traversal when loading custom chips.
+			if !crate::save_system::util::valid_file_name(chip_name) {
+				continue;
+			}
 			let chip_path = chips_dir.join(format!("{chip_name}.json"));
 			let text = std::fs::read_to_string(&chip_path)?;
 			let chip_desc = crate::json::parse_chip_description(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;

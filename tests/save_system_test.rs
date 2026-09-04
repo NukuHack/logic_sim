@@ -699,3 +699,67 @@ fn missing_fullscreen_mode_field_defaults_to_fullscreen_window_not_zero() {
 	let parsed = parse_app_settings(json).unwrap();
 	assert_eq!(parsed.fullscreen_mode, FullScreenMode::FullScreenWindow);
 }
+
+#[test]
+fn loader_rejects_invalid_project_name() {
+	let root = temp_dir("loader_invalid_project");
+	let paths = SavePaths::new(&root);
+
+	for invalid_name in ["../traversal", "bad/name", "bad\\name", "con", ""] {
+		let res = Loader::load_project_description(&paths, invalid_name);
+		assert!(res.is_err(), "expected error for project name {invalid_name:?}");
+		assert_eq!(res.unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+	}
+
+	std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn loader_skips_path_traversal_chip_names() {
+	let root = temp_dir("loader_traversal_chips");
+	let paths = SavePaths::new(&root);
+
+	SavePaths::ensure_directory_exists(&paths.chips_path("P")).unwrap();
+	let mut valid_chip = ChipDescription::new("VALID", ChipType::Custom);
+	valid_chip.input_pins.push(logic_sim::description::PinDescription::new("A", 0, logic_sim::description::PinBitCount::Bit1));
+	Saver::save_chip(&paths, "P", &ChipLibrary::new(), &valid_chip).unwrap();
+
+	let mut desc = ProjectDescription {
+		project_name: "P".to_string(),
+		all_custom_chip_names: vec!["../../etc/passwd".to_string(), "../secret".to_string(), "VALID".to_string()],
+		..Default::default()
+	};
+	Saver::save_project_description(&paths, &mut desc).unwrap();
+
+	let project = Loader::load_project(&paths, "P").unwrap();
+	assert!(project.chip_library.try_get("valid").is_some());
+	assert!(project.chip_library.try_get("../../etc/passwd").is_none());
+	assert!(project.chip_library.try_get("../secret").is_none());
+
+	std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn saver_rejects_invalid_project_or_chip_names() {
+	let root = temp_dir("saver_invalid_names");
+	let paths = SavePaths::new(&root);
+	let lib = ChipLibrary::new();
+	let chip = ChipDescription::new("VALID", ChipType::Custom);
+	let invalid_chip = ChipDescription::new("../invalid", ChipType::Custom);
+
+	assert_eq!(Saver::save_chip(&paths, "../P", &lib, &chip).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+	assert_eq!(Saver::save_chip(&paths, "P", &lib, &invalid_chip).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+
+	assert_eq!(Saver::delete_chip(&paths, "../P", "VALID", false).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+	assert_eq!(Saver::delete_chip(&paths, "P", "../VALID", false).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+
+	assert_eq!(Saver::rename_project(&paths, "../Old", "New").unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+	assert_eq!(Saver::rename_project(&paths, "Old", "../New").unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+
+	assert_eq!(Saver::duplicate_project(&paths, "../Orig", "Copy").unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+	assert_eq!(Saver::duplicate_project(&paths, "Orig", "../Copy").unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+
+	assert_eq!(Saver::delete_project(&paths, "../P", false).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+
+	std::fs::remove_dir_all(&root).ok();
+}
