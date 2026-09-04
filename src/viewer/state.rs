@@ -434,10 +434,7 @@ impl ViewerState {
 			last_cursor: Vec2::ZERO,
 			delete_drag: None,
 			camera_fitted: false,
-			prefs: ProjectDescription {
-				project_name: project_name.to_string(),
-				..ProjectDescription::default()
-			},
+			prefs: ProjectDescription { project_name: project_name.to_string(), ..ProjectDescription::default() },
 			unsaved_drafts: std::collections::HashSet::new(),
 			cache_toggle_touched: std::collections::HashSet::new(),
 			sim_pacing: SimPacing::default(),
