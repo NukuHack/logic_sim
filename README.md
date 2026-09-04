@@ -66,9 +66,22 @@ Layout:
 Projects/<name>/ProjectDescription.json   # which chips a project contains & their wiring entry points
 Projects/<name>/Chips/*.json              # saved custom chip descriptions
 AppSettings.json                          # window/editor preferences
+Logs/logic_sim_rCURRENT.log               # the run's log file (rotated, 4 older ones kept)
 ```
 
 Projects stamped `DLSVersion >= 2.0.0` can be opened. Chips last saved by versions at or before 2.1.4 are migrated automatically on load (the pre-2.1.5 ORANGE palette-index shift and default LED colour data), and every save is re-stamped with the current version, `2.1.6`.
+
+## Logging
+
+Logs go to the terminal *and* to a rotating log file in `<save data>/Logs/` — the run being written is `logic_sim_rCURRENT.log`, with up to four older ones kept. A launch from a desktop icon (no terminal attached) therefore still leaves a trail.
+
+Levels are split by ownership: our own code logs at **debug**, every third-party crate (wgpu, winit, zbus, cpal, …) is held at **warn**, since their info/debug output fires every frame and buries what the app itself says. `RUST_LOG` replaces that default wholesale:
+
+```sh
+RUST_LOG=trace cargo run                  # everything, wgpu internals included
+RUST_LOG=logic_sim=info cargo run         # only our own info and above
+RUST_LOG=warn,logic_sim=debug cargo run   # the default, spelled out
+```
 
 ## Contributing
 
