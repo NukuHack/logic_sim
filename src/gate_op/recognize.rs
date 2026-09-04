@@ -249,6 +249,48 @@ pub fn registry() -> &'static [Candidate] {
 					bitvec::truncate(&sum, o)
 				},
 			},
+			// ADDER_N (with carry-in, without carry-out) -- cin packed as the *first* input
+			// pin (bit 0) instead of the last. The candidates above assume a chip's designer
+			// wired cin as the final input pin (`field(w, 2n, 1)`); plenty of real adders wire
+			// it first instead (`cin, a, b`), which is a different bit-packing of the exact same
+			// row-order sweep and therefore needs its own candidate to be recognized at all.
+			Candidate {
+				name: "ADDER_N_CIN_FIRST",
+				config: 1 << 2, // CFG_HAS_CIN | CFG_CIN_FIRST
+				applicable: |i, o, _| {
+					let operand_bits = i.wrapping_sub(1);
+					if operand_bits < 2 || operand_bits % 2 != 0 {
+						return false;
+					}
+					let n = operand_bits / 2;
+					o == n
+				},
+				formula: |w, i, _, _| {
+					let operand_bits = i - 1;
+					let n = operand_bits / 2;
+					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 1, n), &bitvec::field(w, 1 + n, n)), &bitvec::field(w, 0, 1));
+					bitvec::truncate(&sum, n)
+				},
+			},
+			// ADDER_N (with carry-in and carry-out) -- cin first, mirrors ADDER_N_CIN_FIRST.
+			Candidate {
+				name: "ADDER_N_CIN_COU_FIRST",
+				config: (1 << 1) | (1 << 2), // CFG_HAS_COUT | CFG_CIN_FIRST
+				applicable: |i, o, _| {
+					let operand_bits = i.wrapping_sub(1);
+					if operand_bits < 2 || operand_bits % 2 != 0 {
+						return false;
+					}
+					let n = operand_bits / 2;
+					o == n + 1
+				},
+				formula: |w, i, o, _| {
+					let operand_bits = i - 1;
+					let n = operand_bits / 2;
+					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 1, n), &bitvec::field(w, 1 + n, n)), &bitvec::field(w, 0, 1));
+					bitvec::truncate(&sum, o)
+				},
+			},
 		]
 	})
 }
