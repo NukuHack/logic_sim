@@ -410,7 +410,9 @@ impl Simulator {
 	/// can't be live at once. That let the old version end the cache borrow early by cloning
 	/// the row (and the input/output pin lists) before writing
 	pub(crate) fn process_cached_chip(&mut self, chip_idx: ChipIdx) -> bool {
-		let name = Arc::clone(&self.chips[chip_idx.0].name);
+		// Performance optimization: Avoid Arc refcount increment/decrement on every cached gate eval
+		// by borrowing name directly from the chip arena.
+		let name = &self.chips[chip_idx.0].name[..];
 
 		let num_inputs = self.chips[chip_idx.0].input_pins.len();
 		let mut input: u64 = 0;
@@ -427,21 +429,26 @@ impl Simulator {
 
 		let num_outputs = self.chips[chip_idx.0].output_pins.len();
 		{
-			let Some(gate) = self.caching.combinational_chip_cache.get(name.as_ref()) else {
+			let Some(gate) = self.caching.combinational_chip_cache.get(name) else {
 				return false;
 			};
-			// Reused scratch buffer would need to live on `self`, which `eval`'s
-			// `&self.caching` borrow already prevents mutably touching -- `num_outputs`
-			// is small enough (a chip's output-pin count) that this allocation isn't
-			// worth threading storage through the trait to avoid.
-			let mut out = vec![0u32; num_outputs];
-			if !gate.eval(input, &mut out) {
+			// Performance optimization: Avoid heap allocation on every cached gate eval for chips with <= 32 output pins.
+			// Fast stack array for typical gates (1-32 outputs), falling back to Vec for rare wider chips.
+			let mut stack_out = [0u32; 32];
+			let mut heap_out: Vec<u32> = Vec::new();
+			let out: &mut [u32] = if num_outputs <= 32 {
+				&mut stack_out[..num_outputs]
+			} else {
+				heap_out.resize(num_outputs, 0u32);
+				heap_out.as_mut_slice()
+			};
+			if !gate.eval(input, out) {
 				return false;
 			}
-			for (i, data) in out.iter().enumerate() {
+			for (i, &data) in out.iter().enumerate() {
 				let p = self.chips[chip_idx.0].output_pins[i];
 				let width = self.pins[p.0].state.width();
-				self.pins[p.0].state = PinState::from_raw_with_width(*data as u16, width);
+				self.pins[p.0].state = PinState::from_raw_with_width(data as u16, width);
 			}
 		}
 		true
