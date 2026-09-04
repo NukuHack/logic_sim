@@ -3,8 +3,6 @@ TODO LIST :
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 
-make everything inside costumize a dragging stuff, so the displays pozition and the resize drag, not click then click again (ofc at the first time when the user clicks if on the left sidebar it should stay at cursor until the user "places" - clicks it somewhere)
-
 Flat output buffer: cache_rows: Vec<Vec<u32>> does one heap allocation per row (many small allocs).
 	Switching to a single preallocated Vec<u32> with a fixed stride (num_outputs per row) would cut that too
 	I left this alone since it touches process_cached_chip, save_flow.rs, and sim_thread.rs, which is a big blast radius.
