@@ -50,6 +50,9 @@ pub(crate) fn save_chip_mode(v: &ViewerState, typed: &str) -> SaveChipMode {
 		SaveChipMode::Save
 	} else if v.library.try_get(typed).is_some() {
 		SaveChipMode::Replace
+	} else if v.unsaved_drafts.contains(&v.root_chip_name.to_ascii_lowercase()) {
+		// Unsaved draft saved under a new name: it's a first-time Save, NOT Rename/SaveAs
+		SaveChipMode::Save
 	} else {
 		SaveChipMode::SaveAsOrRename
 	}
@@ -375,7 +378,19 @@ pub(crate) fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, st
 		return;
 	}
 	match save_chip_mode(v, &typed) {
-		SaveChipMode::Save => save_current_chip(v, paths, status),
+		SaveChipMode::Save => {
+			if v.unsaved_drafts.contains(&v.root_chip_name.to_ascii_lowercase()) && !typed.eq_ignore_ascii_case(&v.root_chip_name) {
+				let old_name = v.root_chip_name.clone();
+				v.unsaved_drafts.remove(&old_name.to_ascii_lowercase());
+				if let Some(mut desc) = v.library.remove(&old_name) {
+					desc.name = typed.clone();
+					v.library.add(desc);
+				}
+				v.root_chip_name = typed.clone();
+				v.mark_unsaved_draft(&typed);
+			}
+			save_current_chip(v, paths, status);
+		}
 		SaveChipMode::Replace => replace_chip_with_current(v, paths, status, &typed),
 		SaveChipMode::SaveAsOrRename => return,
 	}
@@ -433,6 +448,12 @@ fn reset_canvas_interaction(v: &mut ViewerState) {
 fn discard_unsaved_changes(v: &mut ViewerState, paths: &SavePaths) {
 	let leaving = v.root_chip_name.clone();
 	if !is_custom_chip(&v.library, &leaving) {
+		return;
+	}
+	if v.unsaved_drafts.contains(&leaving.to_ascii_lowercase()) {
+		// Draft was never saved to disk: purge from library and drafts set
+		v.library.remove(&leaving);
+		v.unsaved_drafts.remove(&leaving.to_ascii_lowercase());
 		return;
 	}
 	if let Ok(pristine) = load_single_chip_from_disk(paths, &v.project_name, &leaving) {

@@ -50,6 +50,44 @@ pub(crate) fn enter(v: &mut ViewerState, wire_index: usize) {
 	v.wire_edit = if already { None } else { Some(WireEditState { wire_index, selected_bend: None }) };
 }
 
+// this is for one TODO
+/// TODO make this used
+#[allow(unused)]
+pub(crate) fn find_wire_network(chip: &ChipDescription, root_wire: usize) -> Vec<usize> {
+	let mut network = std::collections::HashSet::new();
+	let mut queue = vec![root_wire];
+
+	while let Some(current) = queue.pop() {
+		if !network.insert(current) {
+			continue;
+		}
+		let target_wire = &chip.wires[current];
+		let src_addr = target_wire.source_pin_address;
+
+		for (i, w) in chip.wires.iter().enumerate() {
+			if network.contains(&i) {
+				continue;
+			}
+			// Shared source pin net
+			if w.source_pin_address == src_addr {
+				queue.push(i);
+			}
+			// Taps into current wire
+			if w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == current {
+				queue.push(i);
+			}
+			// Wire tapped by current wire
+			if target_wire.connection_type != WireConnectionType::ToPins && target_wire.connected_wire_index as usize == i {
+				queue.push(i);
+			}
+		}
+	}
+
+	let mut result: Vec<usize> = network.into_iter().collect();
+	result.sort_unstable();
+	result
+}
+
 pub(crate) fn exit(v: &mut ViewerState) {
 	v.wire_edit = None;
 }

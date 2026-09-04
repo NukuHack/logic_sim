@@ -5,6 +5,7 @@
 //! stack.
 
 use crate::render::context_menu::{ContextMenuAction, ContextMenuItem, ContextMenuState};
+use crate::render::customize_ui::CustomizeInteraction;
 use crate::render::editor_ui::EditorAction;
 use crate::render::scene::{hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips};
 use crate::render::ui_stack::{InputResult, LayerId};
@@ -212,10 +213,17 @@ impl App {
 				ElementState::Released => {
 					let world_pos = v.camera.screen_to_world(self.mouse_pos);
 					chip_interaction::handle_canvas_release(v, world_pos);
-					// Finish resizing on mouse release instead of requiring
-					// a second click.
-					if v.stack.top_id() == Some(LayerId::CustomizePanel) && v.customize.as_ref().is_some_and(|c| c.interaction.is_resizing()) {
-						crate::viewer::customize::handle_preview_click(v);
+
+					// On mouse release in Customize workspace: commit in-flight drag interactions
+					// (MovingDisplay, ScalingDisplay, Resizing). PlacingDisplay remains attached to cursor until clicked.
+					if v.stack.top_id() == Some(LayerId::CustomizePanel) {
+						if let Some(c) = v.customize.as_ref() {
+							if (c.interaction.is_active() && !matches!(c.interaction, CustomizeInteraction::PlacingDisplay { .. }))
+								|| c.interaction.is_resizing()
+							{
+								crate::viewer::customize::handle_preview_click(v);
+							}
+						}
 					} else if v.pending_wire.is_some() && matches!(v.stack.top_id(), None | Some(LayerId::Canvas)) {
 						// An in-progress wire also tries to complete on
 						// release (`HandleLeftMouseUp`'s TryFinishPlacingWire):
