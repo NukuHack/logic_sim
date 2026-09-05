@@ -542,11 +542,10 @@ impl App {
 		// chip to 'A' must not itself hold 'A' down in the simulator.
 		if let Some(c) = crate::viewer::input::char_for_keys(event.physical_key, &event.logical_key) {
 			if let Screen::Viewer(v) = &mut self.screen {
-				if v.stack.keyboard_stop() && c.is_ascii_alphanumeric() {
-					if pressed {
-						v.sim.held_key_press(c);
-					} else {
-						v.sim.held_key_release(c);
+				if c.is_ascii_alphanumeric() && !v.stack.keyboard_stop() {
+					match pressed {
+						true => v.sim.held_key_press(c),
+						false => v.sim.held_key_release(c),
 					}
 				}
 			}
