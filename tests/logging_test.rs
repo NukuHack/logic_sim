@@ -4,16 +4,9 @@
 //! per-frame chatter buries everything the app itself says.
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use flexi_logger::{Level, LogSpecification};
-use logic_sim::logging::{init, log_dir, DEFAULT_LOG_SPEC};
-
-/// Fresh scratch directory under the OS temp dir, unique per run.
-fn scratch(label: &str) -> PathBuf {
-	let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-	std::env::temp_dir().join(format!("dls_rust_test_{label}_{}_{nanos}", std::process::id()))
-}
+use logic_sim::logging::{init, log_dir, scratch, DEFAULT_LOG_SPEC};
 
 #[test]
 fn our_code_logs_at_debug_while_third_parties_stay_at_warn() {

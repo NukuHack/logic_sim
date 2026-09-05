@@ -1280,10 +1280,14 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 	}
 
 	let trimmed = text.trim();
-	// `ChipSaveMenu.ValidateChipNameInput`: length-capped and free of
-	// filename-illegal characters (the authoritative duplicate-name check
-	// lives in the confirm handler, which knows the library).
-	let confirm_enabled = !trimmed.is_empty() && trimmed.len() <= MAX_CHIP_NAME_LENGTH && !crate::save_system::name_contains_forbidden_char(trimmed);
+	// `ChipSaveMenu.ValidateChipNameInput`: length-capped and a name that's
+	// actually legal to write to disk on every OS this game supports (no
+	// forbidden characters, not a reserved device name) -- the same check
+	// `Saver::save_chip` itself enforces, so this button can never be
+	// clickable for a name whose write is guaranteed to fail. The
+	// authoritative duplicate-name check lives in the confirm handler,
+	// which knows the library.
+	let confirm_enabled = trimmed.len() <= MAX_CHIP_NAME_LENGTH && crate::save_system::valid_file_name(trimmed);
 	let button_y = panel_rect.y + panel_h - 96.0;
 	match mode {
 		SaveChipMode::Save => {

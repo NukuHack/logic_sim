@@ -563,18 +563,19 @@ pub(crate) fn confirm_unsaved_changes_popup(v: &mut ViewerState, paths: &SavePat
 }
 
 /// Picks a fresh, not-yet-used (case-insensitively) name for a
-/// brand-new chip, starting from "New Chip" and falling back to
-/// "New Chip 2", "New Chip 3", ... the first suffix that isn't already
+/// brand-new chip, starting from "New_Chip" and falling back to
+/// "New_Chip_2", "New_Chip_3", ... the first suffix that isn't already
 /// taken in `library` -- so hitting Ctrl+N repeatedly never collides
 /// with an earlier still-unsaved draft (or a saved chip that happens to
-/// already be named "New Chip").
+/// already be named "New_Chip").
+const NEW_NAME: &str = "New_Chip";
 pub(crate) fn unique_new_chip_name(library: &ChipLibrary) -> String {
-	if library.try_get("New Chip").is_none() {
-		return "New Chip".to_string();
+	if library.try_get(NEW_NAME).is_none() {
+		return NEW_NAME.to_string();
 	}
 	let mut n = 2;
 	loop {
-		let candidate = format!("New Chip {n}");
+		let candidate = format!("{NEW_NAME}_{n}");
 		if library.try_get(&candidate).is_none() {
 			return candidate;
 		}
@@ -635,13 +636,13 @@ mod tests {
 	#[test]
 	fn unique_new_chip_name_never_collides_with_existing_drafts() {
 		let mut library = ChipLibrary::new();
-		assert_eq!(unique_new_chip_name(&library), "New Chip");
+		assert_eq!(unique_new_chip_name(&library), "New_Chip");
 
-		library.add(ChipDescription::new("New Chip", ChipType::Custom));
-		assert_eq!(unique_new_chip_name(&library), "New Chip 2");
+		library.add(ChipDescription::new("New_Chip", ChipType::Custom));
+		assert_eq!(unique_new_chip_name(&library), "New_Chip_2");
 
-		library.add(ChipDescription::new("new chip 2", ChipType::Custom));
-		assert_eq!(unique_new_chip_name(&library), "New Chip 3");
+		library.add(ChipDescription::new("new_chip_2", ChipType::Custom));
+		assert_eq!(unique_new_chip_name(&library), "New_Chip_3");
 	}
 
 	/// The save-name gate (`IsValidSaveName`): blanks and filename-illegal
@@ -770,8 +771,8 @@ mod tests {
 		let mut status = None;
 		start_new_chip(&mut v, &paths, &mut status);
 		let name = v.root_chip_name.clone();
-		assert_eq!(name, "New Chip");
-		assert!(v.unsaved_drafts.contains("new chip"), "the fresh chip starts life as an unsaved draft");
+		assert_eq!(name, "New_Chip");
+		assert!(v.unsaved_drafts.contains("new_chip"), "the fresh chip starts life as an unsaved draft");
 
 		// Opening the library panel must not file the draft into any collection...
 		open_library_panel(&mut v);
@@ -788,7 +789,7 @@ mod tests {
 		// An actual Ctrl+S (same-name confirm) promotes the draft: file written, marker cleared...
 		open_save_chip(&mut v);
 		confirm_save_chip_popup(&mut v, &paths, &mut status);
-		assert!(paths.chips_path("P").join("New Chip.json").is_file(), "chip file written by the save");
+		assert!(paths.chips_path("P").join("New_Chip.json").is_file(), "chip file written by the save");
 		assert!(!v.unsaved_drafts.contains("new chip"), "saving clears the draft marker");
 
 		// ...and from then on the library panel does list it.
@@ -1066,6 +1067,6 @@ mod tests {
 		request_start_new_chip(&mut v, &paths, &mut None);
 		assert_eq!(v.root_chip_name, "ROOT", "dirty chip: new-chip waits behind the prompt");
 		confirm_unsaved_changes_popup(&mut v, &paths, &mut None);
-		assert_eq!(v.root_chip_name, "New Chip", "continue starts the fresh chip");
+		assert_eq!(v.root_chip_name, "New_Chip", "continue starts the fresh chip");
 	}
 }

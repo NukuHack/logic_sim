@@ -15,6 +15,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use flexi_logger::{AdaptiveFormat, Age, Cleanup, Criterion, DeferredNow, Duplicate, FileSpec, LogSpecification, Logger, LoggerHandle, Naming};
 
@@ -41,6 +42,16 @@ const CONSOLE_DUPLICATE: Duplicate = Duplicate::Debug;
 /// Directory the rotating log files are written to.
 pub fn log_dir(data_dir: &Path) -> PathBuf {
 	data_dir.join(LOG_DIR_NAME)
+}
+
+pub fn test_logger(label: &str) -> LoggerHandle {
+	init(&scratch(label)).expect("the logger installs into a writable directory")
+}
+
+/// Fresh scratch directory under the OS temp dir, unique per run.
+pub fn scratch(label: &str) -> PathBuf {
+	let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+	std::env::temp_dir().join(format!("dls_rust_test_{label}_{}_{nanos}", std::process::id()))
 }
 
 /// Installs the global logger: log file plus terminal, falling back to
