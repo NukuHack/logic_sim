@@ -1047,10 +1047,15 @@ fn build_recursive(
 	chips: &mut Vec<SimChip>,
 	interner: &mut HashMap<String, Arc<str>>,
 ) -> ChipIdx {
-	// Recursively create subchips first.
+	// Recursively create subchips first. A subchip whose type can't be found in `library` is dropped rather than panicking the whole build: any
+	// wires that targeted it simply fail to resolve in `connect` below and are ignored the same way a wire to an already-removed pin is,
+	// so a missing chip degrades to "that instance is gone" instead of taking the app down.
 	let mut sub_chip_indices = Vec::with_capacity(desc.sub_chips.len());
 	for sub_desc in &desc.sub_chips {
-		let full_desc = library.get(&sub_desc.name);
+		let Some(full_desc) = library.try_get(&sub_desc.name) else {
+			log::warn!("chip '{}' has a subchip (id {}) referencing unknown chip '{}' -- skipping it", desc.name, sub_desc.id, sub_desc.name);
+			continue;
+		};
 		let idx = build_recursive(full_desc, library, sub_desc.id, sub_desc.internal_data.as_deref(), pins, chips, interner);
 		sub_chip_indices.push(idx);
 	}
@@ -1192,6 +1197,57 @@ fn build_internal_state(chip_type: ChipType, override_state: Option<&[u32]>) -> 
 			Some(s) if !s.is_empty() => s.to_vec(),
 			_ => Vec::new(),
 		},
+	}
+}
+
+#[cfg(test)]
+mod dangling_subchip_tests {
+	//! `build_recursive` must tolerate a subchip referencing a chip name that isn't in the
+	//! library -- e.g. a project whose chip file was deleted/renamed on disk, or JSON edited by
+	//! hand -- rather than panicking the whole build (see `ChipLibrary::get` vs `try_get`).
+
+	use super::*;
+	use crate::description::SubChipDescription;
+
+	fn sub(name: &str, id: i32) -> SubChipDescription {
+		SubChipDescription { name: name.into(), id, internal_data: None, position: Default::default(), label: None, pin_colour_info: Vec::new() }
+	}
+
+	#[test]
+	fn missing_subchip_is_skipped_instead_of_panicking() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+
+		let mut root = ChipDescription::new("ROOT", ChipType::Custom);
+		root.sub_chips.push(sub("NAND", 1));
+		root.sub_chips.push(sub("THIS-CHIP-DOES-NOT-EXIST", 2));
+		root.sub_chips.push(sub("NAND", 3));
+
+		// Must not panic.
+		let sim = Simulator::build(&root, &library);
+
+		// The two real subchips still made it in; the dangling one didn't.
+		let root_chip = &sim.chips[sim.root.0];
+		assert_eq!(root_chip.sub_chips.len(), 2);
+		let ids: Vec<i32> = root_chip.sub_chips.iter().map(|&idx| sim.chips[idx.0].id).collect();
+		assert_eq!(ids, vec![1, 3]);
+	}
+
+	#[test]
+	fn wires_targeting_a_missing_subchip_are_ignored_like_any_other_stale_wire() {
+		let mut library = ChipLibrary::new();
+		crate::register_all_builtins(&mut library);
+
+		let mut root = ChipDescription::new("ROOT", ChipType::Custom);
+		root.sub_chips.push(sub("NAND", 1));
+		root.sub_chips.push(sub("GHOST", 2)); // unresolvable
+		root.wires.push(crate::description::WireDescription::new(
+			PinAddress::new(1, 20),
+			PinAddress::new(2, 10), // owner id 2 no longer exists
+		));
+
+		// Must not panic -- `connect` just fails to resolve the target pin and drops the wire.
+		let _sim = Simulator::build(&root, &library);
 	}
 }
 

@@ -207,6 +207,7 @@ impl PlacedBuf {
 	pub fn fill<'a>(&mut self, chip: &'a ChipDescription, library: &'a ChipLibrary) -> &mut Vec<PlacedSubChip<'a>> {
 		self.0.clear();
 
+		debug_assert!(self.0.is_empty());
 		// SAFETY: `self.0` was just cleared, so at this point it holds zero
 		// `PlacedSubChip<'static>` values to reinterpret -- only spare backing capacity, whose
 		// byte layout (pointer/len/cap) doesn't depend on `PlacedSubChip`'s lifetime parameter at

@@ -29,7 +29,7 @@ impl LogicState {
 
 	#[inline(always)]
 	pub const fn to_int(self) -> u8 {
-		self as u8 // a bit unsafe, but theoretically should work flawlessly
+		self as u8
 	}
 
 	#[inline(always)]
