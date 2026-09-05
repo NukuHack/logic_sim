@@ -7,7 +7,7 @@ use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
 use crate::viewer::state::{
-	open_overlay, KeySelectPurpose, KeySelectState, LedColourState, LibraryMode, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState,
+	KeySelectPurpose, KeySelectState, LedColourState, LibraryMode, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState,
 };
 use crate::viewer::undo::{delete_wire_segment_with_undo, delete_wire_with_undo};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
@@ -157,7 +157,7 @@ pub(crate) fn apply_context_menu_action(
 		(ContextMenuAction::Label, ContextTarget::Component(id)) => {
 			let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
 			v.overlay_text_input = current;
-			open_overlay(v, Overlay::Naming(NamingPurpose::LabelComponent(id)));
+			v.open_overlay(Overlay::Naming(NamingPurpose::LabelComponent(id)));
 		}
 		(ContextMenuAction::Flip, ContextTarget::Component(id)) => {
 			if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
@@ -181,7 +181,7 @@ pub(crate) fn apply_context_menu_action(
 			let draft = pins.iter().find(|p| p.id == id).map(|p| (p.name.clone(), p.value_display_mode.to_int().max(0) as usize, p.colour));
 			if let Some((current_name, display_mode_index, colour)) = draft {
 				v.overlay_text_input = current_name;
-				open_overlay(v, Overlay::PinEdit(PinEditState { is_input, pin_id: id, display_mode_index, colour }));
+				v.open_overlay(Overlay::PinEdit(PinEditState { is_input, pin_id: id, display_mode_index, colour }));
 			}
 		}
 		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
@@ -194,21 +194,21 @@ pub(crate) fn apply_context_menu_action(
 			match chip_type {
 				Some(ChipType::Pulse) => {
 					v.overlay_text_input = internal_data.first().copied().unwrap_or(0).to_string();
-					open_overlay(v, Overlay::Naming(NamingPurpose::ConfigurePulseDuration(id)));
+					v.open_overlay(Overlay::Naming(NamingPurpose::ConfigurePulseDuration(id)));
 				}
 				Some(ChipType::Key) => {
 					let chosen = internal_data.first().map(|&code| code as u8 as char);
-					open_overlay(v, Overlay::KeySelect(KeySelectState { purpose: KeySelectPurpose::ConfigureKeyChar(id), chosen }));
+					v.open_overlay(Overlay::KeySelect(KeySelectState { purpose: KeySelectPurpose::ConfigureKeyChar(id), chosen }));
 				}
 				Some(ChipType::Rom256x16) => {
 					let mut data = internal_data;
 					data.resize(crate::render::editor_ui::ROM_WORD_COUNT, 0);
 					v.overlay_text_input = data[0].to_string();
-					open_overlay(v, Overlay::RomEditor(RomEditorState { component_id: id, data, selected: 0 }));
+					v.open_overlay(Overlay::RomEditor(RomEditorState { component_id: id, data, selected: 0 }));
 				}
 				Some(ChipType::DisplayLed) => {
 					let colour_index = internal_data.first().copied().unwrap_or(0) as usize;
-					open_overlay(v, Overlay::LedColour(LedColourState { component_id: id, colour_index }));
+					v.open_overlay(Overlay::LedColour(LedColourState { component_id: id, colour_index }));
 				}
 				_ => {}
 			}

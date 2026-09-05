@@ -5,7 +5,7 @@
 use crate::gate_op::{calculate_num_input_bits, is_combinational, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
 use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
 use crate::viewer::library::{is_custom_chip, DEFAULT_LIBRARY_COLLECTION_NAME};
-use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, Overlay, PendingUnsavedAction, ViewerState};
+use crate::viewer::state::{Overlay, PendingUnsavedAction, ViewerState};
 use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver, Simulator};
 
 /// Resolves `desc.should_be_cached`/`desc.cache_kind` right before they're written to disk --
@@ -394,7 +394,7 @@ pub(crate) fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, st
 		SaveChipMode::Replace => replace_chip_with_current(v, paths, status, &typed),
 		SaveChipMode::SaveAsOrRename => return,
 	}
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 pub(crate) fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
@@ -404,7 +404,7 @@ pub(crate) fn confirm_save_chip_as(v: &mut ViewerState, paths: &SavePaths, statu
 		return;
 	}
 	save_chip_as(v, paths, status, &typed);
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 pub(crate) fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
@@ -414,7 +414,7 @@ pub(crate) fn confirm_save_chip_rename(v: &mut ViewerState, paths: &SavePaths, s
 		return;
 	}
 	rename_current_chip(v, paths, status, &typed);
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 /// Re-reads a single chip's own save file from disk, without touching
@@ -491,7 +491,7 @@ pub(crate) fn active_chip_has_unsaved_changes(v: &ViewerState, paths: &SavePaths
 /// resume on Continue (`UnsavedChangesPopup.OpenPopup(callback)`).
 fn open_unsaved_changes_prompt(v: &mut ViewerState, pending: PendingUnsavedAction) {
 	v.pending_unsaved_action = Some(pending);
-	open_overlay(v, Overlay::UnsavedChanges);
+	v.open_overlay(Overlay::UnsavedChanges);
 }
 
 /// The shared post-open cleanup of the library-panel/search "open this
@@ -499,7 +499,7 @@ fn open_unsaved_changes_prompt(v: &mut ViewerState, pending: PendingUnsavedActio
 /// the selection/open flyout so nothing stale points at the panel that's
 /// now behind us.
 fn finish_open_from_library(v: &mut ViewerState) {
-	close_all_overlays(v);
+	v.close_all_overlays();
 	v.library_selection = LibrarySelection::None;
 	v.bottom_bar_open_collection = None;
 }
@@ -559,7 +559,7 @@ pub(crate) fn confirm_unsaved_changes_popup(v: &mut ViewerState, paths: &SavePat
 		Some(PendingUnsavedAction::ReturnToMenu) => v.exit_requested = true,
 		None => {}
 	}
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 /// Picks a fresh, not-yet-used (case-insensitively) name for a
@@ -985,7 +985,7 @@ mod tests {
 		assert_eq!(v.overlays.last(), Some(&Overlay::UnsavedChanges));
 		assert_eq!(v.pending_unsaved_action, Some(PendingUnsavedAction::OpenChip { name: "OTHER".to_string(), close_overlays: true }));
 
-		close_top_overlay(&mut v); // Cancel
+		v.close_top_overlay();
 		assert_eq!(v.root_chip_name, "ROOT", "cancel leaves everything as it was");
 		assert!(v.pending_unsaved_action.is_none());
 
@@ -1054,7 +1054,7 @@ mod tests {
 		assert!(!v.exit_requested, "dirty chip: prompt instead of leaving");
 
 		// Cancel keeps you in the editor with nothing pending.
-		close_top_overlay(&mut v);
+		v.close_top_overlay();
 		assert!(!v.exit_requested && v.pending_unsaved_action.is_none());
 
 		// Re-request, then Continue resumes the exit.

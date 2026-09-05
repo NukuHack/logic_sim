@@ -6,7 +6,7 @@
 //! Decimal Display mode), which follows the same shape.
 
 use crate::render::editor_ui;
-use crate::viewer::state::{close_top_overlay, KeySelectPurpose, NamingPurpose, ViewerState};
+use crate::viewer::state::{KeySelectPurpose, NamingPurpose, ViewerState};
 
 /// Advances the wheel field at `row_index` (matching the row order
 /// `editor_ui::build_preferences_panel` draws in) to its next option,
@@ -70,7 +70,7 @@ pub(crate) fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<Stri
 		},
 	}
 
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 /// Parses a single ROM cell value, same rule as the old comma-list
@@ -119,7 +119,7 @@ pub(crate) fn apply_rom_editor(v: &mut ViewerState, status: &mut Option<String>)
 		}
 		v.rebuild_sim();
 	}
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 /// "Clear" (`EditorAction::RomClearField`): empties the little per-cell
@@ -238,7 +238,7 @@ pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<
 			}
 		}
 	}
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 /// Commits the pin-edit popup's draft onto its target boundary dev-pin
@@ -270,7 +270,7 @@ pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 			}
 		}
 	}
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 /// Commits the LED colour picker popup's draft onto its target LED
@@ -293,7 +293,7 @@ pub(crate) fn confirm_led_colour_popup(v: &mut ViewerState) {
 		}
 		v.rebuild_sim();
 	}
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 #[cfg(test)]
@@ -354,7 +354,7 @@ mod tests {
 		let chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
 		library.add(chip);
 		let mut v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
-		v.overlays.push(crate::viewer::state::Overlay::RomEditor(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 }));
+		v.open_overlay(crate::viewer::state::Overlay::RomEditor(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 }));
 		v.overlay_text_input = "999".to_string();
 		v
 	}
@@ -406,7 +406,7 @@ mod tests {
 	}
 
 	fn open_pin_edit(v: &mut ViewerState, state: PinEditState) {
-		v.overlays.push(crate::viewer::state::Overlay::PinEdit(state));
+		v.open_overlay(crate::viewer::state::Overlay::PinEdit(state));
 	}
 
 	/// The popup's whole contract: Confirm writes every half (name +

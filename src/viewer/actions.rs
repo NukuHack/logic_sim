@@ -17,14 +17,14 @@ use crate::viewer::popups::{
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
 };
-use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, reset_preferences_draft, LibraryMode, Overlay, ViewerState};
+use crate::viewer::state::{reset_preferences_draft, LibraryMode, Overlay, ViewerState};
 use crate::{SavePaths, Saver};
 
 /// Applies a click on one of the editor overlays.
 pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>, action: EditorAction) {
 	use EditorAction as EA;
 	match action {
-		EA::ClosePopup => close_top_overlay(v),
+		EA::ClosePopup => v.close_top_overlay(),
 		EA::CyclePref(i) => cycle_pref(&mut v.prefs, i),
 		EA::SelectPrefsField(field) => v.prefs_field_focus = Some(field),
 		EA::ApplyPreferences => {
@@ -35,7 +35,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				Ok(()) => v.prefs = desc,
 				Err(e) => *status = Some(format!("Failed to save preferences: {e}")),
 			}
-			v.overlays.retain(|o| *o != Overlay::Preferences);
+			v.close_overlay(Overlay::Preferences);
 			reset_preferences_draft(v);
 		}
 		EA::SelectCollection(i) => {
@@ -140,7 +140,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			// (mirrors the original restricting editing to
 			// `CanEditViewedChip`).
 			if !v.can_edit_viewed_chip() {
-				close_all_overlays(v);
+				v.close_all_overlays();
 				v.library_selection = LibrarySelection::None;
 				*status = Some("Return to the edited chip before placing components".to_string());
 				return;
@@ -159,7 +159,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			if v.sim.key_modifiers() & crate::sim::key_mods_bits::SHIFT != 0 {
 				chip_interaction::add_to_placing(v, &name);
 			} else {
-				close_all_overlays(v);
+				v.close_all_overlays();
 				v.library_selection = LibrarySelection::None;
 				v.pending_wire = None;
 				// Fills the carry (a bus origin brings its linked terminus
@@ -175,7 +175,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			} else {
 				v.prefs = desc;
 			}
-			close_all_overlays(v);
+			v.close_all_overlays();
 			v.library_selection = LibrarySelection::None;
 		}
 		EA::ToggleStarredCollectionPopup(name) => {
@@ -265,7 +265,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 /// mouse affordance.
 pub(crate) fn open_library_panel(v: &mut ViewerState) {
 	sync_library_collections(&mut v.prefs, &v.library, &v.unsaved_drafts);
-	open_overlay(v, Overlay::Library);
+	v.open_overlay(Overlay::Library);
 }
 
 #[cfg(test)]

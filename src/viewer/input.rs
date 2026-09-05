@@ -14,7 +14,7 @@ use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, co
 use crate::viewer::save_flow::{
 	confirm_save_chip_popup, confirm_unsaved_changes_popup, request_exit_to_menu, request_start_new_chip, save_chip_mode,
 };
-use crate::viewer::state::{close_top_overlay, open_preferences, open_save_chip, open_search, Overlay, ViewerState};
+use crate::viewer::state::{open_preferences, open_save_chip, open_search, Overlay, ViewerState};
 use crate::{sim, SavePaths, Saver};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
@@ -279,7 +279,7 @@ pub(crate) fn handle_viewer_key(
 			if target == Some(LayerId::Library) {
 				v.library_selection = LibrarySelection::None;
 			}
-			close_top_overlay(v);
+			v.close_top_overlay();
 		}
 		// ---- Right-click popup: Escape dismisses it ----
 		NamedKey::Escape if v.context_menu.is_some() => v.context_menu = None,
@@ -494,7 +494,7 @@ mod tests {
 		open_search(&mut v);
 		v.stack = crate::viewer::frame::build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::ZERO);
 		assert!(!can_delete_selection(&v), "a focused text field owns Delete");
-		close_top_overlay(&mut v);
+		v.close_top_overlay();
 		v.stack = crate::viewer::frame::build_viewer_stack(&mut v, None, 1280.0, 800.0, Vec2::ZERO);
 		// ...as does any pending wire or placement carry.
 		v.pending_wire = Some(crate::viewer::wire_draft::PendingWire {

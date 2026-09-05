@@ -11,7 +11,7 @@ use crate::render::layout::{self, GRID_SIZE};
 use crate::render::scene::lookup::SimulatorPinState;
 use crate::render::theme;
 use crate::structs::Vec2;
-use crate::viewer::state::{close_top_overlay, open_overlay, Overlay, ViewerState};
+use crate::viewer::state::{Overlay, ViewerState};
 
 /// Draft customization session for the open chip. `saved_save_text`
 /// snapshots the save popup's name field: the shared text buffer is
@@ -56,7 +56,7 @@ pub(crate) fn open_customize(v: &mut ViewerState) {
 		zoom_factor: 1.0,
 		layout: Default::default(),
 	});
-	open_overlay(v, Overlay::CustomizeChip);
+	v.open_overlay(Overlay::CustomizeChip);
 	v.overlay_text_input = hex_of(colour_seed);
 }
 
@@ -77,7 +77,7 @@ pub(crate) fn confirm_customize(v: &mut ViewerState, status: &mut Option<String>
 	}
 	v.rebuild_sim();
 	v.overlay_text_input = customize.saved_save_text;
-	close_top_overlay(v);
+	v.close_top_overlay();
 	*status = Some(format!("Customized '{}'", root_chip_name));
 }
 
@@ -85,7 +85,7 @@ pub(crate) fn confirm_customize(v: &mut ViewerState, status: &mut Option<String>
 /// `close_top_overlay` restores both the text buffer and drops
 /// `v.customize`.
 pub(crate) fn cancel_customize(v: &mut ViewerState) {
-	close_top_overlay(v);
+	v.close_top_overlay();
 }
 
 // ---- option column -----------------------------------------------------

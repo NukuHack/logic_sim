@@ -436,6 +436,26 @@ pub(crate) struct ViewerState {
 	pub(crate) undo: crate::viewer::undo::UndoController,
 }
 
+macro_rules! overlay_mapping {
+	($($method:ident, $method_mut:ident => $variant:ident ($state_type:ty)),* $(,)?) => {
+$(
+	pub(crate) fn $method(&self) -> Option<&$state_type> {
+		self.overlays.iter().find_map(|o| match o {
+			Overlay::$variant(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn $method_mut(&mut self) -> Option<&mut $state_type> {
+		self.overlays.iter_mut().find_map(|o| match o {
+			Overlay::$variant(s) => Some(s),
+			_ => None,
+		})
+	}
+)*
+	};
+}
+
 impl ViewerState {
 	/// Builds a fresh viewer for `root_chip_name` (which must already be
 	/// present in `library`), with the simulation built and prefs-driven
@@ -512,48 +532,12 @@ impl ViewerState {
 	// ---- Draft accessors for the overlays that carry their own state (see `Overlay`'s docs)
 	// -- there's at most one of each open at a time, so a linear scan of the (tiny) overlay
 	// stack is simplest and cheapest correctly-typed way to reach it. ----
-
-	pub(crate) fn rom_editor(&self) -> Option<&RomEditorState> {
-		self.overlays.iter().find_map(|o| match o {
-			Overlay::RomEditor(s) => Some(s),
-			_ => None,
-		})
-	}
-
-	pub(crate) fn rom_editor_mut(&mut self) -> Option<&mut RomEditorState> {
-		self.overlays.iter_mut().find_map(|o| match o {
-			Overlay::RomEditor(s) => Some(s),
-			_ => None,
-		})
-	}
-
-	pub(crate) fn pin_edit(&self) -> Option<&PinEditState> {
-		self.overlays.iter().find_map(|o| match o {
-			Overlay::PinEdit(s) => Some(s),
-			_ => None,
-		})
-	}
-
-	pub(crate) fn pin_edit_mut(&mut self) -> Option<&mut PinEditState> {
-		self.overlays.iter_mut().find_map(|o| match o {
-			Overlay::PinEdit(s) => Some(s),
-			_ => None,
-		})
-	}
-
-	pub(crate) fn led_colour(&self) -> Option<&LedColourState> {
-		self.overlays.iter().find_map(|o| match o {
-			Overlay::LedColour(s) => Some(s),
-			_ => None,
-		})
-	}
-
-	pub(crate) fn led_colour_mut(&mut self) -> Option<&mut LedColourState> {
-		self.overlays.iter_mut().find_map(|o| match o {
-			Overlay::LedColour(s) => Some(s),
-			_ => None,
-		})
-	}
+	overlay_mapping!(
+		rom_editor, rom_editor_mut => RomEditor (RomEditorState),
+		pin_edit, pin_edit_mut => PinEdit (PinEditState),
+		led_colour, led_colour_mut => LedColour (LedColourState),
+		key_select, key_select_mut => KeySelect (KeySelectState),
+	);
 
 	/// The naming popup's purpose, or `RenameProject` (the type's default) if it isn't open --
 	/// small and `Copy`, so (unlike the other accessors here) this returns the value itself
@@ -567,20 +551,6 @@ impl ViewerState {
 				_ => None,
 			})
 			.unwrap_or_default()
-	}
-
-	pub(crate) fn key_select(&self) -> Option<&KeySelectState> {
-		self.overlays.iter().find_map(|o| match o {
-			Overlay::KeySelect(s) => Some(s),
-			_ => None,
-		})
-	}
-
-	pub(crate) fn key_select_mut(&mut self) -> Option<&mut KeySelectState> {
-		self.overlays.iter_mut().find_map(|o| match o {
-			Overlay::KeySelect(s) => Some(s),
-			_ => None,
-		})
 	}
 
 	/// Rebuilds `self.sim` from `self.library`'s current copy of `self.root_chip_name` -- called
@@ -769,6 +739,77 @@ impl ViewerState {
 		names.reverse();
 		format!("Viewing: {}", names.join(" > "))
 	}
+
+	/// Pushes `overlay` as the new top of [`ViewerState::overlays`], or -- if an instance is already
+	/// open somewhere down the stack -- re-focuses it (moves it to the top) instead of stacking a
+	/// duplicate, so e.g. mashing Ctrl+F can't pile up identical Search layers.
+	/// Reopening clears whichever draft text the previous instance had left behind.
+	pub(crate) fn open_overlay(&mut self, overlay: Overlay) {
+		let id = overlay.layer_id();
+		self.overlays.retain(|o| o.layer_id() != id);
+		self.overlays.push(overlay);
+	}
+
+	pub(crate) fn close_overlay(&mut self, overlay: Overlay) {
+		let id = overlay.layer_id();
+		self.overlays.retain(|o| o.layer_id() != id);
+	}
+
+	/// Pops the top-most overlay off [`ViewerState::overlays`], releasing whichever purpose/draft state
+	/// belonged to it (each overlay owns its own transient state, so closing it half-way through just
+	/// resets that one). A no-op when nothing is open.
+	pub(crate) fn close_top_overlay(&mut self) {
+		let Some(top) = self.overlays.pop() else { return };
+		match top {
+			Overlay::Library => crate::viewer::library::reset_library_popup_state(self),
+			Overlay::Naming(_) => {}
+			// The chosen key/purpose die with the popup, same as `RomEditor`'s.
+			Overlay::KeySelect(_) => {}
+			// The ROM draft dies with the popup -- it lived inside `top`, already popped above.
+			Overlay::RomEditor(_) => {}
+			Overlay::Search => {
+				self.search_query.clear();
+				self.search_selected = None;
+				self.search_delete_confirm = None;
+			}
+			// The pin-edit draft dies with the popup, success or not (the confirm path reads its
+			// values -- see `confirm_pin_edit_popup` -- and writes them onto the pin *before*
+			// closing); it lived inside `top`, already popped above, same as `RomEditor`'s.
+			Overlay::PinEdit(_) => {}
+			// Same pattern for the LED colour picker.
+			Overlay::LedColour(_) => {}
+			// Cancel: the pending action is dropped with the prompt --
+			// mirroring `UnsavedChangesPopup` never firing its callback
+			// with anything on a cancel.
+			Overlay::UnsavedChanges => self.pending_unsaved_action = None,
+			// The shared buffer belongs to whichever text-field overlay owned it while open.
+			Overlay::SaveChip => self.overlay_text_input.clear(),
+			// The customizer borrowed the shared buffer for its hex colour
+			// field; give the save popup's name back (see `open_customize`).
+			Overlay::CustomizeChip => {
+				if let Some(customize) = self.customize.take() {
+					self.overlay_text_input = customize.saved_save_text;
+				}
+			}
+			// The preferences panel keeps its numeric drafts in their own
+			// buffers (not the shared one), so they're dropped here.
+			Overlay::Preferences => reset_preferences_draft(self),
+		}
+		// The shared buffer belongs to whichever text-field overlay owned it
+		// while open -- except CustomizeChip, whose arm above just handed it
+		// back to the save popup underneath and mustn't be wiped here.
+		if !matches!(top, Overlay::Library | Overlay::Search | Overlay::CustomizeChip) {
+			self.overlay_text_input.clear();
+		}
+	}
+
+	/// Closes every open overlay at once -- the "leave whatever panels were open" gesture shared by
+	/// flows that hand control back to the plain viewer (Use-chip, Exit-library, Apply-preferences).
+	pub(crate) fn close_all_overlays(&mut self) {
+		while !self.overlays.is_empty() {
+			self.close_top_overlay();
+		}
+	}
 }
 
 /// What the frame builder should draw this frame -- see
@@ -800,19 +841,9 @@ pub(crate) fn sync_stack_with_state(v: &mut ViewerState) {
 	}
 }
 
-/// Pushes `overlay` as the new top of [`ViewerState::overlays`], or -- if an instance is already
-/// open somewhere down the stack -- re-focuses it (moves it to the top) instead of stacking a
-/// duplicate, so e.g. mashing Ctrl+F can't pile up identical Search layers.
-/// Reopening clears whichever draft text the previous instance had left behind.
-pub(crate) fn open_overlay(v: &mut ViewerState, overlay: Overlay) {
-	let id = overlay.layer_id();
-	v.overlays.retain(|o| o.layer_id() != id);
-	v.overlays.push(overlay);
-}
-
 /// Ctrl+F: opens (or re-focuses) the search popup with a fresh query.
 pub(crate) fn open_search(v: &mut ViewerState) {
-	open_overlay(v, Overlay::Search);
+	v.open_overlay(Overlay::Search);
 	v.search_query.clear();
 	v.search_selected = None;
 	v.search_delete_confirm = None;
@@ -820,7 +851,7 @@ pub(crate) fn open_search(v: &mut ViewerState) {
 
 /// Ctrl+S: opens (or re-focuses) the save-chip popup pre-filled with the chip's current name.
 pub(crate) fn open_save_chip(v: &mut ViewerState) {
-	open_overlay(v, Overlay::SaveChip);
+	v.open_overlay(Overlay::SaveChip);
 	v.overlay_text_input = v.root_chip_name.clone();
 }
 
@@ -828,7 +859,7 @@ pub(crate) fn open_save_chip(v: &mut ViewerState) {
 /// numeric fields from the live prefs -- mirrors
 /// `PreferencesMenu.OnMenuOpened` -> `UpdateUIFromDescription`.
 pub(crate) fn open_preferences(v: &mut ViewerState) {
-	open_overlay(v, Overlay::Preferences);
+	v.open_overlay(Overlay::Preferences);
 	v.prefs_clock_text = v.prefs.prefs_sim_steps_per_clock_tick.to_string();
 	v.prefs_rate_text = v.prefs.prefs_sim_target_steps_per_second.to_string();
 	v.prefs_field_focus = None;
@@ -836,67 +867,9 @@ pub(crate) fn open_preferences(v: &mut ViewerState) {
 
 /// Clears the preferences panel's draft state (field focus + typed text).
 pub(crate) fn reset_preferences_draft(v: &mut ViewerState) {
-	v.prefs_field_focus = None;
 	v.prefs_clock_text.clear();
 	v.prefs_rate_text.clear();
-}
-
-/// Pops the top-most overlay off [`ViewerState::overlays`], releasing whichever purpose/draft state
-/// belonged to it (each overlay owns its own transient state, so closing it half-way through just
-/// resets that one). A no-op when nothing is open.
-pub(crate) fn close_top_overlay(v: &mut ViewerState) {
-	let Some(top) = v.overlays.pop() else { return };
-	match top {
-		Overlay::Library => crate::viewer::library::reset_library_popup_state(v),
-		Overlay::Naming(_) => {}
-		// The chosen key/purpose die with the popup, same as `RomEditor`'s.
-		Overlay::KeySelect(_) => {}
-		// The ROM draft dies with the popup -- it lived inside `top`, already popped above.
-		Overlay::RomEditor(_) => {}
-		Overlay::Search => {
-			v.search_query.clear();
-			v.search_selected = None;
-			v.search_delete_confirm = None;
-		}
-		// The pin-edit draft dies with the popup, success or not (the confirm path reads its
-		// values -- see `confirm_pin_edit_popup` -- and writes them onto the pin *before*
-		// closing); it lived inside `top`, already popped above, same as `RomEditor`'s.
-		Overlay::PinEdit(_) => {}
-		// Same pattern for the LED colour picker.
-		Overlay::LedColour(_) => {}
-		Overlay::UnsavedChanges => {
-			// Cancel: the pending action is dropped with the prompt --
-			// mirroring `UnsavedChangesPopup` never firing its callback
-			// with anything on a cancel.
-			v.pending_unsaved_action = None;
-		}
-		// The shared buffer belongs to whichever text-field overlay owned it while open.
-		Overlay::SaveChip => v.overlay_text_input.clear(),
-		// The customizer borrowed the shared buffer for its hex colour
-		// field; give the save popup's name back (see `open_customize`).
-		Overlay::CustomizeChip => {
-			if let Some(customize) = v.customize.take() {
-				v.overlay_text_input = customize.saved_save_text;
-			}
-		}
-		// The preferences panel keeps its numeric drafts in their own
-		// buffers (not the shared one), so they're dropped here.
-		Overlay::Preferences => reset_preferences_draft(v),
-	}
-	// The shared buffer belongs to whichever text-field overlay owned it
-	// while open -- except CustomizeChip, whose arm above just handed it
-	// back to the save popup underneath and mustn't be wiped here.
-	if !matches!(top, Overlay::Library | Overlay::Search | Overlay::CustomizeChip) {
-		v.overlay_text_input.clear();
-	}
-}
-
-/// Closes every open overlay at once -- the "leave whatever panels were open" gesture shared by
-/// flows that hand control back to the plain viewer (Use-chip, Exit-library, Apply-preferences).
-pub(crate) fn close_all_overlays(v: &mut ViewerState) {
-	while !v.overlays.is_empty() {
-		close_top_overlay(v);
-	}
+	v.prefs_field_focus = None;
 }
 
 #[cfg(test)]

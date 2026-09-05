@@ -389,13 +389,16 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// Overlay panels, bottom-to-top in open order -- several can be stacked at once
 	// (Ctrl+F pushes Search on top of an open Library). Each captures the full screen:
 	// they're modal, so nothing underneath (bar included) gets clicked through them.
-	for overlay in v.overlays.clone() {
-		let mut customize_out = (overlay == Overlay::CustomizeChip).then(|| crate::viewer::customize::build_layer(v, vw, vh, mouse));
+	// Take ownership of overlays temporarily
+	let overlays = std::mem::take(&mut v.overlays);
+	for overlay in &overlays {
+		let mut customize_out = matches!(overlay, Overlay::CustomizeChip).then(|| crate::viewer::customize::build_layer(v, vw, vh, mouse));
+		let layer_id = overlay.layer_id();
 		if let Some(out) = customize_out.as_mut() {
 			let frame = std::mem::take(&mut out.frame);
 			let (layout, scroll_max) = (out.layout, out.list_scroll_max);
 			crate::viewer::customize::cache_layout(v, layout, scroll_max);
-			let layer = StackLayer::convert_frame(overlay.layer_id(), frame, Capture::FullScreen, editor_action)
+			let layer = StackLayer::convert_frame(layer_id, frame, Capture::FullScreen, editor_action)
 				.with_scroll_region(layout.preview)
 				.with_scroll_region(layout.list);
 			let mut layer_owned = layer;
@@ -403,12 +406,13 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 			viewer_stack.push(layer_owned);
 			continue;
 		}
-		let overlay_frame = build_overlay_frame(v, &overlay, vw, vh, mouse);
-		let layer_id = overlay.layer_id();
+		let overlay_frame = build_overlay_frame(v, overlay, vw, vh, mouse);
 		let mut overlay_layer = StackLayer::convert_frame(layer_id, overlay_frame, Capture::FullScreen, editor_action);
 		overlay_layer.geometry = pin_geometry_to_screen(std::mem::take(&mut overlay_layer.geometry), &v.camera, vh);
 		viewer_stack.push(overlay_layer);
 	}
+	// Put the overlays back if needed
+	v.overlays = overlays;
 
 	// Right-click popup: above even the modal overlays.
 	if let Some(state) = &v.context_menu {
