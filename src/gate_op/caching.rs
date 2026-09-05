@@ -425,7 +425,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		}
 	};
 
-	log::debug!("[cache] cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s)");
+	log::debug!("[cache] cached chip '{}': {} row(s), {} input bit(s) to {}", name.clone(), num_possible_inputs, num_input_bits, cached_gate);
 	sim.caching.combinational_chip_cache.insert(name, cached_gate);
 
 	// Restore the real input state the sweep overwrote, so the caller sees no side effects.

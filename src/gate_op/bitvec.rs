@@ -246,3 +246,45 @@ pub fn truncate(a: &[Bits], n: u32) -> Vec<Bits> {
 pub fn bit_result(b: bool) -> Vec<Bits> {
 	vec![b as Bits]
 }
+
+/// Shifts `a` left by `amount` bits, growing the output by as many words as needed -- the
+/// building block [`concat`] uses to make room for a low field it's placing below `a`. Unlike
+/// [`field`]/[`truncate`], this never drops bits: shifting `n` bits left by `k` needs `n + k`
+/// bits of output, so the result is sized accordingly rather than masked back down to `a`'s own
+/// width.
+pub fn shift_left(a: &[Bits], amount: u32) -> Vec<Bits> {
+	if amount == 0 {
+		return a.to_vec();
+	}
+	let word_shift = (amount / WORD_BITS) as usize;
+	let bit_shift = amount % WORD_BITS;
+	let mut out = vec![0 as Bits; a.len() + word_shift + 1];
+	for (i, &word) in a.iter().enumerate() {
+		if word == 0 {
+			continue;
+		}
+		let idx = i + word_shift;
+		if bit_shift == 0 {
+			out[idx] |= word;
+		} else {
+			out[idx] |= word << bit_shift;
+			out[idx + 1] |= word >> (WORD_BITS - bit_shift);
+		}
+	}
+	out
+}
+
+/// Concatenates two bit-vectors into one, `low` occupying the bottom `low_bits` bits and `high`
+/// stacked immediately above -- i.e. `low_masked | (high << low_bits)`. This is [`field`]'s
+/// inverse: where `field` pulls a sub-range back out of a packed word, `concat` is how a
+/// formula reassembles a result out of pieces that arrived in a different order than the table
+/// row they're built from (e.g. a carry-out pin a chip designer put *before* the sum bits
+/// instead of after).
+pub fn concat(low: &[Bits], low_bits: u32, high: &[Bits]) -> Vec<Bits> {
+	if low_bits == 0 {
+		return high.to_vec();
+	}
+	let low_masked = truncate(low, low_bits);
+	let high_shifted = shift_left(high, low_bits);
+	or(&low_masked, &high_shifted)
+}

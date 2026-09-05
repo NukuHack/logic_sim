@@ -3,23 +3,22 @@ TODO LIST :
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 
-Flat output buffer: cache_rows: Vec<Vec<u32>> does one heap allocation per row (many small allocs).
-	Switching to a single preallocated Vec<u32> with a fixed stride (num_outputs per row) would cut that too
-	I left this alone since it touches process_cached_chip, save_flow.rs, and sim_thread.rs, which is a big blast radius.
+Flat output buffer: does one heap allocation per row (many small allocs).
+	Switching to a single preallocated one directional array with a fixed stride (num_outputs per row) would cut that too
+	I left this alone since it would greatly limit maximum LUT size, and it has a big blast radius.
+	Probably an u64 would be big enough for every case, if the bits are packed correctly (32 bit with tristate save, 64 without, currently we don't store tri-state)
 
 FUTURE PLANS :
 
-- full dirty-tracking / partial re-render (React-style reconciliation): would
-	mean per-component change detection + keyed diffing + invalidation
-	plumbed through every mutation path.
+- full dirty-tracking / partial re-render (React-style reconciliation): would mean per-component
+	change detection + keyed diffing + invalidation plumbed through every mutation path.
 
-going into edit mode should make the entire wire network in edit mode, so everything that the wire is connected to
+going into edit mode should make the entire wire network in edit mode, so every wire that the (clicked) wire is connected to
 
 separate the rendering from logic (rn lagging logic laggs the ui too) :
 	Don't block the UI at all.
 	The lock-holding-worker-thread design means any nonzero sweep time is a freeze.
-	Kicking the logic to a separate thread (or dropping/reacquiring the sim lock between chunks) would keep rendering responsive during difficult stuff
-	regardless of how fast the logic itself runs.
+	Kicking the logic to a separate thread (or dropping/reacquiring the sim lock between chunks) would keep rendering responsive during difficult stuff regardless of how fast the logic itself runs.
 
 
 add components or some form of input that can run rust code (like toggling a setting with your own circuits)

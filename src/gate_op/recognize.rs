@@ -45,7 +45,7 @@ impl Candidate {
 pub fn registry() -> &'static [Candidate] {
 	static REGISTRY: std::sync::OnceLock<Vec<Candidate>> = std::sync::OnceLock::new();
 	REGISTRY.get_or_init(|| {
-		vec![
+		let mut v = vec![
 			// NOT
 			Candidate { name: "NOT", config: 0, applicable: |i, o, _| i == 1 && o == 1, formula: |w, _, _, _| bitvec::not(w, 1) },
 			// BUFFER
@@ -179,120 +179,104 @@ pub fn registry() -> &'static [Candidate] {
 				applicable: |i, o, _| o == (i >> 1) && i >= 4 && (i & 1) == 0 && o >= 2,
 				formula: |w, _i, o, _| bitvec::not(&bitvec::xor(&bitvec::field(w, 0, o), &bitvec::field(w, o, o)), o),
 			},
-			// ADDER_N (no carry-in, no carry-out)
-			Candidate {
-				name: "ADDER_N",
-				config: 0,
-				applicable: |i, o, _| {
-					if i < 2 || i % 2 != 0 {
-						return false;
-					}
-					let n = i / 2;
-					o == n
-				},
-				formula: |w, i, _, _| {
-					let n = i / 2;
-					bitvec::truncate(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), n)
-				},
-			},
-			// ADDER_N (without carry-in, with carry-out)
-			Candidate {
-				name: "ADDER_N_COU",
-				config: 1 << 1, // CFG_HAS_COUT
-				applicable: |i, o, _| {
-					if i < 2 || i % 2 != 0 {
-						return false;
-					}
-					let n = i / 2;
-					o == n + 1
-				},
-				formula: |w, i, o, _| {
-					let n = i / 2;
-					bitvec::truncate(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), o)
-				},
-			},
-			// ADDER_N (with carry-in, without carry-out)
-			Candidate {
-				name: "ADDER_N_CIN",
-				config: 1 << 0, // CFG_HAS_CIN
-				applicable: |i, o, _| {
-					let operand_bits = i.wrapping_sub(1);
-					if operand_bits < 2 || operand_bits % 2 != 0 {
-						return false;
-					}
-					let n = operand_bits / 2;
-					o == n
-				},
-				formula: |w, i, _, _| {
-					let operand_bits = i - 1;
-					let n = operand_bits / 2;
-					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), &bitvec::field(w, 2 * n, 1));
-					bitvec::truncate(&sum, n)
-				},
-			},
-			// ADDER_N (with carry-in and carry-out)
-			Candidate {
-				name: "ADDER_N_CIN_COU",
-				config: (1 << 0) | (1 << 1), // CFG_HAS_CIN | CFG_HAS_COUT
-				applicable: |i, o, _| {
-					let operand_bits = i.wrapping_sub(1);
-					if operand_bits < 2 || operand_bits % 2 != 0 {
-						return false;
-					}
-					let n = operand_bits / 2;
-					o == n + 1
-				},
-				formula: |w, i, o, _| {
-					let operand_bits = i - 1;
-					let n = operand_bits / 2;
-					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 0, n), &bitvec::field(w, n, n)), &bitvec::field(w, 2 * n, 1));
-					bitvec::truncate(&sum, o)
-				},
-			},
-			// ADDER_N (with carry-in, without carry-out) -- cin packed as the *first* input
-			// pin (bit 0) instead of the last. The candidates above assume a chip's designer
-			// wired cin as the final input pin (`field(w, 2n, 1)`); plenty of real adders wire
-			// it first instead (`cin, a, b`), which is a different bit-packing of the exact same
-			// row-order sweep and therefore needs its own candidate to be recognized at all.
-			Candidate {
-				name: "ADDER_N_CIN_FIRST",
-				config: 1 << 2, // CFG_HAS_CIN | CFG_CIN_FIRST
-				applicable: |i, o, _| {
-					let operand_bits = i.wrapping_sub(1);
-					if operand_bits < 2 || operand_bits % 2 != 0 {
-						return false;
-					}
-					let n = operand_bits / 2;
-					o == n
-				},
-				formula: |w, i, _, _| {
-					let operand_bits = i - 1;
-					let n = operand_bits / 2;
-					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 1, n), &bitvec::field(w, 1 + n, n)), &bitvec::field(w, 0, 1));
-					bitvec::truncate(&sum, n)
-				},
-			},
-			// ADDER_N (with carry-in and carry-out) -- cin first, mirrors ADDER_N_CIN_FIRST.
-			Candidate {
-				name: "ADDER_N_CIN_COU_FIRST",
-				config: (1 << 1) | (1 << 2), // CFG_HAS_COUT | CFG_CIN_FIRST
-				applicable: |i, o, _| {
-					let operand_bits = i.wrapping_sub(1);
-					if operand_bits < 2 || operand_bits % 2 != 0 {
-						return false;
-					}
-					let n = operand_bits / 2;
-					o == n + 1
-				},
-				formula: |w, i, o, _| {
-					let operand_bits = i - 1;
-					let n = operand_bits / 2;
-					let sum = bitvec::add(&bitvec::add(&bitvec::field(w, 1, n), &bitvec::field(w, 1 + n, n)), &bitvec::field(w, 0, 1));
-					bitvec::truncate(&sum, o)
-				},
-			},
-		]
+		];
+		v.extend(adder_variants());
+		v
 	})
+}
+
+/// Bit flags packed into a `Candidate`'s `config` for every entry [`adder_variants`] produces.
+/// `CFG_HAS_CIN`/`CFG_HAS_COUT` say whether that pin exists at all; `CFG_CIN_FIRST`/
+/// `CFG_COUT_FIRST` say, when it does, whether it sits at the front of its pin list (input
+/// pins for cin, output pins for cout) instead of the back. All four are independent, so
+/// `adder_applicable`/`adder_formula` below read them individually rather than switching on a
+/// combined enum.
+const CFG_HAS_CIN: Bits = 1 << 0;
+const CFG_HAS_COUT: Bits = 1 << 1;
+const CFG_CIN_FIRST: Bits = 1 << 2;
+const CFG_COUT_FIRST: Bits = 1 << 3;
+
+/// Shared shape check for every adder variant: works out how many operand bits remain once the
+/// optional carry-in pin is set aside, and requires that remainder to split evenly into two
+/// equal-width operands sized to explain `out_bits` (plus one more bit when a carry-out pin is
+/// present). *Where* cin/cout sit doesn't change how many bits there are, so every variant --
+/// cin/cout absent, first, or last -- shares this one predicate instead of each hardcoding its
+/// own near-identical arithmetic.
+fn adder_applicable(in_bits: u32, out_bits: u32, config: Bits) -> bool {
+	let has_cin = config & CFG_HAS_CIN != 0;
+	let has_cout = config & CFG_HAS_COUT != 0;
+	let operand_bits = if has_cin { in_bits.wrapping_sub(1) } else { in_bits };
+	if operand_bits < 2 || operand_bits % 2 != 0 {
+		return false;
+	}
+	let n = operand_bits / 2;
+	out_bits == if has_cout { n + 1 } else { n }
+}
+
+/// Shared formula for every adder variant. Removing a single cin pin from a pin list --
+/// whichever position it's in -- never disturbs the relative order of what's left, so the two
+/// operand fields are always "whatever remains, split into two equal halves in order"; only
+/// cin's own position (`operand_start`/`cin_pos`) and, symmetrically, whether the carry-out
+/// lands below or above the sum bits, actually depend on the `_FIRST` flags in `config`.
+fn adder_formula(w: &[Bits], in_bits: u32, out_bits: u32, config: Bits) -> Vec<Bits> {
+	let has_cin = config & CFG_HAS_CIN != 0;
+	let has_cout = config & CFG_HAS_COUT != 0;
+	let cin_first = config & CFG_CIN_FIRST != 0;
+	let cout_first = config & CFG_COUT_FIRST != 0;
+
+	let operand_bits = if has_cin { in_bits - 1 } else { in_bits };
+	let n = operand_bits / 2;
+	// Cin (if present and first) occupies bit 0, pushing both operand fields up by one bit.
+	let operand_start = if has_cin && cin_first { 1 } else { 0 };
+
+	let mut sum = bitvec::add(&bitvec::field(w, operand_start, n), &bitvec::field(w, operand_start + n, n));
+	if has_cin {
+		// First: cin is bit 0. Last: cin is the one input bit past both operands.
+		let cin_pos = if cin_first { 0 } else { operand_start + 2 * n };
+		sum = bitvec::add(&sum, &bitvec::field(w, cin_pos, 1));
+	}
+
+	if !has_cout {
+		return bitvec::truncate(&sum, n);
+	}
+	if !cout_first {
+		// `add` already leaves the carry sitting at bit `n`, exactly where a trailing
+		// carry-out pin belongs -- truncating to `n + 1` bits is the whole job.
+		return bitvec::truncate(&sum, out_bits);
+	}
+	// Carry-out pin comes *before* the sum bits instead: peel the carry off bit `n` and
+	// reassemble it as the new bit 0, shifting the sum bits up by one to make room.
+	let carry = bitvec::field(&sum, n, 1);
+	let sum_bits = bitvec::field(&sum, 0, n);
+	bitvec::concat(&carry, 1, &sum_bits)
+}
+
+/// Every cin/cout arrangement `adder_applicable`/`adder_formula` can recognize: carry-in absent,
+/// first, or last among the input pins, crossed with carry-out absent, first, or last among the
+/// output pins (skipping the nonsensical "positioned but absent" combinations) -- covering both
+/// pin orderings real adder chips actually get built with ("a, b, cin" and "cin, a, b"; "sum,
+/// cout" and "cout, sum"), on both sides, in every combination.
+///
+/// This is the "quickly identify it's somewhat adder-looking, then check the sub-options" shape:
+/// `adder_applicable` alone (shape-only, no formula eval) already rules out a candidate whose
+/// `in_bits`/`out_bits` can't possibly be an adder of *any* flavor, and `find_candidate`'s
+/// anchor-row check rejects most of what's left in one row before ever running a full sweep --
+/// so trying all nine of these costs barely more than trying one, and adding a tenth arrangement
+/// later (say, a fixed-position "carry in the middle") is one more row here, not a new
+/// hand-written candidate.
+fn adder_variants() -> Vec<Candidate> {
+	const VARIANTS: &[(&str, Bits)] = &[
+		("ADDER_N", 0),
+		("ADDER_N_COU", CFG_HAS_COUT),
+		("ADDER_N_COU_COUTFIRST", CFG_HAS_COUT | CFG_COUT_FIRST),
+		("ADDER_N_CIN", CFG_HAS_CIN),
+		("ADDER_N_CIN_CINFIRST", CFG_HAS_CIN | CFG_CIN_FIRST),
+		("ADDER_N_CIN_COU", CFG_HAS_CIN | CFG_HAS_COUT),
+		("ADDER_N_CIN_COU_CINFIRST", CFG_HAS_CIN | CFG_HAS_COUT | CFG_CIN_FIRST),
+		("ADDER_N_CIN_COU_COUTFIRST", CFG_HAS_CIN | CFG_HAS_COUT | CFG_COUT_FIRST),
+		("ADDER_N_CIN_COU_CINFIRST_COUTFIRST", CFG_HAS_CIN | CFG_HAS_COUT | CFG_CIN_FIRST | CFG_COUT_FIRST),
+	];
+	VARIANTS.iter().map(|&(name, config)| Candidate { name, config, applicable: adder_applicable, formula: adder_formula }).collect()
 }
 
 /// Recognizes `lut` as a known gate pattern and, on a match, returns an equivalent [`Native`].

@@ -7,6 +7,7 @@
 
 use super::bitvec::{pack_words, unpack_words};
 use crate::pin_state::LogicState;
+use std::fmt;
 
 /// Small per-instance parameter (carry-in/carry-out flags and the like) passed alongside a
 /// formula, and the word size [`Native`]/[`NativeList`] formulas operate on. Deliberately a
@@ -26,7 +27,7 @@ pub type Bits = u64;
 /// `PinState::from_raw_with_width`. This is *not* one bit per output wire -- an output pin can itself be multiple wires (a nibble/byte bus), and
 /// `out`'s job is to hand each such pin back its own raw value, not a single bit-vector spanning
 /// every pin.
-pub trait CachedGate: std::fmt::Debug + Send + Sync {
+pub trait CachedGate: std::fmt::Debug + std::fmt::Display + Send + Sync {
 	/// Evaluates `input` into `out`. Returns `false` if this evaluator has nothing for `input`
 	/// (e.g. an out-of-range `Lut` row from a stale cache entry, or an `out` slice the wrong
 	/// length), in which case `out` is left untouched and the caller should fall back to a real
@@ -41,6 +42,26 @@ pub trait CachedGate: std::fmt::Debug + Send + Sync {
 #[derive(Debug)]
 pub struct Lut {
 	rows: Box<[Box<[u32]>]>,
+}
+
+impl fmt::Display for Lut {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let rows = self.rows.len();
+		let cols = self.rows.first().map_or(0, |row| row.len());
+		let total_elements = rows * cols;
+
+		// Get min/max values (optional but nice)
+		let (min, max) = if rows > 0 && cols > 0 {
+			let all_values = self.rows.iter().flat_map(|row| row.iter());
+			let min = all_values.clone().min().unwrap_or(&0);
+			let max = all_values.max().unwrap_or(&0);
+			(*min, *max)
+		} else {
+			(0, 0)
+		};
+
+		write!(f, "LUT [{} rows x {} cols] - {} total entries, range: {}..={}", rows, cols, total_elements, min, max)
+	}
 }
 
 impl Lut {
@@ -106,6 +127,21 @@ pub struct Native {
 	f: DuoSizedFn,
 }
 
+impl fmt::Display for Native {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		// Get function pointer info (optional, if DuoSizedFn has some debug info)
+		let fn_name = if self.f as usize == 0 {
+			"unknown".to_string()
+		} else {
+			// If DuoSizedFn stores any metadata or you can get a name
+			// You might need to adjust this based on what DuoSizedFn actually is
+			format!("fn@{:p}", self.f)
+		};
+
+		write!(f, "Native [{} inputs → {} outputs] (config: {:?}, fn: {})", self.in_bits, self.out_bits, self.config, fn_name)
+	}
+}
+
 impl Native {
 	pub fn new(in_bits: u32, out_bits: u32, config: Bits, f: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>) -> Self {
 		Self { in_bits, out_bits, config, f }
@@ -167,6 +203,22 @@ pub struct NativeList {
 	last: SizedFn,
 }
 
+impl fmt::Display for NativeList {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let total_steps = 1 + self.rest.len() + 1; // first + rest + last
+
+		write!(f, "NativeList [{}b → {}b] ({} steps, {} config)", self.in_bits, self.out_bits, total_steps, self.config)?;
+
+		// Optionally show step breakdown if not too verbose
+		if f.alternate() {
+			// With {:#} format, show more detail
+			write!(f, " [first + {} middle + last]", self.rest.len())?;
+		}
+
+		Ok(())
+	}
+}
+
 impl NativeList {
 	pub fn new(in_bits: u32, out_bits: u32, config: Bits, first: SizedFn, rest: Vec<NativeFn>, last: SizedFn) -> Self {
 		Self { in_bits, out_bits, config, first, rest, last }
@@ -220,6 +272,36 @@ pub struct NativeMulti {
 	entries: Vec<Native>,
 }
 
+impl fmt::Display for NativeMulti {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let pin_count = self.entries.len();
+
+		// Show summary of what each pin does (if we can extract it)
+		write!(f, "NativeMulti [{} pins", pin_count)?;
+
+		// Show first few pins with their input/output widths
+		let max_show = 3;
+		let show_count = pin_count.min(max_show);
+
+		if pin_count > 0 {
+			write!(f, ": ")?;
+			for (i, native) in self.entries.iter().take(show_count).enumerate() {
+				if i > 0 {
+					write!(f, ", ")?;
+				}
+				write!(f, "pin{}: {}b→{}b", i, native.in_bits, native.out_bits)?;
+			}
+			if pin_count > max_show {
+				write!(f, ", … (+{} more)", pin_count - max_show)?;
+			}
+		}
+
+		write!(f, "]")?;
+
+		Ok(())
+	}
+}
+
 impl NativeMulti {
 	pub fn new(entries: Vec<Native>) -> Self {
 		Self { entries }
@@ -263,6 +345,45 @@ pub struct NativeSplit {
 	native: Native,
 	/// Each output pin's `(bit offset into the combined word, width)`, in output-pin order.
 	out_layout: Vec<(u32, u32)>,
+}
+
+impl fmt::Display for NativeSplit {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let pin_count = self.out_layout.len();
+		let total_out_bits: u32 = self.out_layout.iter().map(|(_, width)| width).sum();
+
+		write!(f, "NativeSplit [{} pins, {}b total out", pin_count, total_out_bits)?;
+
+		// Show the layout if not too many pins
+		if pin_count <= 4 {
+			write!(f, ": ")?;
+			for (i, (offset, width)) in self.out_layout.iter().enumerate() {
+				if i > 0 {
+					write!(f, ", ")?;
+				}
+				write!(f, "p{}: bits {}-{}", i, offset, offset + width - 1)?;
+			}
+		} else {
+			// Show summary of layout
+			write!(f, ", layout: ")?;
+			for (i, (offset, width)) in self.out_layout.iter().take(2).enumerate() {
+				if i > 0 {
+					write!(f, ", ")?;
+				}
+				write!(f, "p{}: {}b@{}", i, width, offset)?;
+			}
+			if pin_count > 2 {
+				write!(f, ", … (+{} more)", pin_count - 2)?;
+			}
+		}
+
+		write!(f, "]")?;
+
+		// Show underlying native info
+		write!(f, " (native: {}b→{}b, {} config)", self.native.in_bits, self.native.out_bits, self.native.config)?;
+
+		Ok(())
+	}
 }
 
 impl NativeSplit {

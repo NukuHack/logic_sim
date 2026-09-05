@@ -577,6 +577,119 @@ fn native_handles_a_100_bit_adder() {
 	assert!(out[n], "bit 100 (the carry out of 2^100) should be set");
 }
 
+/// Every cin/cout arrangement the adder family claims to cover: cin absent/first/last crossed
+/// with cout absent/first/last (skipping "positioned but absent"), for a 3-bit-operand adder.
+/// Each LUT is built directly from `a + b (+ cin)` with the pins laid out in the stated order,
+/// so this exercises `recognize` end-to-end -- not just the formula in isolation -- for every
+/// one of the nine registry entries `adder_variants` produces.
+#[test]
+fn recognizes_every_cin_cout_arrangement() {
+	let n = 3usize;
+	let mask = (1u64 << n) - 1;
+
+	// cin absent, cout absent: in = 2n, out = n.
+	{
+		let lut = lut_for(2 * n as u32, n as u32, |b| {
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[n + i] as u64) << i));
+			let sum = (a + c) & mask;
+			(0..n).map(|i| (sum >> i) & 1 == 1).collect()
+		});
+		assert!(recognize(2 * n as u32, n as u32, &lut).is_some(), "no-cin/no-cout adder should be recognized");
+	}
+
+	// cin absent, cout last: in = 2n, out = n+1, carry as the final output bit.
+	{
+		let lut = lut_for(2 * n as u32, n as u32 + 1, |b| {
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[n + i] as u64) << i));
+			let sum = a + c;
+			(0..=n).map(|i| (sum >> i) & 1 == 1).collect()
+		});
+		let gate = recognize(2 * n as u32, n as u32 + 1, &lut).expect("cout-last adder should be recognized");
+		// 5 (101) + 3 (011) = 8 (1000): sum bits 000, carry 1.
+		let out = eval_bools(&*gate, n as u32 + 1, &[true, false, true, true, true, false]);
+		assert_eq!(out, vec![false, false, false, true]);
+	}
+
+	// cin absent, cout FIRST: in = 2n, out = n+1, carry as the *first* output bit, sum bits after.
+	{
+		let lut = lut_for(2 * n as u32, n as u32 + 1, |b| {
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[n + i] as u64) << i));
+			let sum = a + c;
+			let cout = (sum >> n) & 1 == 1;
+			let mut out = vec![cout];
+			out.extend((0..n).map(|i| (sum >> i) & 1 == 1));
+			out
+		});
+		let gate = recognize(2 * n as u32, n as u32 + 1, &lut).expect("cout-first adder should be recognized");
+		// Same 5+3=8 case: bit0 (cout) = 1, bits1..=3 (sum) = 000.
+		let out = eval_bools(&*gate, n as u32 + 1, &[true, false, true, true, true, false]);
+		assert_eq!(out, vec![true, false, false, false]);
+	}
+
+	// cin LAST, cout absent: in = 2n+1, out = n.
+	{
+		let lut = lut_for(2 * n as u32 + 1, n as u32, |b| {
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[n + i] as u64) << i));
+			let cin = b[2 * n] as u64;
+			let sum = (a + c + cin) & mask;
+			(0..n).map(|i| (sum >> i) & 1 == 1).collect()
+		});
+		assert!(recognize(2 * n as u32 + 1, n as u32, &lut).is_some(), "cin-last adder should be recognized");
+	}
+
+	// cin FIRST, cout absent: in = 2n+1, out = n, cin is input bit 0, operands shifted up by one.
+	{
+		let lut = lut_for(2 * n as u32 + 1, n as u32, |b| {
+			let cin = b[0] as u64;
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[1 + i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[1 + n + i] as u64) << i));
+			let sum = (a + c + cin) & mask;
+			(0..n).map(|i| (sum >> i) & 1 == 1).collect()
+		});
+		let gate = recognize(2 * n as u32 + 1, n as u32, &lut).expect("cin-first adder should be recognized");
+		// Pins: [cin, a0,a1,a2, c0,c1,c2]. cin=1, a=5 (a0,a1,a2=1,0,1), c=1 (c0,c1,c2=1,0,0)
+		// -> 5+1+1=7 (111).
+		let out = eval_bools(&*gate, n as u32, &[true, true, false, true, true, false, false]);
+		assert_eq!(out, vec![true, true, true]);
+	}
+
+	// cin FIRST, cout FIRST: in = 2n+1, out = n+1, both the "unusual" ends.
+	{
+		let lut = lut_for(2 * n as u32 + 1, n as u32 + 1, |b| {
+			let cin = b[0] as u64;
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[1 + i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[1 + n + i] as u64) << i));
+			let sum = a + c + cin;
+			let cout = (sum >> n) & 1 == 1;
+			let mut out = vec![cout];
+			out.extend((0..n).map(|i| (sum >> i) & 1 == 1));
+			out
+		});
+		let gate = recognize(2 * n as u32 + 1, n as u32 + 1, &lut).expect("cin-first/cout-first adder should be recognized");
+		// cin=1, a=7 (111), c=1 (001) -> 7+1+1=9 (1001): cout=1, sum bits = 001.
+		let out = eval_bools(&*gate, n as u32 + 1, &[true, true, true, true, true, false, false]);
+		assert_eq!(out, vec![true, true, false, false]);
+	}
+
+	// cin LAST, cout FIRST: the remaining mixed combination.
+	{
+		let lut = lut_for(2 * n as u32 + 1, n as u32 + 1, |b| {
+			let a = (0..n).fold(0u64, |acc, i| acc | ((b[i] as u64) << i));
+			let c = (0..n).fold(0u64, |acc, i| acc | ((b[n + i] as u64) << i));
+			let cin = b[2 * n] as u64;
+			let sum = a + c + cin;
+			let cout = (sum >> n) & 1 == 1;
+			let mut out = vec![cout];
+			out.extend((0..n).map(|i| (sum >> i) & 1 == 1));
+			out
+		});
+		assert!(recognize(2 * n as u32 + 1, n as u32 + 1, &lut).is_some(), "cin-last/cout-first adder should be recognized");
+	}
+}
 #[test]
 fn recognizes_wide_and_with_many_input_bits() {
 	let in_bits = 20;
