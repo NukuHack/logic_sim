@@ -6,7 +6,9 @@ use crate::render::context_menu::{ContextMenuAction, ContextMenuItem};
 use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
-use crate::viewer::state::{open_overlay, KeySelectPurpose, LedColourState, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState};
+use crate::viewer::state::{
+	open_overlay, KeySelectPurpose, LedColourState, LibraryMode, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState,
+};
 use crate::viewer::undo::{delete_wire_segment_with_undo, delete_wire_with_undo};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 
@@ -140,8 +142,7 @@ pub(crate) fn apply_context_menu_action(
 		}
 		(ContextMenuAction::Unstar, ContextTarget::BarChip(name)) => unstar_bottom_bar_chip(v, paths, status, &name),
 		(ContextMenuAction::Delete, ContextTarget::LibChip(name)) => {
-			v.library_delete_message = chip_delete_confirm_message(v, &name);
-			v.library_confirming_chip_delete = true;
+			v.library_mode = LibraryMode::ConfirmingChipDelete { message: chip_delete_confirm_message(v, &name) };
 			// Right-click delete has no row selected yet (only a name), so
 			// stash it as a `Chip` selection the confirmation can read back
 			// from -- find where it actually lives in the collections list.

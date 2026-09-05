@@ -20,7 +20,7 @@ use crate::viewer::chip_interaction::{self, CanvasInteraction};
 use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, DELETE_DRAG_ALPHA, PENDING_PLACEMENT_ALPHA};
 use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};
 use crate::viewer::save_flow::save_chip_mode;
-use crate::viewer::state::{editor_action, NamingPurpose, Overlay, SceneTarget, ViewerAction, ViewerState};
+use crate::viewer::state::{editor_action, LibraryMode, NamingPurpose, Overlay, SceneTarget, ViewerAction, ViewerState};
 
 /// Camera zoom used for a chip with no geometry to fit to (a brand-new blank
 /// chip, before anything's been placed on it). Chips are laid out in grid
@@ -477,18 +477,27 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			};
 			let selected_chip_is_custom = selected_chip_name.as_deref().is_some_and(|n| is_custom_chip(&v.library, n));
 			let selected_chip_would_cycle = selected_chip_name.as_deref().is_some_and(|n| would_create_cycle(&v.library, &v.root_chip_name, n));
+			// `editor_ui::ChipLibraryState` still takes the plain flattened booleans/message it
+			// always has -- it's a rendering-facing view, not the state owner, so `LibraryMode`
+			// (the actual source of truth) is unpacked into that shape right here rather than
+			// leaking the enum into the render module.
+			let (confirming_chip_delete, confirming_collection_delete, delete_confirm_message) = match &v.library_mode {
+				LibraryMode::ConfirmingChipDelete { message } => (true, false, message.as_str()),
+				LibraryMode::ConfirmingCollectionDelete { message } => (false, true, message.as_str()),
+				_ => (false, false, ""),
+			};
 			let state = editor_ui::ChipLibraryState {
 				collections: &v.prefs.chip_collections,
 				starred_list: &v.prefs.starred_list,
 				selection: v.library_selection,
 				selected_chip_is_custom,
 				selected_chip_would_cycle,
-				creating_collection: v.library_creating_collection,
-				renaming_collection: v.library_renaming_collection,
+				creating_collection: v.library_mode == LibraryMode::CreatingCollection,
+				renaming_collection: v.library_mode == LibraryMode::RenamingCollection,
 				name_field_text: &v.overlay_text_input,
-				confirming_chip_delete: v.library_confirming_chip_delete,
-				confirming_collection_delete: v.library_confirming_collection_delete,
-				delete_confirm_message: &v.library_delete_message,
+				confirming_chip_delete,
+				confirming_collection_delete,
+				delete_confirm_message,
 			};
 			editor_ui::build_chip_library_panel(&state, vw, vh, mouse)
 		}

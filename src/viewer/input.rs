@@ -151,7 +151,7 @@ pub(crate) fn handle_viewer_key(
 				}
 			}
 		} else if matches!(target, Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))
-			|| (matches!(target, Some(LayerId::Library)) && (v.library_creating_collection || v.library_renaming_collection))
+			|| (matches!(target, Some(LayerId::Library)) && v.library_mode.is_naming())
 		{
 			if v.overlay_text_input.chars().count() < 64 {
 				v.overlay_text_input.push_str(s);
@@ -208,7 +208,7 @@ pub(crate) fn handle_viewer_key(
 		}
 		NamedKey::Backspace
 			if matches!(target, Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::PinEdit))
-				|| (matches!(target, Some(LayerId::Library)) && (v.library_creating_collection || v.library_renaming_collection)) =>
+				|| (matches!(target, Some(LayerId::Library)) && v.library_mode.is_naming()) =>
 		{
 			v.overlay_text_input.pop();
 		}
@@ -221,7 +221,7 @@ pub(crate) fn handle_viewer_key(
 		NamedKey::Enter if target == Some(LayerId::UnsavedChanges) => {
 			confirm_unsaved_changes_popup(v, paths, status);
 		}
-		NamedKey::Enter if target == Some(LayerId::Library) && (v.library_creating_collection || v.library_renaming_collection) => {
+		NamedKey::Enter if target == Some(LayerId::Library) && v.library_mode.is_naming() => {
 			apply_editor_action(v, paths, status, EditorAction::ConfirmCollectionName);
 		}
 		NamedKey::Enter if target == Some(LayerId::RomEditor) => {
@@ -263,13 +263,7 @@ pub(crate) fn handle_viewer_key(
 			apply_prefs_field_text(v);
 		}
 		// ---- Library panel keys (work while it has focus, even under another popup) ----
-		NamedKey::Escape
-			if target == Some(LayerId::Library)
-				&& (v.library_creating_collection
-					|| v.library_renaming_collection
-					|| v.library_confirming_chip_delete
-					|| v.library_confirming_collection_delete) =>
-		{
+		NamedKey::Escape if target == Some(LayerId::Library) && (v.library_mode.is_naming() || v.library_mode.is_confirming_delete()) => {
 			reset_library_popup_state(v);
 		}
 		// ---- Customize workspace: Escape cancels a grab/resize first,
@@ -396,7 +390,7 @@ fn persist_prefs_shortcut_change(v: &mut ViewerState, paths: &SavePaths) {
 fn typing_into_free_text_field(v: &ViewerState) -> bool {
 	match v.stack.keyboard_target() {
 		Some(LayerId::Naming | LayerId::RomEditor | LayerId::SaveChip | LayerId::PinEdit | LayerId::Search | LayerId::KeySelect) => true,
-		Some(LayerId::Library) => v.library_creating_collection || v.library_renaming_collection,
+		Some(LayerId::Library) => v.library_mode.is_naming(),
 		_ => false,
 	}
 }

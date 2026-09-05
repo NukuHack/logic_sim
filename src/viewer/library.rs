@@ -6,7 +6,7 @@
 
 use crate::json::{ChipCollection, ProjectDescription};
 use crate::render::editor_ui::LibrarySelection;
-use crate::viewer::state::ViewerState;
+use crate::viewer::state::{LibraryMode, ViewerState};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
 
 /// Mandatory catch-all collection every project's library falls back to
@@ -121,11 +121,7 @@ fn prune_hidden_chips_from_palette_gated(prefs: &mut ProjectDescription, library
 /// confirmation) is open in the library panel, without leaving the
 /// library itself -- mirrors `ChipLibraryMenu.ResetPopupState`.
 pub(crate) fn reset_library_popup_state(v: &mut ViewerState) {
-	v.library_creating_collection = false;
-	v.library_renaming_collection = false;
-	v.library_confirming_chip_delete = false;
-	v.library_confirming_collection_delete = false;
-	v.library_delete_message.clear();
+	v.library_mode = LibraryMode::Normal;
 	v.overlay_text_input.clear();
 }
 

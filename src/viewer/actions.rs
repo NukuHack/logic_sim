@@ -17,7 +17,7 @@ use crate::viewer::popups::{
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
 };
-use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, reset_preferences_draft, Overlay, ViewerState};
+use crate::viewer::state::{close_all_overlays, close_top_overlay, open_overlay, reset_preferences_draft, LibraryMode, Overlay, ViewerState};
 use crate::{SavePaths, Saver};
 
 /// Applies a click on one of the editor overlays.
@@ -63,20 +63,17 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			request_open_chip(v, paths, status, &name, true);
 		}
 		EA::RequestDeleteChip(name) => {
-			v.library_delete_message = chip_delete_confirm_message(v, &name);
-			v.library_confirming_chip_delete = true;
+			v.library_mode = LibraryMode::ConfirmingChipDelete { message: chip_delete_confirm_message(v, &name) };
 		}
 		EA::BeginNewCollection => {
-			v.library_creating_collection = true;
-			v.library_renaming_collection = false;
+			v.library_mode = LibraryMode::CreatingCollection;
 			v.overlay_text_input.clear();
 		}
 		EA::BeginRenameCollection => {
 			if let LibrarySelection::Collection(i) = v.library_selection {
 				if let Some(c) = v.prefs.chip_collections.get(i) {
 					v.overlay_text_input = c.name.clone();
-					v.library_renaming_collection = true;
-					v.library_creating_collection = false;
+					v.library_mode = LibraryMode::RenamingCollection;
 				}
 			}
 		}
@@ -86,18 +83,19 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 					delete_collection(&mut v.prefs, i);
 					v.library_selection = LibrarySelection::None;
 				} else {
-					v.library_delete_message = "Are you sure you want to delete this collection? Its chips will be moved to \"OTHER\".".to_string();
-					v.library_confirming_collection_delete = true;
+					v.library_mode = LibraryMode::ConfirmingCollectionDelete {
+						message: "Are you sure you want to delete this collection? Its chips will be moved to \"OTHER\".".to_string(),
+					};
 				}
 			}
 		}
 		EA::ConfirmCollectionName => {
 			let new_name = v.overlay_text_input.trim().to_string();
 			if !new_name.is_empty() {
-				if v.library_creating_collection {
+				if v.library_mode == LibraryMode::CreatingCollection {
 					v.prefs.chip_collections.push(ChipCollection::new(&new_name, Vec::<String>::new()));
 					v.library_selection = LibrarySelection::Collection(v.prefs.chip_collections.len() - 1);
-				} else if v.library_renaming_collection {
+				} else if v.library_mode == LibraryMode::RenamingCollection {
 					if let LibrarySelection::Collection(i) = v.library_selection {
 						if let Some(c) = v.prefs.chip_collections.get_mut(i) {
 							let old_name = c.name.clone();
@@ -115,20 +113,24 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		}
 		EA::CancelLibraryPopup => reset_library_popup_state(v),
 		EA::ConfirmDelete => {
-			if v.library_confirming_chip_delete {
-				let name = match v.library_selection {
-					LibrarySelection::Chip(ci, chi) => v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).cloned(),
-					LibrarySelection::Starred(i) => v.prefs.starred_list.get(i).filter(|it| !it.is_collection).map(|it| it.name.clone()),
-					_ => None,
-				};
-				if let Some(name) = name {
-					delete_chip_from_library(v, paths, status, &name);
+			match &v.library_mode {
+				LibraryMode::ConfirmingChipDelete { .. } => {
+					let name = match v.library_selection {
+						LibrarySelection::Chip(ci, chi) => v.prefs.chip_collections.get(ci).and_then(|c| c.chips.get(chi)).cloned(),
+						LibrarySelection::Starred(i) => v.prefs.starred_list.get(i).filter(|it| !it.is_collection).map(|it| it.name.clone()),
+						_ => None,
+					};
+					if let Some(name) = name {
+						delete_chip_from_library(v, paths, status, &name);
+					}
 				}
-			} else if v.library_confirming_collection_delete {
-				if let LibrarySelection::Collection(i) = v.library_selection {
-					delete_collection(&mut v.prefs, i);
+				LibraryMode::ConfirmingCollectionDelete { .. } => {
+					if let LibrarySelection::Collection(i) = v.library_selection {
+						delete_collection(&mut v.prefs, i);
+					}
+					v.library_selection = LibrarySelection::None;
 				}
-				v.library_selection = LibrarySelection::None;
+				_ => {}
 			}
 			reset_library_popup_state(v);
 		}

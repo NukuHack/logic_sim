@@ -17,6 +17,44 @@ use crate::{ChipLibrary, ProjectDescription};
 
 use crate::structs::Vec2;
 
+/// Which inline sub-popup the library overlay's collection/chip-delete UI is showing, if any --
+/// replaces four bools (`creating_collection`/`renaming_collection`/`confirming_chip_delete`/
+/// `confirming_collection_delete`) plus their shared delete-confirmation message, which
+/// together could represent combinations (e.g. "confirming both deletes at once") that never
+/// actually occur. Carrying each confirmation's message as that variant's own field means it
+/// can't be stale or left over from the other confirmation kind.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum LibraryMode {
+	/// No inline popup open; the plain browse/select view.
+	#[default]
+	Normal,
+	/// The inline "new collection" name field is open.
+	CreatingCollection,
+	/// The inline "rename collection" name field is open, for whichever
+	/// collection `ViewerState::library_selection` points at.
+	RenamingCollection,
+	/// The inline chip-delete confirmation is open, with its precomputed
+	/// warning message -- see `chip_delete_confirm_message`.
+	ConfirmingChipDelete { message: String },
+	/// The inline collection-delete confirmation is open, with its
+	/// precomputed warning message.
+	ConfirmingCollectionDelete { message: String },
+}
+
+impl LibraryMode {
+	/// Whether a name-entry field is open (new/rename collection) -- these two share every bit
+	/// of input-routing behaviour (typing, Backspace, Enter-to-confirm) and only differ in what
+	/// `EditorAction::ConfirmCollectionName` does with the typed text.
+	pub(crate) fn is_naming(&self) -> bool {
+		matches!(self, LibraryMode::CreatingCollection | LibraryMode::RenamingCollection)
+	}
+
+	/// Whether either delete confirmation is open.
+	pub(crate) fn is_confirming_delete(&self) -> bool {
+		matches!(self, LibraryMode::ConfirmingChipDelete { .. } | LibraryMode::ConfirmingCollectionDelete { .. })
+	}
+}
+
 /// One editor panel from `render::editor_ui` that can sit in [`ViewerState::overlays`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Overlay {
@@ -344,19 +382,9 @@ pub(crate) struct ViewerState {
 	/// Which row of the real `Overlay::Library` panel is currently
 	/// selected -- see `editor_ui::LibrarySelection`'s docs.
 	pub(crate) library_selection: LibrarySelection,
-	/// Whether the library's inline "new collection" name field is open.
-	pub(crate) library_creating_collection: bool,
-	/// Whether the library's inline "rename collection" name field is
-	/// open (for whichever collection `library_selection` points at).
-	pub(crate) library_renaming_collection: bool,
-	/// Whether the library's inline chip-delete confirmation is open.
-	pub(crate) library_confirming_chip_delete: bool,
-	/// Whether the library's inline collection-delete confirmation is
-	/// open.
-	pub(crate) library_confirming_collection_delete: bool,
-	/// Precomputed message shown by whichever of the above two
-	/// confirmations is open -- see `chip_delete_confirm_message`.
-	pub(crate) library_delete_message: String,
+	/// Which inline collection/delete popup the library overlay is showing, if any -- see
+	/// [`LibraryMode`].
+	pub(crate) library_mode: LibraryMode,
 	/// Name of the starred collection whose flyout is currently open in
 	/// the bottom bar (`editor_ui::build_starred_collection_popup`), if
 	/// any.
@@ -462,11 +490,7 @@ impl ViewerState {
 			bottom_bar_scroll_x: 0.0,
 			bottom_bar_scroll_max: 0.0,
 			library_selection: LibrarySelection::None,
-			library_creating_collection: false,
-			library_renaming_collection: false,
-			library_confirming_chip_delete: false,
-			library_confirming_collection_delete: false,
-			library_delete_message: String::new(),
+			library_mode: LibraryMode::default(),
 			bottom_bar_open_collection: None,
 			context_menu: None,
 			pending_wire: None,
