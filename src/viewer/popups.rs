@@ -36,16 +36,16 @@ pub(crate) fn apply_prefs_field_text(v: &mut ViewerState) {
 	v.prefs.prefs_sim_target_steps_per_second = v.prefs_rate_text.parse::<i32>().unwrap_or(0);
 }
 
-/// Applies whatever's typed into `Overlay::Naming`'s text field, per
-/// `v.naming_purpose` -- shared by the popup's Confirm button
+/// Applies whatever's typed into `Overlay::Naming`'s text field, per its
+/// stored `NamingPurpose` -- shared by the popup's Confirm button
 /// (`EditorAction::ConfirmName`) and pressing Enter directly. Always
-/// closes the popup and resets `naming_purpose` back to its default
-/// afterwards, success or not.
+/// closes the popup afterwards, success or not, which drops the purpose
+/// along with it.
 pub(crate) fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<String>) {
 	let trimmed = v.overlay_text_input.trim().to_string();
 	let root_chip_name = v.root_chip_name.clone();
 
-	match v.naming_purpose {
+	match v.naming_purpose() {
 		NamingPurpose::RenameProject => {
 			if !trimmed.is_empty() {
 				v.prefs.project_name = trimmed;
@@ -90,9 +90,9 @@ fn parse_rom_word(text: &str) -> Option<u32> {
 /// without re-clicking between each one. A parse failure leaves the selection and text field
 /// untouched (so the player can just fix their typo) rather than silently discarding it.
 pub(crate) fn confirm_rom_cell(v: &mut ViewerState, status: &mut Option<String>) {
-	let Some(editor) = v.rom_editor.as_mut() else { return };
 	match parse_rom_word(&v.overlay_text_input) {
 		Some(value) => {
+			let Some(editor) = v.rom_editor_mut() else { return };
 			if let Some(cell) = editor.data.get_mut(editor.selected) {
 				*cell = value;
 			}
@@ -110,7 +110,9 @@ pub(crate) fn confirm_rom_cell(v: &mut ViewerState, status: &mut Option<String>)
 /// a silent no-op for that last cell.
 pub(crate) fn apply_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
 	confirm_rom_cell(v, status);
-	if let Some(editor) = v.rom_editor.take() {
+	// Cloned rather than taken: the draft lives inside the `Overlay::RomEditor` on the stack
+	// (see `Overlay`'s docs), and `close_top_overlay` below is what actually discards it.
+	if let Some(editor) = v.rom_editor().cloned() {
 		let root_chip_name = v.root_chip_name.clone();
 		if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == editor.component_id) {
 			sub.internal_data = Some(editor.data);
@@ -126,7 +128,7 @@ pub(crate) fn apply_rom_editor(v: &mut ViewerState, status: &mut Option<String>)
 /// type a fresh value into instead of backspacing through whatever was
 /// loaded in from the last selected cell.
 pub(crate) fn clear_rom_field(v: &mut ViewerState) {
-	if v.rom_editor.is_some() {
+	if v.rom_editor().is_some() {
 		v.overlay_text_input.clear();
 	}
 }
@@ -137,7 +139,7 @@ pub(crate) fn clear_rom_field(v: &mut ViewerState) {
 /// editor does: nothing is written to the subchip until "Apply", so
 /// "Cancel" backs a reset out just as cleanly as any other edit.
 pub(crate) fn reset_rom_editor(v: &mut ViewerState) {
-	if let Some(editor) = v.rom_editor.as_mut() {
+	if let Some(editor) = v.rom_editor_mut() {
 		editor.data.iter_mut().for_each(|w| *w = 0);
 		v.overlay_text_input = "0".to_string();
 	}
@@ -179,7 +181,7 @@ pub(crate) fn rom_parse_clipboard_text(text: &str) -> Option<Vec<u32>> {
 /// "Copy" (`EditorAction::RomCopy`): puts the whole draft buffer on the
 /// system clipboard via `rom_copy_text`.
 pub(crate) fn copy_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
-	let Some(editor) = v.rom_editor.as_ref() else { return };
+	let Some(editor) = v.rom_editor() else { return };
 	let text = rom_copy_text(&editor.data);
 	match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
 		Ok(()) => *status = Some("ROM contents copied".to_string()),
@@ -204,7 +206,7 @@ pub(crate) fn paste_rom_editor(v: &mut ViewerState, status: &mut Option<String>)
 		*status = Some("Clipboard didn't contain any numbers to paste".to_string());
 		return;
 	};
-	if let Some(editor) = v.rom_editor.as_mut() {
+	if let Some(editor) = v.rom_editor_mut() {
 		editor.data = parsed;
 		editor.selected = editor.selected.min(editor_ui::ROM_WORD_COUNT - 1);
 		v.overlay_text_input = editor.data[editor.selected].to_string();
@@ -212,25 +214,27 @@ pub(crate) fn paste_rom_editor(v: &mut ViewerState, status: &mut Option<String>)
 	}
 }
 
-/// Applies whatever's chosen in `Overlay::KeySelect`, per
-/// `v.key_select_purpose` -- shared by the popup's Confirm button
+/// Applies whatever's chosen in `Overlay::KeySelect`, per its stored
+/// `KeySelectPurpose` -- shared by the popup's Confirm button
 /// (`EditorAction::ConfirmKey`) and pressing Enter directly, mirroring
 /// `confirm_naming_popup`.
 pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<String>) {
-	if let Some(c) = v.overlay_key_choice {
-		match v.key_select_purpose {
-			KeySelectPurpose::Rebind => {
-				// No actual keybind system exists to rebind yet -- this
-				// just reports the choice back so the popup is usable
-				// and testable end-to-end ahead of that being wired up.
-				*status = Some(format!("Key '{c}' chosen (not yet wired to an action)"));
-			}
-			KeySelectPurpose::ConfigureKeyChar(id) => {
-				let root_chip_name = v.root_chip_name.clone();
-				if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
-					sub.internal_data = Some(vec![c as u32]);
+	if let Some(state) = v.key_select().copied() {
+		if let Some(c) = state.chosen {
+			match state.purpose {
+				KeySelectPurpose::Rebind => {
+					// No actual keybind system exists to rebind yet -- this
+					// just reports the choice back so the popup is usable
+					// and testable end-to-end ahead of that being wired up.
+					*status = Some(format!("Key '{c}' chosen (not yet wired to an action)"));
 				}
-				v.rebuild_sim();
+				KeySelectPurpose::ConfigureKeyChar(id) => {
+					let root_chip_name = v.root_chip_name.clone();
+					if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
+						sub.internal_data = Some(vec![c as u32]);
+					}
+					v.rebuild_sim();
+				}
 			}
 		}
 	}
@@ -244,7 +248,9 @@ pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<
 /// `PinDescription::colour`, and -- for multi-bit pins -- the chosen Decimal Display mode to
 /// `PinDescription::value_display_mode`, both of which scene rendering reads each frame.
 pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
-	if let Some(edit) = v.pin_edit.take() {
+	// Copied rather than taken: the draft lives inside the `Overlay::PinEdit` on the stack, and
+	// `close_top_overlay` below is what actually discards it.
+	if let Some(edit) = v.pin_edit().copied() {
 		let trimmed = v.overlay_text_input.trim().to_string();
 		let name_len = trimmed.chars().count();
 		if !trimmed.is_empty() && name_len <= editor_ui::MAX_PIN_NAME_LENGTH {
@@ -273,7 +279,8 @@ pub(crate) fn confirm_pin_edit_popup(v: &mut ViewerState) {
 /// reads each frame to tint the LED body (see `PlacedSubChip::internal_data`'s
 /// docs). Always closes the popup afterwards.
 pub(crate) fn confirm_led_colour_popup(v: &mut ViewerState) {
-	if let Some(edit) = v.led_colour.take() {
+	// Copied rather than taken -- see `confirm_pin_edit_popup`'s note.
+	if let Some(edit) = v.led_colour().copied() {
 		let root_chip_name = v.root_chip_name.clone();
 		let chip = v.library.get_mut(&root_chip_name);
 		if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == edit.component_id) {
@@ -347,7 +354,7 @@ mod tests {
 		let chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
 		library.add(chip);
 		let mut v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
-		v.rom_editor = Some(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 });
+		v.overlays.push(crate::viewer::state::Overlay::RomEditor(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 }));
 		v.overlay_text_input = "999".to_string();
 		v
 	}
@@ -357,14 +364,14 @@ mod tests {
 		let mut v = viewer_with_rom_editor(vec![7u32; editor_ui::ROM_WORD_COUNT]);
 		clear_rom_field(&mut v);
 		assert_eq!(v.overlay_text_input, "");
-		assert_eq!(v.rom_editor.as_ref().unwrap().data[0], 7, "the committed buffer is untouched");
+		assert_eq!(v.rom_editor().unwrap().data[0], 7, "the committed buffer is untouched");
 	}
 
 	#[test]
 	fn reset_rom_editor_zeroes_the_whole_draft_buffer() {
 		let mut v = viewer_with_rom_editor(vec![7u32; editor_ui::ROM_WORD_COUNT]);
 		reset_rom_editor(&mut v);
-		assert!(v.rom_editor.as_ref().unwrap().data.iter().all(|&w| w == 0));
+		assert!(v.rom_editor().unwrap().data.iter().all(|&w| w == 0));
 		assert_eq!(v.overlay_text_input, "0");
 	}
 
@@ -398,8 +405,8 @@ mod tests {
 		ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
 	}
 
-	fn open_pin_edit(v: &mut ViewerState) {
-		v.overlays.push(crate::viewer::state::Overlay::PinEdit);
+	fn open_pin_edit(v: &mut ViewerState, state: PinEditState) {
+		v.overlays.push(crate::viewer::state::Overlay::PinEdit(state));
 	}
 
 	/// The popup's whole contract: Confirm writes every half (name +
@@ -409,8 +416,7 @@ mod tests {
 	#[test]
 	fn confirm_pin_edit_writes_name_and_display_mode() {
 		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit8);
-		open_pin_edit(&mut v);
-		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 3, colour: crate::description::Color::Green });
+		open_pin_edit(&mut v, PinEditState { is_input: false, pin_id: 4, display_mode_index: 3, colour: crate::description::Color::Green });
 		v.overlay_text_input = "DATA BUS".to_string();
 
 		confirm_pin_edit_popup(&mut v);
@@ -419,14 +425,13 @@ mod tests {
 		assert_eq!(pin.name, "DATA BUS");
 		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::Hex);
 		assert_eq!(pin.colour, crate::description::Color::Green);
-		assert!(v.pin_edit.is_none() && v.overlays.is_empty(), "the popup closed with its draft dropped");
+		assert!(v.pin_edit().is_none() && v.overlays.is_empty(), "the popup closed with its draft dropped");
 	}
 
 	#[test]
 	fn confirm_pin_edit_ignores_mode_for_1bit_and_bad_names() {
 		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit1);
-		open_pin_edit(&mut v);
-		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 1, colour: crate::description::Color::Red });
+		open_pin_edit(&mut v, PinEditState { is_input: false, pin_id: 4, display_mode_index: 1, colour: crate::description::Color::Red });
 		v.overlay_text_input = "CLK".to_string();
 		confirm_pin_edit_popup(&mut v);
 		let pin = &v.library.get("ROOT").output_pins[0];
@@ -434,8 +439,7 @@ mod tests {
 		assert_eq!(pin.value_display_mode, crate::ValueDisplayMode::None, "1-bit pins don't take a display mode");
 
 		let mut v = viewer_with_dev_pin(crate::PinBitCount::Bit8);
-		open_pin_edit(&mut v);
-		v.pin_edit = Some(PinEditState { is_input: false, pin_id: 4, display_mode_index: 2, colour: crate::description::Color::Blue });
+		open_pin_edit(&mut v, PinEditState { is_input: false, pin_id: 4, display_mode_index: 2, colour: crate::description::Color::Blue });
 		v.overlay_text_input = "   ".to_string();
 		confirm_pin_edit_popup(&mut v);
 		let pin = &v.library.get("ROOT").output_pins[0];

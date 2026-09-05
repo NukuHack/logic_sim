@@ -199,10 +199,14 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.search_delete_confirm = None;
 		}
 		EA::ConfirmName => confirm_naming_popup(v, status),
-		EA::ChooseKey(c) => v.overlay_key_choice = Some(c),
+		EA::ChooseKey(c) => {
+			if let Some(state) = v.key_select_mut() {
+				state.chosen = Some(c);
+			}
+		}
 		EA::ConfirmKey => confirm_key_select_popup(v, status),
 		EA::RomSelectCell(idx) => {
-			if let Some(editor) = v.rom_editor.as_mut() {
+			if let Some(editor) = v.rom_editor_mut() {
 				editor.selected = idx.min(crate::render::editor_ui::ROM_WORD_COUNT - 1);
 				v.overlay_text_input = editor.data[editor.selected].to_string();
 			}
@@ -233,12 +237,12 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.cache_toggle_touched.insert(v.root_chip_name.to_ascii_lowercase());
 		}
 		EA::PinEditSetDisplayMode(i) => {
-			if let Some(edit) = v.pin_edit.as_mut() {
+			if let Some(edit) = v.pin_edit_mut() {
 				edit.display_mode_index = i;
 			}
 		}
 		EA::PinEditSetColour(i) => {
-			if let Some(edit) = v.pin_edit.as_mut() {
+			if let Some(edit) = v.pin_edit_mut() {
 				edit.colour = crate::description::Color::from_int(i as i32);
 			}
 		}
@@ -246,7 +250,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 		EA::ExitViewedChip => v.return_to_previous_viewed_chip(),
 		EA::LedColourConfirm => confirm_led_colour_popup(v),
 		EA::LedColourSetColour(i) => {
-			if let Some(edit) = v.led_colour.as_mut() {
+			if let Some(edit) = v.led_colour_mut() {
 				edit.colour_index = i;
 			}
 		}

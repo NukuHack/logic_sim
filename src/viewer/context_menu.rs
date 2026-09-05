@@ -7,7 +7,7 @@ use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
 use crate::viewer::save_flow::request_open_chip;
 use crate::viewer::state::{
-	open_overlay, KeySelectPurpose, LedColourState, LibraryMode, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState,
+	open_overlay, KeySelectPurpose, KeySelectState, LedColourState, LibraryMode, NamingPurpose, Overlay, PinEditState, RomEditorState, ViewerState,
 };
 use crate::viewer::undo::{delete_wire_segment_with_undo, delete_wire_with_undo};
 use crate::{ChipLibrary, ChipType, SavePaths, Saver};
@@ -156,9 +156,8 @@ pub(crate) fn apply_context_menu_action(
 
 		(ContextMenuAction::Label, ContextTarget::Component(id)) => {
 			let current = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.label.clone()).unwrap_or_default();
-			open_overlay(v, Overlay::Naming);
 			v.overlay_text_input = current;
-			v.naming_purpose = NamingPurpose::LabelComponent(id);
+			open_overlay(v, Overlay::Naming(NamingPurpose::LabelComponent(id)));
 		}
 		(ContextMenuAction::Flip, ContextTarget::Component(id)) => {
 			if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
@@ -181,9 +180,8 @@ pub(crate) fn apply_context_menu_action(
 			// immutable borrow ends before the overlay opens.
 			let draft = pins.iter().find(|p| p.id == id).map(|p| (p.name.clone(), p.value_display_mode.to_int().max(0) as usize, p.colour));
 			if let Some((current_name, display_mode_index, colour)) = draft {
-				open_overlay(v, Overlay::PinEdit);
 				v.overlay_text_input = current_name;
-				v.pin_edit = Some(PinEditState { is_input, pin_id: id, display_mode_index, colour });
+				open_overlay(v, Overlay::PinEdit(PinEditState { is_input, pin_id: id, display_mode_index, colour }));
 			}
 		}
 		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
@@ -195,26 +193,22 @@ pub(crate) fn apply_context_menu_action(
 				v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).and_then(|s| s.internal_data.clone()).unwrap_or_default();
 			match chip_type {
 				Some(ChipType::Pulse) => {
-					open_overlay(v, Overlay::Naming);
 					v.overlay_text_input = internal_data.first().copied().unwrap_or(0).to_string();
-					v.naming_purpose = NamingPurpose::ConfigurePulseDuration(id);
+					open_overlay(v, Overlay::Naming(NamingPurpose::ConfigurePulseDuration(id)));
 				}
 				Some(ChipType::Key) => {
-					open_overlay(v, Overlay::KeySelect);
-					v.overlay_key_choice = internal_data.first().map(|&code| code as u8 as char);
-					v.key_select_purpose = KeySelectPurpose::ConfigureKeyChar(id);
+					let chosen = internal_data.first().map(|&code| code as u8 as char);
+					open_overlay(v, Overlay::KeySelect(KeySelectState { purpose: KeySelectPurpose::ConfigureKeyChar(id), chosen }));
 				}
 				Some(ChipType::Rom256x16) => {
 					let mut data = internal_data;
 					data.resize(crate::render::editor_ui::ROM_WORD_COUNT, 0);
-					open_overlay(v, Overlay::RomEditor);
 					v.overlay_text_input = data[0].to_string();
-					v.rom_editor = Some(RomEditorState { component_id: id, data, selected: 0 });
+					open_overlay(v, Overlay::RomEditor(RomEditorState { component_id: id, data, selected: 0 }));
 				}
 				Some(ChipType::DisplayLed) => {
 					let colour_index = internal_data.first().copied().unwrap_or(0) as usize;
-					open_overlay(v, Overlay::LedColour);
-					v.led_colour = Some(LedColourState { component_id: id, colour_index });
+					open_overlay(v, Overlay::LedColour(LedColourState { component_id: id, colour_index }));
 				}
 				_ => {}
 			}
@@ -288,18 +282,17 @@ mod tests {
 
 		apply_context_menu_action(&mut v, &paths, &mut None, "devpin:out:4", ContextMenuAction::Configure);
 
-		assert_eq!(v.overlays, vec![Overlay::PinEdit], "the popup opened on top");
-		assert_eq!(v.overlay_text_input, "DATA", "the name field starts from the pin's name");
 		assert_eq!(
-			v.pin_edit,
-			Some(PinEditState {
+			v.overlays,
+			vec![Overlay::PinEdit(PinEditState {
 				is_input: false,
 				pin_id: 4,
 				display_mode_index: crate::ValueDisplayMode::Hex as usize,
 				colour: crate::description::Color::Red
-			}),
-			"the wheel starts from the pin's current mode, the swatch from its current colour"
+			})],
+			"the popup opened on top, with the wheel seeded from the pin's current mode and the swatch from its current colour"
 		);
+		assert_eq!(v.overlay_text_input, "DATA", "the name field starts from the pin's name");
 
 		let _ = std::fs::remove_dir_all(&root);
 	}
@@ -313,7 +306,7 @@ mod tests {
 
 		apply_context_menu_action(&mut v, &paths, &mut None, "devpin:out:999", ContextMenuAction::Configure);
 
-		assert!(v.overlays.is_empty() && v.pin_edit.is_none());
+		assert!(v.overlays.is_empty() && v.pin_edit().is_none());
 
 		let _ = std::fs::remove_dir_all(&root);
 	}

@@ -114,7 +114,9 @@ pub(crate) fn handle_viewer_key(
 	// digit key's own character already matches).
 	if target == Some(LayerId::KeySelect) {
 		if let Some(c @ '0'..='9') = char_for_keys(event.physical_key, &event.logical_key) {
-			v.overlay_key_choice = Some(c);
+			if let Some(state) = v.key_select_mut() {
+				state.chosen = Some(c);
+			}
 		}
 	}
 
@@ -147,7 +149,9 @@ pub(crate) fn handle_viewer_key(
 			if let Some(c) = s.chars().next() {
 				let upper = c.to_ascii_uppercase();
 				if editor_ui::KEY_SELECT_ALLOWED_CHARS.contains(upper) {
-					v.overlay_key_choice = Some(upper);
+					if let Some(state) = v.key_select_mut() {
+						state.chosen = Some(upper);
+					}
 				}
 			}
 		} else if matches!(target, Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))
@@ -227,7 +231,7 @@ pub(crate) fn handle_viewer_key(
 		NamedKey::Enter if target == Some(LayerId::RomEditor) => {
 			confirm_rom_cell(v, status);
 		}
-		NamedKey::Enter if target == Some(LayerId::KeySelect) && v.overlay_key_choice.is_some() => {
+		NamedKey::Enter if target == Some(LayerId::KeySelect) && v.key_select().is_some_and(|s| s.chosen.is_some()) => {
 			confirm_key_select_popup(v, status);
 		}
 		// Enter only auto-confirms the unambiguous save-chip modes (a single "Save"/"Replace"

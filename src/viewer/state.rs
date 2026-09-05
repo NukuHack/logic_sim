@@ -56,39 +56,36 @@ impl LibraryMode {
 }
 
 /// One editor panel from `render::editor_ui` that can sit in [`ViewerState::overlays`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Variants that own a draft does carry some internal data that can be only useful for that ui
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Overlay {
 	Library,
 	Search,
 	Preferences,
-	Naming,
-	KeySelect,
-	RomEditor,
+	Naming(NamingPurpose),
+	KeySelect(KeySelectState),
+	RomEditor(RomEditorState),
 	SaveChip,
 	CustomizeChip,
-	/// The boundary-dev-pin edit popup (`PinEditMenu`): rename +, for
-	/// multi-bit pins, the "Decimal Display" wheel.
-	PinEdit,
-	/// The LED colour picker popup: pick a palette colour for an LED
-	/// component's tint.
-	LedColour,
-	/// The unsaved-changes confirmation popup (`UnsavedChangesPopup`).
+	PinEdit(PinEditState),
+	LedColour(LedColourState),
 	UnsavedChanges,
 }
 
 impl Overlay {
-	pub(crate) fn layer_id(self) -> LayerId {
+	pub(crate) fn layer_id(&self) -> LayerId {
 		match self {
 			Overlay::Library => LayerId::Library,
 			Overlay::Search => LayerId::Search,
 			Overlay::Preferences => LayerId::Preferences,
-			Overlay::Naming => LayerId::Naming,
-			Overlay::KeySelect => LayerId::KeySelect,
-			Overlay::RomEditor => LayerId::RomEditor,
+			Overlay::Naming(_) => LayerId::Naming,
+			Overlay::KeySelect(_) => LayerId::KeySelect,
+			Overlay::RomEditor(_) => LayerId::RomEditor,
 			Overlay::SaveChip => LayerId::SaveChip,
 			Overlay::CustomizeChip => LayerId::CustomizePanel,
-			Overlay::PinEdit => LayerId::PinEdit,
-			Overlay::LedColour => LayerId::LedColour,
+			Overlay::PinEdit(_) => LayerId::PinEdit,
+			Overlay::LedColour(_) => LayerId::LedColour,
 			Overlay::UnsavedChanges => LayerId::UnsavedChanges,
 		}
 	}
@@ -142,6 +139,19 @@ pub(crate) enum KeySelectPurpose {
 	ConfigureKeyChar(i32),
 }
 
+/// Full draft for `Overlay::KeySelect`: [`KeySelectPurpose`] (what Confirm should do) plus the
+/// key chosen so far, if any -- bundled into one struct (rather than `purpose` moving into the
+/// overlay while `chosen` stayed a separate `ViewerState` field) because both only make sense
+/// while this one overlay is open, exactly like `RomEditorState`/`PinEditState`/`LedColourState`
+/// bundle everything *their* popups need into a single payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct KeySelectState {
+	pub(crate) purpose: KeySelectPurpose,
+	/// The key picked so far (a digit's physical position, or an allowed alphanumeric
+	/// character) -- `None` until the player presses something, gating Confirm/Enter.
+	pub(crate) chosen: Option<char>,
+}
+
 /// One chip entered in view-only mode ("View" row of a placed component's right-click menu,
 /// mirroring `Project.EnterViewMode`): its definition's name, plus the chain of subchip ids
 /// leading to *its live instance* from the edited root chip (so the view keeps resolving
@@ -158,6 +168,7 @@ pub(crate) struct ViewedChip {
 /// `SubChipDescription::internal_data` until "Apply" is clicked (same
 /// "edit a draft, commit on confirm" shape every other overlay here
 /// uses).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RomEditorState {
 	/// Id of the subchip (within the current root chip) being configured.
 	pub(crate) component_id: i32,
@@ -314,20 +325,6 @@ pub(crate) struct ViewerState {
 	/// currently open (the naming popup, ROM cell editor, save-chip name,
 	/// or the library's inline new/rename-collection field).
 	pub(crate) overlay_text_input: String,
-	/// Pending key choice for the key-select popup.
-	pub(crate) overlay_key_choice: Option<char>,
-	/// What `Overlay::Naming`'s confirm should do -- see [`NamingPurpose`]'s
-	/// docs.
-	pub(crate) naming_purpose: NamingPurpose,
-	/// What `Overlay::KeySelect`'s confirm should do -- see
-	/// [`KeySelectPurpose`]'s docs.
-	pub(crate) key_select_purpose: KeySelectPurpose,
-	/// Draft state for `Overlay::RomEditor`, when open.
-	pub(crate) rom_editor: Option<RomEditorState>,
-	/// Draft state for `Overlay::PinEdit`, when open -- see [`PinEditState`].
-	pub(crate) pin_edit: Option<PinEditState>,
-	/// Draft state for `Overlay::LedColour`, when open -- see [`LedColourState`].
-	pub(crate) led_colour: Option<LedColourState>,
 	/// What `Overlay::UnsavedChanges`' Continue should resume -- see
 	/// [`PendingUnsavedAction`]'s docs. `Some` exactly while the popup is
 	/// open.
@@ -344,6 +341,9 @@ pub(crate) struct ViewerState {
 	/// embedded displays) plus whatever grab/resize interaction is in
 	/// flight. Written back onto the library entry only on Confirm; see
 	/// `viewer::customize`.
+	///
+	/// Deliberately kept as its own `Option` field rather than folded into `Overlay::CustomizeChip`
+	/// the way `RomEditor`/`PinEdit`/`LedColour`/`Naming`/`KeySelect` can use it without much hussle
 	pub(crate) customize: Option<CustomizeState>,
 
 	/// Whether pin and component name labels are visible on the canvas.
@@ -472,12 +472,6 @@ impl ViewerState {
 			search_selected: None,
 			search_delete_confirm: None,
 			overlay_text_input: String::new(),
-			overlay_key_choice: None,
-			naming_purpose: Default::default(),
-			key_select_purpose: Default::default(),
-			rom_editor: None,
-			pin_edit: None,
-			led_colour: None,
 			pending_unsaved_action: None,
 			exit_requested: false,
 			customize: None,
@@ -513,6 +507,80 @@ impl ViewerState {
 	/// letting it join -- and be persisted with -- the project's library.
 	pub(crate) fn mark_saved(&mut self, name: &str) {
 		self.unsaved_drafts.remove(&name.to_ascii_lowercase());
+	}
+
+	// ---- Draft accessors for the overlays that carry their own state (see `Overlay`'s docs)
+	// -- there's at most one of each open at a time, so a linear scan of the (tiny) overlay
+	// stack is simplest and cheapest correctly-typed way to reach it. ----
+
+	pub(crate) fn rom_editor(&self) -> Option<&RomEditorState> {
+		self.overlays.iter().find_map(|o| match o {
+			Overlay::RomEditor(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn rom_editor_mut(&mut self) -> Option<&mut RomEditorState> {
+		self.overlays.iter_mut().find_map(|o| match o {
+			Overlay::RomEditor(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn pin_edit(&self) -> Option<&PinEditState> {
+		self.overlays.iter().find_map(|o| match o {
+			Overlay::PinEdit(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn pin_edit_mut(&mut self) -> Option<&mut PinEditState> {
+		self.overlays.iter_mut().find_map(|o| match o {
+			Overlay::PinEdit(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn led_colour(&self) -> Option<&LedColourState> {
+		self.overlays.iter().find_map(|o| match o {
+			Overlay::LedColour(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn led_colour_mut(&mut self) -> Option<&mut LedColourState> {
+		self.overlays.iter_mut().find_map(|o| match o {
+			Overlay::LedColour(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	/// The naming popup's purpose, or `RenameProject` (the type's default) if it isn't open --
+	/// small and `Copy`, so (unlike the other accessors here) this returns the value itself
+	/// rather than an `Option<&_>`; callers that only act while the popup is known to be open
+	/// (e.g. `confirm_naming_popup`) don't need to unwrap anything extra to use it.
+	pub(crate) fn naming_purpose(&self) -> NamingPurpose {
+		self.overlays
+			.iter()
+			.find_map(|o| match o {
+				Overlay::Naming(p) => Some(*p),
+				_ => None,
+			})
+			.unwrap_or_default()
+	}
+
+	pub(crate) fn key_select(&self) -> Option<&KeySelectState> {
+		self.overlays.iter().find_map(|o| match o {
+			Overlay::KeySelect(s) => Some(s),
+			_ => None,
+		})
+	}
+
+	pub(crate) fn key_select_mut(&mut self) -> Option<&mut KeySelectState> {
+		self.overlays.iter_mut().find_map(|o| match o {
+			Overlay::KeySelect(s) => Some(s),
+			_ => None,
+		})
 	}
 
 	/// Rebuilds `self.sim` from `self.library`'s current copy of `self.root_chip_name` -- called
@@ -737,7 +805,8 @@ pub(crate) fn sync_stack_with_state(v: &mut ViewerState) {
 /// duplicate, so e.g. mashing Ctrl+F can't pile up identical Search layers.
 /// Reopening clears whichever draft text the previous instance had left behind.
 pub(crate) fn open_overlay(v: &mut ViewerState, overlay: Overlay) {
-	v.overlays.retain(|o| *o != overlay);
+	let id = overlay.layer_id();
+	v.overlays.retain(|o| o.layer_id() != id);
 	v.overlays.push(overlay);
 }
 
@@ -779,19 +848,22 @@ pub(crate) fn close_top_overlay(v: &mut ViewerState) {
 	let Some(top) = v.overlays.pop() else { return };
 	match top {
 		Overlay::Library => crate::viewer::library::reset_library_popup_state(v),
-		Overlay::Naming => v.naming_purpose = NamingPurpose::default(),
-		Overlay::KeySelect => v.key_select_purpose = KeySelectPurpose::default(),
-		Overlay::RomEditor => v.rom_editor = None,
+		Overlay::Naming(_) => {}
+		// The chosen key/purpose die with the popup, same as `RomEditor`'s.
+		Overlay::KeySelect(_) => {}
+		// The ROM draft dies with the popup -- it lived inside `top`, already popped above.
+		Overlay::RomEditor(_) => {}
 		Overlay::Search => {
 			v.search_query.clear();
 			v.search_selected = None;
 			v.search_delete_confirm = None;
 		}
-		// The pin-edit draft dies with the popup, success or not (the
-		// confirm path writes its values onto the pin *before* closing).
-		Overlay::PinEdit => v.pin_edit = None,
+		// The pin-edit draft dies with the popup, success or not (the confirm path reads its
+		// values -- see `confirm_pin_edit_popup` -- and writes them onto the pin *before*
+		// closing); it lived inside `top`, already popped above, same as `RomEditor`'s.
+		Overlay::PinEdit(_) => {}
 		// Same pattern for the LED colour picker.
-		Overlay::LedColour => v.led_colour = None,
+		Overlay::LedColour(_) => {}
 		Overlay::UnsavedChanges => {
 			// Cancel: the pending action is dropped with the prompt --
 			// mirroring `UnsavedChangesPopup` never firing its callback

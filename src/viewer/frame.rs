@@ -403,7 +403,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 			viewer_stack.push(layer_owned);
 			continue;
 		}
-		let overlay_frame = build_overlay_frame(v, overlay, vw, vh, mouse);
+		let overlay_frame = build_overlay_frame(v, &overlay, vw, vh, mouse);
 		let layer_id = overlay.layer_id();
 		let mut overlay_layer = StackLayer::convert_frame(layer_id, overlay_frame, Capture::FullScreen, editor_action);
 		overlay_layer.geometry = pin_geometry_to_screen(std::mem::take(&mut overlay_layer.geometry), &v.camera, vh);
@@ -467,7 +467,7 @@ fn push_bottom_bar_flyout(v: &mut ViewerState, viewer_stack: &mut UiStack<Viewer
 }
 
 /// Builds whichever overlay panel `overlay` names from live state.
-fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mouse: Vec2) -> editor_ui::EditorFrame {
+fn build_overlay_frame(v: &ViewerState, overlay: &Overlay, vw: f32, vh: f32, mouse: Vec2) -> editor_ui::EditorFrame {
 	match overlay {
 		Overlay::Library => {
 			let selected_chip_name = match v.library_selection {
@@ -529,27 +529,26 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 			};
 			editor_ui::build_preferences_panel(&state, vw, vh, mouse)
 		}
-		Overlay::Naming => {
+		Overlay::Naming(purpose) => {
 			let confirm_enabled = !v.overlay_text_input.trim().is_empty();
-			let title = match v.naming_purpose {
+			let title = match purpose {
 				NamingPurpose::RenameProject => "Rename project",
 				NamingPurpose::LabelComponent(_) => "Label component",
 				NamingPurpose::ConfigurePulseDuration(_) => "Pulse length (ticks)",
 			};
 			editor_ui::build_simple_naming_popup(title, &v.overlay_text_input, confirm_enabled, vw, vh, mouse)
 		}
-		Overlay::KeySelect => editor_ui::build_key_select_popup(v.overlay_key_choice, vw, vh, mouse),
-		Overlay::RomEditor => {
-			let (data, selected) =
-				v.rom_editor.as_ref().map(|e| (e.data.clone(), e.selected)).unwrap_or_else(|| (vec![0; editor_ui::ROM_WORD_COUNT], 0));
-			editor_ui::build_rom_editor_popup(&data, selected, &v.overlay_text_input, vw, vh, mouse)
-		}
+		Overlay::KeySelect(state) => editor_ui::build_key_select_popup(state.chosen, vw, vh, mouse),
+		// The overlay variant carries its own draft now, so it's always there while this arm
+		// is reachable at all -- no defensive fallback needed (contrast the old `Option`-field
+		// version, where `Overlay::RomEditor` being on the stack with `v.rom_editor == None`
+		// was a state the types allowed but nothing should ever produce).
+		Overlay::RomEditor(state) => editor_ui::build_rom_editor_popup(&state.data, state.selected, &v.overlay_text_input, vw, vh, mouse),
 		Overlay::SaveChip => {
 			let mode = save_chip_mode(v, &v.overlay_text_input);
 			editor_ui::build_save_chip_popup(&v.root_chip_name, &v.overlay_text_input, mode, vw, vh, mouse)
 		}
-		Overlay::PinEdit => {
-			let Some(edit) = v.pin_edit.as_ref() else { return editor_ui::EditorFrame::default() };
+		Overlay::PinEdit(edit) => {
 			let chip = v.library.get(&v.root_chip_name);
 			let pins = if edit.is_input { &chip.input_pins } else { &chip.output_pins };
 			let pin = pins.iter().find(|p| p.id == edit.pin_id);
@@ -572,10 +571,7 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 		// preview layout back onto `ViewerState::customize`), so reaching
 		// this arm at all would double-build it.
 		Overlay::CustomizeChip => editor_ui::EditorFrame::default(),
-		Overlay::LedColour => {
-			let colour_index = v.led_colour.as_ref().map(|e| e.colour_index).unwrap_or(0);
-			editor_ui::build_led_colour_popup(colour_index, vw, vh, mouse)
-		}
+		Overlay::LedColour(edit) => editor_ui::build_led_colour_popup(edit.colour_index, vw, vh, mouse),
 	}
 }
 
