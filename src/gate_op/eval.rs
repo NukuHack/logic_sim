@@ -1,7 +1,7 @@
 //! The fast-path gate evaluators: the precomputed-truth-table [`Lut`], and the closed-form
 //! [`Native`]/[`NativeList`] (with the `Bits`-word helpers in `bitvec` that back their
 //! formulas). All three implement [`CachedGate`], the one evaluator trait `Simulator` needs --
-//! see `sim::process_cached_chip`, the only real caller today, for the shape this is built
+//! see `sim::process_cached_chip`, the only real caller, for the shape this is built
 //! around: a chip's input pins packed low-bit-first into a single `u64`, and one raw packed
 //! word written back per output pin.
 
@@ -110,12 +110,11 @@ type DuoSizedFn = fn(&[Bits], u32, u32, Bits) -> Vec<Bits>;
 /// regardless of how wide the gate is.
 ///
 /// Packs its input into as many `Bits` words as `in_bits` needs and hands that slice straight
-/// to `f`, so a formula written against the `bitvec` helpers is
-/// correct for every gate -- genuinely unlimited input width, with
-/// the same small, readable closed-form `f` regardless of size. [`Self::eval_wide`] is where
-/// that unlimited width is actually exercised (`recognize` and its tests use it directly); the
-/// [`CachedGate`] impl below is the narrower `u64`-in/single-`u32`-out bridge
-/// `process_cached_chip` can call today
+/// to `f`, so a formula written against the `bitvec` helpers is correct for every gate
+/// genuinely unlimited input width, with the same small, readable closed-form `f`
+/// regardless of size. [`Self::eval_wide`] is where that unlimited width is actually exercised
+/// (`recognize` and its tests use it directly); the [`CachedGate`] impl below is the narrower
+/// `u64`-in/single-`u32`-out bridge `process_cached_chip` can call
 ///
 /// `in_bits`/`out_bits` are carried alongside `config`
 /// so one `fn` pointer can serve an entire parametric family
@@ -160,8 +159,7 @@ impl Native {
 
 	/// Arbitrary-width eval: packs/unpacks through `LogicState` slices directly instead of
 	/// going through [`CachedGate::eval`]'s `u64`/single-`u32` bridge, so a gate wider than 64
-	/// input bits or 32 output bits (impossible for any `Lut`, and past what today's only
-	/// `CachedGate` caller can hand in) still evaluates correctly. This is what `recognize` and
+	/// input bits or 32 output bits still evaluates correctly. This is what `recognize` and
 	/// its wide-gate tests call.
 	pub fn eval_wide(&self, input: &[LogicState], output: &mut [LogicState]) {
 		debug_assert_eq!(input.len() as u32, self.in_bits);

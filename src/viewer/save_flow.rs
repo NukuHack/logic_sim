@@ -58,14 +58,20 @@ pub(crate) fn save_chip_mode(v: &ViewerState, typed: &str) -> SaveChipMode {
 	}
 }
 
-/// Adds `add_name` to the project's `all_custom_chip_names`/`chip_collections` bookkeeping if
-/// it isn't already there (and, when `remove_name` is given, *renames* the old entry in place
-/// -- preserving which collection holds it and where, mirroring
-/// `EnsureChipRenamedInCollections` -- rather than moving it to OTHER), then persists the
-/// updated `ProjectDescription`.
+/// Updates the project's `chip_collections` bookkeeping for a chip that was just created,
+/// renamed, or saved-as (`add_name`, already present in `v.library` by this point), then
+/// persists the updated `ProjectDescription`. `all_custom_chip_names` is no longer hand-maintained
+/// here -- it's rederived from `v.library` (the actual source of truth) right before saving, so
+/// there's nothing to push/retain for it.
+///
+/// `chip_collections` membership and ordering, on the other hand, *is* real user-authored state
+/// (which folder a chip lives in, and where) that `v.library` has no way to reconstruct, so it's
+/// still handled explicitly: on rename (`remove_name` given), the old entry is renamed in place
+/// -- preserving which collection holds it and where, mirroring `EnsureChipRenamedInCollections`
+/// -- rather than moving it to OTHER; on first creation, it's simply filed under OTHER since it
+/// isn't in any collection yet.
 fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_name: Option<&str>, add_name: &str) {
 	if let Some(old) = remove_name {
-		v.prefs.all_custom_chip_names.retain(|n| n != old);
 		// Rename within whichever collection already holds the chip,
 		// keeping its position (and its membership of any other list) intact.
 		let renamed = v
@@ -80,9 +86,6 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 			}
 		}
 	}
-	if !v.prefs.all_custom_chip_names.iter().any(|n| n.eq_ignore_ascii_case(add_name)) {
-		v.prefs.all_custom_chip_names.push(add_name.to_string());
-	}
 	if !v.prefs.chip_collections.iter().any(|c| c.chips.iter().any(|n| n == add_name)) {
 		if !v.prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
 			v.prefs.chip_collections.push(crate::json::ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
@@ -91,6 +94,7 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 			v.prefs.chip_collections.iter_mut().find(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
 		other.chips.push(add_name.to_string());
 	}
+	v.prefs.recompute_all_custom_chip_names(&v.library);
 
 	let mut desc = v.prefs.clone();
 	match Saver::save_project_description(paths, &mut desc) {

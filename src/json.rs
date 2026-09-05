@@ -527,6 +527,17 @@ impl ProjectDescription {
 			self.starred_list.push(StarredItem::new(name, is_collection));
 		}
 	}
+
+	/// Rebuilds `prefs.all_custom_chip_names` from `library` rather than trusting hand-maintained
+	/// pushes/retains to have kept it in sync -- `ChipLibrary` is the actual source of truth for
+	/// "does this custom chip exist", so this field is now just a save-time projection of it. Sorted
+	/// case-insensitively for a deterministic order: `ChipLibrary` is a `HashMap`, so unlike the
+	/// original C# list this can no longer preserve creation order, and nothing depends on that order.
+	pub(crate) fn recompute_all_custom_chip_names(&mut self, library: &ChipLibrary) {
+		let mut names: Vec<String> = library.iter().filter(|d| d.chip_type == ChipType::Custom).map(|d| d.name.clone()).collect();
+		names.sort_by_key(|n| n.to_ascii_lowercase());
+		self.all_custom_chip_names = names;
+	}
 }
 
 pub fn parse_project_description(json: &str) -> serde_json::Result<ProjectDescription> {

@@ -201,8 +201,8 @@ pub(crate) fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, s
 		collection.chips.retain(|c| !c.eq_ignore_ascii_case(name));
 	}
 	v.prefs.set_starred(name, false, false);
-	v.prefs.all_custom_chip_names.retain(|c| !c.eq_ignore_ascii_case(name));
 	v.library.remove(name);
+	v.prefs.recompute_all_custom_chip_names(&v.library);
 	v.mark_saved(name);
 	v.library_selection = LibrarySelection::None;
 }
@@ -489,6 +489,59 @@ mod tests {
 		let mut library = library;
 		library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
 		ViewerState::new("", library, root_chip_name, Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+	}
+
+	#[test]
+	fn recompute_all_custom_chip_names_derives_from_library_not_bookkeeping() {
+		let mut prefs = ProjectDescription::default();
+		// Stale/garbage entries a hand-maintained list could have accumulated --
+		// recompute must replace them outright, not merge with them.
+		prefs.all_custom_chip_names = vec!["Stale".to_string(), "Ghost".to_string()];
+		let mut library = lib_with_chips(&["Beta", "Alpha"]);
+		library.add(ChipDescription::new("AND", ChipType::Nand));
+
+		prefs.recompute_all_custom_chip_names(&library);
+
+		// Builtins are excluded, stale names are gone, and the order is a
+		// deterministic (case-insensitive alphabetical) sort rather than
+		// whatever order the underlying HashMap happens to iterate in.
+		assert_eq!(prefs.all_custom_chip_names, vec!["Alpha".to_string(), "Beta".to_string()]);
+	}
+
+	/// Guards the fix for the "4 sources of truth" chip-identity bug:
+	/// `chip_collections` holds real user state (which folder a chip lives in, and
+	/// where within it) that `ChipLibrary` cannot reconstruct, so deleting one chip
+	/// must never touch any other chip's folder or position. A save-time scheme that
+	/// wiped and rebuilt `chip_collections` from the library would collapse every chip
+	/// back into a single default folder here -- this test fails loudly if that
+	/// regresses.
+	#[test]
+	fn delete_chip_from_library_preserves_sibling_collection_placement() {
+		let library = lib_with_chips(&["Keep A", "Keep B", "Doomed"]);
+		let mut v =
+			ViewerState::new("P", library, "Keep A".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		v.prefs.chip_collections = vec![
+			ChipCollection::new("Custom Folder", vec!["Keep B".to_string(), "Doomed".to_string(), "Keep A".to_string()]),
+			ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()),
+		];
+		v.prefs.recompute_all_custom_chip_names(&v.library);
+
+		let root = std::env::temp_dir().join(format!("logic_sim_delete_placement_{}", std::process::id()));
+		let paths = SavePaths::new(&root);
+		for name in ["Keep A", "Keep B", "Doomed"] {
+			Saver::save_chip(&paths, &v.prefs.project_name, &v.library, v.library.get(name)).expect("chip saved");
+		}
+
+		delete_chip_from_library(&mut v, &paths, &mut None, "Doomed");
+
+		let folder = v.prefs.chip_collections.iter().find(|c| c.name == "Custom Folder").expect("folder untouched");
+		// The surviving chips keep their exact relative order -- "Doomed" is
+		// removed in place, nothing gets shuffled into OTHER.
+		assert_eq!(folder.chips, vec!["Keep B".to_string(), "Keep A".to_string()]);
+		assert!(!v.prefs.all_custom_chip_names.contains(&"Doomed".to_string()));
+		assert!(v.prefs.all_custom_chip_names.contains(&"Keep A".to_string()));
+
+		let _ = std::fs::remove_dir_all(&root);
 	}
 
 	#[test]

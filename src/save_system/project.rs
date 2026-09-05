@@ -18,15 +18,12 @@ impl Project {
 		Self { description, chip_library }
 	}
 
-	/// Adds (or replaces) a custom chip in this project's in-memory library
-	/// and, if it wasn't already listed, appends it to `AllCustomChipNames`.
-	/// Does not touch disk -- pair with `Saver::save_chip` /
-	/// `Saver::save_project_description` to persist the change.
+	/// Adds (or replaces) a custom chip in this project's in-memory library, then rederives
+	/// `AllCustomChipNames` from the library -- which is the actual source of truth for "does
+	/// this custom chip exist" -- rather than hand-appending to it. Does not touch disk -- pair
+	/// with `Saver::save_chip` / `Saver::save_project_description` to persist the change.
 	pub fn add_or_update_custom_chip(&mut self, desc: ChipDescription) {
-		let already_known = self.description.all_custom_chip_names.iter().any(|n| n.eq_ignore_ascii_case(&desc.name));
-		if !already_known {
-			self.description.all_custom_chip_names.push(desc.name.clone());
-		}
 		self.chip_library.add(desc);
+		self.description.recompute_all_custom_chip_names(&self.chip_library);
 	}
 }

@@ -127,8 +127,7 @@ pub(crate) enum NamingPurpose {
 
 /// What `Overlay::KeySelect`'s Confirm/Enter should do with the chosen
 /// key -- same idea as `NamingPurpose`, for the one overlay that isn't a
-/// plain text field. Defaults to `Rebind` (today's placeholder "not yet
-/// wired to an action" behaviour); `ConfigureKeyChar` is used when a
+/// plain text field. Defaults to `Rebind`; `ConfigureKeyChar` is used when a
 /// `Key` component's own "Configure" popup reuses this same overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum KeySelectPurpose {

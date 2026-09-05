@@ -4,7 +4,7 @@
 //! - `bitvec`: arbitrary-width bit-vector helpers (the packed `Bits`-word representation
 //!   `Native`/`NativeList` formulas operate on).
 //! - `eval`: `CachedGate` and its implementations (`Lut`, `Native`, `NativeList`) -- the
-//!   actual fast path, usable today.
+//!   actual fast path.
 //! - `recognize`: matches a materialized `Lut` against known gate patterns and hands back an
 //!   equivalent `Native`.
 //! - `caching`: *when* to build/use a `Lut` per combinational chip -- `Simulator::step_sub_chip`

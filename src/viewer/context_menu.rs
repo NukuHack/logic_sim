@@ -353,8 +353,8 @@ mod tests {
 
 	/// Persists `name` into the project's collections so the un-star save
 	/// round-trips like a real session's description.
-	fn register_name_in_project_for_test(v: &mut ViewerState, paths: &SavePaths, name: &str) {
-		v.prefs.all_custom_chip_names.push(name.to_string());
+	fn register_name_in_project_for_test(v: &mut ViewerState, paths: &SavePaths, _name: &str) {
+		v.prefs.recompute_all_custom_chip_names(&v.library);
 		let mut desc = v.prefs.clone();
 		Saver::save_project_description(paths, &mut desc).expect("description saved");
 		v.prefs = desc;
