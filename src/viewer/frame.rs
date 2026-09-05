@@ -514,8 +514,8 @@ fn build_overlay_frame(v: &ViewerState, overlay: Overlay, vw: f32, vh: f32, mous
 				selected_is_starred: selected.is_some_and(|n| v.prefs.is_starred(n, false)),
 				selected_is_custom: selected.is_some_and(|n| is_custom_chip(&v.library, n)),
 				selected_would_cycle: selected.is_some_and(|n| would_create_cycle(&v.library, &v.root_chip_name, n)),
-				confirming_delete: v.search_confirming_delete,
-				delete_confirm_message: &v.search_delete_message,
+				confirming_delete: v.search_delete_confirm.is_some(),
+				delete_confirm_message: v.search_delete_confirm.as_deref().unwrap_or(""),
 			};
 			editor_ui::build_search_popup(&state, vw, vh, mouse)
 		}

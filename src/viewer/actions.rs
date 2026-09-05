@@ -186,20 +186,17 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.search_selected = Some(name);
 		}
 		EA::RequestDeleteSearchChip(name) => {
-			v.search_delete_message = chip_delete_confirm_message(v, &name);
-			v.search_confirming_delete = true;
+			v.search_delete_confirm = Some(chip_delete_confirm_message(v, &name));
 		}
 		EA::ConfirmSearchDelete => {
 			if let Some(name) = v.search_selected.clone() {
 				delete_chip_from_library(v, paths, status, &name);
 			}
-			v.search_confirming_delete = false;
-			v.search_delete_message.clear();
+			v.search_delete_confirm = None;
 			v.search_selected = None;
 		}
 		EA::CancelSearchDeleteConfirm => {
-			v.search_confirming_delete = false;
-			v.search_delete_message.clear();
+			v.search_delete_confirm = None;
 		}
 		EA::ConfirmName => confirm_naming_popup(v, status),
 		EA::ChooseKey(c) => v.overlay_key_choice = Some(c),
