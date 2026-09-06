@@ -11,7 +11,7 @@
 //! arena back after [`PASS_TIME_BUDGET`] instead of monopolising it, keeping render latency
 //! bounded while leftover ticks stay owed as debt.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -98,6 +98,7 @@ pub(crate) struct SimHandle {
 	worker: Option<std::thread::JoinHandle<()>>,
 }
 
+#[allow(unused)]
 impl SimHandle {
 	/// Wraps `sim` and starts its background stepping thread.
 	pub(crate) fn new(sim: Simulator, audio: crate::audio::SharedAudioState) -> Self {
@@ -129,33 +130,44 @@ impl SimHandle {
 		self.lock().reset_driven_inputs();
 	}
 
-	pub(crate) fn key_modifiers(&self) -> u32 {
-		self.lock().key_modifiers
+	pub(crate) fn key_modifiers(&self) -> u16 {
+		self.lock().key_modifiers()
 	}
 
-	pub(crate) fn set_key_modifiers(&self, modifiers: u32) {
-		self.lock().key_modifiers = modifiers;
+	/// Back-compat bitmask setter -- see `Simulator::set_modifier_bits`.
+	pub(crate) fn set_key_modifiers(&self, modifiers: u16) {
+		self.lock().set_modifier_bits(modifiers);
 	}
 
 	pub(crate) fn held_key_press(&self, key: char) {
-		self.lock().held_keys.insert(key);
+		self.lock().press_key(crate::sim::KeyCode::Char(key));
 	}
 
 	pub(crate) fn held_key_release(&self, key: char) {
-		self.lock().held_keys.remove(&key);
+		self.lock().release_key(crate::sim::KeyCode::Char(key));
 	}
 
-	pub(crate) fn clear_held_keys(&self) {
-		self.lock().held_keys.clear();
+	/// Presses or releases any tracked keyboard button -- not just the
+	/// alphanumeric ones `held_key_press`/`held_key_release` cover -- in the
+	/// simulator's keyboard snapshot.
+	pub(crate) fn set_key_pressed(&self, code: crate::sim::KeyCode, pressed: bool) {
+		self.lock().set_key_pressed(code, pressed);
 	}
 
-	/// Moves the player-driven transient input state (held keys +
-	/// modifiers + toggled input dev-pins) out of the outgoing simulator
-	/// so [`Self::replace`] can carry it into the rebuilt one -- what
+	/// Releases every tracked key at once (focus-lost handling -- replaces
+	/// the old `clear_held_keys` + `set_key_modifiers(0)` pair now that both
+	/// live in the same snapshot).
+	pub(crate) fn release_all_keys(&self) {
+		self.lock().release_all_keys();
+	}
+
+	/// Moves the player-driven transient input state (the whole keyboard
+	/// snapshot + toggled input dev-pins) out of the outgoing simulator so
+	/// [`Self::replace`] can carry it into the rebuilt one -- what
 	/// `ViewerState::rebuild_sim` used to do across its plain field swap.
-	pub(crate) fn take_transient_input_state(&self) -> (HashSet<char>, u32, HashMap<i32, PinState>) {
+	pub(crate) fn take_transient_input_state(&self) -> (crate::sim::KeyboardSnapshot, HashMap<i32, PinState>) {
 		let mut sim = self.lock();
-		(std::mem::take(&mut sim.held_keys), sim.key_modifiers, std::mem::take(&mut sim.driven_inputs))
+		(std::mem::take(&mut sim.keyboard), std::mem::take(&mut sim.driven_inputs))
 	}
 
 	/// Snapshots every chip's volatile internal state (RAM/ROM contents,
@@ -479,19 +491,21 @@ mod tests {
 
 	#[test]
 	fn transient_input_state_feeds_through_the_handle() {
+		use crate::sim::KeyCode;
+
 		let h = handle(true, 1);
 		h.set_key_modifiers(7);
 		h.held_key_press('A');
 		assert_eq!(h.key_modifiers(), 7);
-		assert!(h.lock().held_keys.contains(&'A'));
+		assert!(h.lock().keyboard.is_pressed(KeyCode::Char('A')));
 		h.held_key_release('A');
-		assert!(h.lock().held_keys.is_empty());
+		assert!(!h.lock().keyboard.is_pressed(KeyCode::Char('A')));
 		h.held_key_press('B');
 		h.lock().set_driven_input(3, PinState::HIGH);
-		let (keys, mods, driven) = h.take_transient_input_state();
-		assert!(keys.contains(&'B') && mods == 7);
+		let (keyboard, driven) = h.take_transient_input_state();
+		assert!(keyboard.is_pressed(KeyCode::Char('B')) && keyboard.modifiers_bitmask() == 7);
 		assert_eq!(driven.get(&3), Some(&PinState::HIGH), "toggled inputs travel with the rest");
-		assert!(h.lock().held_keys.is_empty(), "take clears the source");
+		assert!(!h.lock().keyboard.is_pressed(KeyCode::Char('B')), "take clears the source");
 		assert!(h.lock().driven_inputs.is_empty(), "take clears the source");
 	}
 }

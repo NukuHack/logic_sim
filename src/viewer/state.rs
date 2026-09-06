@@ -561,7 +561,7 @@ impl ViewerState {
 		// Carry the player-driven transient input state across the swap so
 		// an in-place edit doesn't drop held keys / modifiers / toggled
 		// switches (see `SimHandle::take_transient_input_state`).
-		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
+		let (keyboard, driven_inputs) = self.sim.take_transient_input_state();
 		// Also carry every chip's volatile memory (RAM/ROM contents, pulse
 		// countdowns, display buffers) so an unrelated edit -- placing one
 		// wire, deleting another component -- no longer resets the whole
@@ -573,8 +573,7 @@ impl ViewerState {
 		// and the sim thread's first re-propagation tick.
 		let pin_states = self.sim.capture_pin_states();
 		let mut sim = Simulator::build(&root_desc, &self.library);
-		sim.held_keys = held_keys;
-		sim.key_modifiers = key_modifiers;
+		sim.keyboard = keyboard;
 		sim.driven_inputs = driven_inputs;
 		sim.restore_internal_states(&internal_states);
 		sim.restore_pin_states(&pin_states);
@@ -590,10 +589,9 @@ impl ViewerState {
 	/// hold.
 	pub(crate) fn restart_sim_fresh(&self) {
 		let root_desc = self.library.get_arc(&self.root_chip_name);
-		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
+		let (keyboard, driven_inputs) = self.sim.take_transient_input_state();
 		let mut sim = Simulator::build(&root_desc, &self.library);
-		sim.held_keys = held_keys;
-		sim.key_modifiers = key_modifiers;
+		sim.keyboard = keyboard;
 		sim.driven_inputs = driven_inputs;
 		self.sim.capture_caching_state(sim);
 		self.sync_sim_clock_pref();

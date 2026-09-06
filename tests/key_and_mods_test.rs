@@ -1,12 +1,13 @@
 //! Tests for the `Key` builtin (turns on while a given letter is held) and the new `KeyMods` builtin
 //! (outputs the current shift/ctrl/alt/super state as a bitmask). Both chips are driven purely
-//! through `Simulator::held_keys` / `Simulator::key_modifiers` here -- the actual winit event ->
-//! `Simulator` field plumbing lives in the GPU-window binaries, which aren't exercised by `cargo test`.
+//! through `Simulator`'s keyboard snapshot (`Simulator::press_key`/`release_key`/`set_modifier_bits`,
+//! read back via `Simulator::key_modifiers`) here -- the actual winit event -> `Simulator` plumbing
+//! lives in the GPU-window binaries, which aren't exercised by `cargo test`.
 
 use glam::Vec2;
 use logic_sim::description::{ChipDescription, ChipType, PinAddress, PinBitCount, SubChipDescription, WireDescription};
 use logic_sim::sim::key_mods_bits;
-use logic_sim::{ChipLibrary, Simulator};
+use logic_sim::{ChipLibrary, KeyCode, Simulator};
 
 /// Builds a tiny custom `ChipDescription` that places a single instance of
 /// `builtin_name` and wires its (only) output pin straight out to the
@@ -62,7 +63,7 @@ fn key_chip_is_low_when_letter_not_held() {
 #[test]
 fn key_chip_is_high_when_matching_letter_held() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
-	sim.held_keys.insert('A');
+	sim.press_key(KeyCode::Char('A'));
 	for _ in 0..2 {
 		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
@@ -72,23 +73,23 @@ fn key_chip_is_high_when_matching_letter_held() {
 #[test]
 fn key_chip_ignores_other_held_letters() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
-	sim.held_keys.insert('B');
+	sim.press_key(KeyCode::Char('B'));
 	for _ in 0..2 {
 		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 0);
 }
 
-/// The chip itself compares the *raw* char in `held_keys` against its
-/// (always-uppercase) stored letter -- it does no case-folding on its own.
-/// Lower-casing a basic 'a' keypress into 'A' before it reaches
-/// `held_keys` is the host's job (done in `bin/app.rs`/`bin/viewer.rs`'s
+/// The chip itself compares the *raw* char in the keyboard snapshot against
+/// its (always-uppercase) stored letter -- it does no case-folding on its
+/// own. Lower-casing a basic 'a' keypress into 'A' before it reaches the
+/// snapshot is the host's job (done in `viewer::input`/`viewer::events`'s
 /// `handle_key_event`), not the simulator's. This test documents that
-/// contract: a stray lowercase char sitting in `held_keys` must NOT match.
+/// contract: a stray lowercase char sitting in the keyboard snapshot must NOT match.
 #[test]
 fn key_chip_does_not_match_lowercase_in_held_keys() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
-	sim.held_keys.insert('a');
+	sim.press_key(KeyCode::Char('a'));
 	for _ in 0..2 {
 		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
@@ -98,13 +99,13 @@ fn key_chip_does_not_match_lowercase_in_held_keys() {
 #[test]
 fn key_chip_releasing_the_key_turns_output_back_off() {
 	let (mut sim, out_id) = build_sim_around("KEY", PinBitCount::Bit1, Some(vec![b'A' as u32]));
-	sim.held_keys.insert('A');
+	sim.press_key(KeyCode::Char('A'));
 	for _ in 0..2 {
 		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 	assert_eq!(read_output(&sim, out_id) & 1, 1);
 
-	sim.held_keys.remove(&'A');
+	sim.release_key(KeyCode::Char('A'));
 	for _ in 0..2 {
 		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
@@ -138,14 +139,14 @@ fn key_mods_chip_outputs_zero_by_default() {
 #[test]
 fn key_mods_chip_outputs_current_modifier_bitmask() {
 	let (mut sim, out_id) = build_sim_around("MOD KEYS", PinBitCount::Bit8, None);
-	sim.key_modifiers = key_mods_bits::SHIFT | key_mods_bits::ALT;
+	sim.set_modifier_bits(key_mods_bits::SHIFT | key_mods_bits::ALT);
 	for _ in 0..2 {
 		sim.run_simulation_step(&[], &mut logic_sim::audio::SimAudio::new());
 	}
 
 	let state = read_output(&sim, out_id);
 	// Low byte is the driven bit-states half of the pin state word...
-	assert_eq!((state & 0xFF) as u32, key_mods_bits::SHIFT | key_mods_bits::ALT);
+	assert_eq!(state & 0xFF, key_mods_bits::SHIFT | key_mods_bits::ALT);
 	// ...and the pin should be fully driven (no tristated bits), so the
 	// high byte (the tristate-flag half of the pin state word) is 0.
 	assert_eq!(state >> 8, 0);
@@ -157,7 +158,7 @@ fn key_mods_bits_are_all_distinct_single_bits() {
 	for &b in &all {
 		assert_eq!(b.count_ones(), 1, "each modifier should be exactly one bit");
 	}
-	let mut seen = 0u32;
+	let mut seen = 0u16;
 	for &b in &all {
 		assert_eq!(seen & b, 0, "modifier bits must not overlap");
 		seen |= b;

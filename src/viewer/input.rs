@@ -18,12 +18,14 @@ use crate::viewer::state::{Overlay, ViewerState, open_preferences, open_save_chi
 use crate::{SavePaths, Saver, sim};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
-/// Convert winit's modifier state into the `Simulator::key_modifiers`
-/// bitmask (see `key_mods_bits`), using winit's own boolean accessors
-/// rather than its raw `bits()` value -- see the doc comment on
-/// `key_mods_bits` for why.
-pub(crate) fn encode_modifiers(mods: ModifiersState) -> u32 {
-	let mut bits = 0u32;
+/// Convert winit's modifier state into a `key_mods_bits` bitmask, using
+/// winit's own boolean accessors rather than its raw `bits()` value. Used to
+/// seed/refresh the simulator's keyboard snapshot's four OS-tracked
+/// modifiers via `Simulator::set_modifier_bits` (see that doc comment for
+/// why those four still go through `ModifiersState` rather than
+/// `sim_keycode_for_event` like everything else the snapshot tracks).
+pub(crate) fn encode_modifiers(mods: ModifiersState) -> u16 {
+	let mut bits = 0u16;
 	if mods.shift_key() {
 		bits |= sim::key_mods_bits::SHIFT;
 	}
@@ -36,6 +38,7 @@ pub(crate) fn encode_modifiers(mods: ModifiersState) -> u32 {
 	if mods.super_key() {
 		bits |= sim::key_mods_bits::SUPER;
 	}
+	// maybe add tab 16, caps 32, del 64, altgr 128
 	bits
 }
 
@@ -82,6 +85,70 @@ pub(crate) fn char_for_keys(physical_key: PhysicalKey, logical_key: &Key) -> Opt
 		return s.chars().next().map(|c| c.to_ascii_uppercase());
 	}
 	None
+}
+
+/// Resolves a key event to the [`sim::KeyCode`] slot it should update in the
+/// simulator's keyboard snapshot (see `sim::KeyboardSnapshot`) -- the full
+/// "keyboard snapshot" this module feeds, well beyond the Key chip's
+/// original handful of tracked letters.
+///
+/// Alphanumeric keys resolve to `KeyCode::Char`, same char and same
+/// physical-digit preference as [`char_for_keys`] (which this delegates to).
+/// Shift/Control/Alt(left)/Super are deliberately *not* produced here --
+/// those four keep coming from winit's own `ModifiersChanged`/`encode_modifiers`
+/// path (`ModifiersState` already merges left/right for them reliably across
+/// platforms), and get written into the same snapshot via
+/// `Simulator::set_modifier_bits`. Every other button this snapshot tracks
+/// comes from here instead./// Returns `None` for any key this snapshot doesn't (yet) track.
+pub(crate) fn sim_keycode_for_event(physical_key: PhysicalKey, logical_key: &Key) -> Option<sim::KeyCode> {
+	use sim::KeyCode as SK;
+
+	if let Some(c) = char_for_keys(physical_key, logical_key)
+		&& c.is_ascii_alphanumeric()
+	{
+		return Some(SK::Char(c));
+	}
+
+	let PhysicalKey::Code(code) = physical_key else { return None };
+	Some(match code {
+		// Right Alt doubles as AltGr on most non-US layouts -- kept distinct
+		// from the left key, which `encode_modifiers` already covers, to
+		// match what `key_mods_bits::ALTGR` expects.
+		KeyCode::AltRight => SK::AltGr,
+		KeyCode::Tab => SK::Tab,
+		KeyCode::CapsLock => SK::CapsLock,
+		KeyCode::Delete => SK::Delete,
+		KeyCode::Home => SK::Home,
+		KeyCode::End => SK::End,
+		KeyCode::F1 => SK::Function(1),
+		KeyCode::F2 => SK::Function(2),
+		KeyCode::F3 => SK::Function(3),
+		KeyCode::F4 => SK::Function(4),
+		KeyCode::F5 => SK::Function(5),
+		KeyCode::F6 => SK::Function(6),
+		KeyCode::F7 => SK::Function(7),
+		KeyCode::F8 => SK::Function(8),
+		KeyCode::F9 => SK::Function(9),
+		KeyCode::F10 => SK::Function(10),
+		KeyCode::F11 => SK::Function(11),
+		KeyCode::F12 => SK::Function(12),
+		// rest of function keys
+		KeyCode::F35 => SK::Function(35),
+		KeyCode::Enter | KeyCode::NumpadEnter => SK::Enter,
+		KeyCode::Escape => SK::Escape,
+		KeyCode::Backspace => SK::Backspace,
+		KeyCode::Space => SK::Space,
+		KeyCode::ArrowUp => SK::ArrowUp,
+		KeyCode::ArrowDown => SK::ArrowDown,
+		KeyCode::ArrowLeft => SK::ArrowLeft,
+		KeyCode::ArrowRight => SK::ArrowRight,
+		KeyCode::PageUp => SK::PageUp,
+		KeyCode::PageDown => SK::PageDown,
+		KeyCode::Insert => SK::Insert,
+		// Add more winit::keyboard::KeyCode arms here as this snapshot grows
+		// (e.g. more function keys, Numpad operators, media keys...).
+		_ => return None,
+	})
 }
 
 /// Routes a key *press* to whichever surface currently owns the keyboard, per
@@ -175,7 +242,7 @@ pub(crate) fn handle_viewer_key(
 				"h" if target.is_none() && modifiers.control_key() => v.camera_fitted = !v.camera_fitted,
 				// Ctrl+L opens the chip library panel (`KeyboardShortcuts`'s
 				// LibraryShortcutTriggered).
-				"l" if target.is_none() && modifiers.control_key() && !modifiers.shift_key() => open_library_panel(v),
+				"l" if target.is_none() && modifiers.control_key() => open_library_panel(v),
 				// Toggle grid: the Ctrl+G form mirrors `KeyboardShortcuts.ToggleGridShortcutTriggered`
 				// (works over open panels, like `PreferencesMenu.HandleKeyboardShortcuts`);
 				// Ctrl+P fpr preferences
@@ -192,7 +259,7 @@ pub(crate) fn handle_viewer_key(
 				// MultiMode+D duplicates the selection into a carried copy
 				// (`DuplicateShortcutTriggered` -> `DuplicateSelectedElements`;
 				// MultiMode = Alt or Shift, same as box-select add).
-				"d" if (target.is_none() || target == Some(LayerId::Library)) && (modifiers.control_key() || modifiers.shift_key()) => {
+				"d" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => {
 					chip_interaction::duplicate_selection(v);
 				}
 				_ => {}
@@ -465,6 +532,25 @@ mod tests {
 
 		let combo = ModifiersState::SHIFT | ModifiersState::CONTROL;
 		assert_eq!(encode_modifiers(combo), key_mods_bits::SHIFT | key_mods_bits::CONTROL);
+	}
+
+	#[test]
+	fn sim_keycode_for_event_covers_chars_and_named_keys() {
+		use sim::KeyCode as SK;
+
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::KeyA), &Key::Character("a".into())), Some(SK::Char('A')));
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::Digit5), &Key::Character("5".into())), Some(SK::Char('5')));
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::Tab), &Key::Named(NamedKey::Tab)), Some(SK::Tab));
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::AltRight), &Key::Named(NamedKey::Alt)), Some(SK::AltGr));
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::F5), &Key::Named(NamedKey::F5)), Some(SK::Function(5)));
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::Home), &Key::Named(NamedKey::Home)), Some(SK::Home));
+
+		// The four keys `encode_modifiers` already handles are deliberately
+		// left untracked here.
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::ShiftLeft), &Key::Named(NamedKey::Shift)), None);
+
+		// A key this snapshot doesn't track yet.
+		assert_eq!(sim_keycode_for_event(PhysicalKey::Code(KeyCode::ScrollLock), &Key::Named(NamedKey::ScrollLock)), None);
 	}
 
 	fn viewer_with_builtins() -> ViewerState {

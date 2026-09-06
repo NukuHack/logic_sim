@@ -7,7 +7,7 @@
 use crate::description::{CacheKind, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount};
 use crate::gate_op::CachingState;
 use crate::pin_state::PinState;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -122,11 +122,11 @@ pub struct Simulator {
 	start_time: Instant,
 	elapsed_seconds_old: f64,
 
-	/// Key-chip state: which key characters are currently held (set by host).
-	pub held_keys: HashSet<char>,
-	/// KeyMods-chip state: current modifier keys, as a `key_mods_bits` bitmask
-	/// (set by host).
-	pub key_modifiers: u32,
+	/// Full keyboard state (set by host): every tracked key/button's held state plus
+	/// when it was last pressed or released. Backs both the `Key` chip (looked up by
+	/// character) and the `KeyMods` chip (the modifier keys, collapsed to a bitmask
+	/// by [`KeyboardSnapshot::modifiers_bitmask`]).
+	pub keyboard: KeyboardSnapshot,
 	/// Player-driven states for the root chip's own input dev-pins, keyed by pin id -- what
 	/// clicking a switch's bit grid toggles.
 	pub driven_inputs: HashMap<i32, PinState>,
@@ -159,8 +159,7 @@ impl Default for Simulator {
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
 
-			held_keys: HashSet::new(),
-			key_modifiers: 0,
+			keyboard: KeyboardSnapshot::default(),
 			driven_inputs: HashMap::new(),
 
 			caching: CachingState::default(),
@@ -169,12 +168,135 @@ impl Default for Simulator {
 	}
 }
 
-/// Bit layout for `Simulator::key_modifiers` / the `KeyMods` builtin chip's output pin.
+/// Bit layout for `Simulator::key_modifiers()` / the `KeyMods` builtin chip's output pin.
 pub mod key_mods_bits {
-	pub const SHIFT: u32 = 1 << 0;
-	pub const CONTROL: u32 = 1 << 1;
-	pub const ALT: u32 = 1 << 2;
-	pub const SUPER: u32 = 1 << 3;
+	pub const SHIFT: u16 = 1 << 0;
+	pub const CONTROL: u16 = 1 << 1;
+	pub const ALT: u16 = 1 << 2;
+	pub const SUPER: u16 = 1 << 3;
+	pub const TAB: u16 = 1 << 4;
+	pub const CAPS: u16 = 1 << 5;
+	pub const DEL: u16 = 1 << 6;
+	pub const ALTGR: u16 = 1 << 7;
+	pub const HOME: u16 = 1 << 8;
+	pub const END: u16 = 1 << 9;
+	pub const FUNC: u16 = 1 << 10;
+}
+
+/// Identifies one tracked keyboard button in a [`KeyboardSnapshot`].
+///
+/// `Char` covers the alphanumeric keys the `Key` chip binds to (letters
+/// always uppercase, digits either row -- see `viewer::input::char_for_keys`,
+/// which is what actually produces these), collapsing left/right or
+/// numpad/top-row duplicates the same way `held_keys` used to. Every other
+/// variant is a distinct physical button, including the ones `key_mods_bits`
+/// folds into the `KeyMods` chip's bitmask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyCode {
+	/// An uppercase letter ('A'..='Z') or digit ('0'..='9').
+	Char(char),
+	Shift,
+	Control,
+	Alt,
+	/// Right Alt on most non-US layouts; kept distinct from `Alt` to match
+	/// `key_mods_bits::ALTGR`.
+	AltGr,
+	Super,
+	Tab,
+	CapsLock,
+	Delete,
+	Home,
+	End,
+	/// A function key, numbered from 1 (F1, F2, ...). Any function key sets
+	/// `key_mods_bits::FUNC`.
+	Function(u8),
+	Enter,
+	Escape,
+	Backspace,
+	Space,
+	ArrowUp,
+	ArrowDown,
+	ArrowLeft,
+	ArrowRight,
+	PageUp,
+	PageDown,
+	Insert,
+}
+
+/// One key's recorded state: whether it's currently held, and the
+/// simulation-clock timestamp (nanoseconds since the `Simulator` was built --
+/// see `Simulator::press_key`) it last changed at. Keys that have never been
+/// touched read as `(false, 0)`.
+pub type KeyTouch = (bool, u128);
+
+/// Every keyboard button the host has ever reported, keyed by [`KeyCode`] --
+/// a full "keyboard snapshot" rather than just the handful of keys older
+/// code tracked individually. Untouched keys simply aren't in the map yet
+/// and read as `(false, 0)` via [`Self::get`], so building one costs
+/// nothing up front.
+#[derive(Debug, Default, Clone)]
+pub struct KeyboardSnapshot {
+	keys: HashMap<KeyCode, KeyTouch>,
+}
+
+impl KeyboardSnapshot {
+	/// Records `code`'s new pressed state, stamping `last_touch` to `now`.
+	pub fn set(&mut self, code: KeyCode, pressed: bool, now: u128) {
+		self.keys.insert(code, (pressed, now));
+	}
+
+	/// `code`'s current `(is_pressed, last_touch)`, or `(false, 0)` if it's
+	/// never been touched.
+	pub fn get(&self, code: KeyCode) -> KeyTouch {
+		self.keys.get(&code).copied().unwrap_or((false, 0))
+	}
+
+	pub fn is_pressed(&self, code: KeyCode) -> bool {
+		self.get(code).0
+	}
+
+	pub fn last_touch(&self, code: KeyCode) -> u128 {
+		self.get(code).1
+	}
+
+	/// Marks every currently-held key as released (used when focus is lost
+	/// -- a physically-held key doesn't generate its own release event if
+	/// that happens, e.g. alt-tabbing away).
+	pub fn release_all(&mut self, now: u128) {
+		for touch in self.keys.values_mut() {
+			if touch.0 {
+				*touch = (false, now);
+			}
+		}
+	}
+
+	#[allow(unused)]
+	fn any_function_key_pressed(&self) -> bool {
+		self.keys.iter().any(|(code, touch)| matches!(code, KeyCode::Function(_)) && touch.0)
+	}
+
+	/// Collapses the modifier-ish keys in this snapshot into the
+	/// `key_mods_bits` bitmask the `KeyMods` chip outputs.
+	pub fn modifiers_bitmask(&self) -> u16 {
+		let mut bits = 0u16;
+		let mut set = |held: bool, bit: u16| {
+			if held {
+				bits |= bit;
+			}
+		};
+		set(self.is_pressed(KeyCode::Shift), key_mods_bits::SHIFT);
+		set(self.is_pressed(KeyCode::Control), key_mods_bits::CONTROL);
+		set(self.is_pressed(KeyCode::Alt), key_mods_bits::ALT);
+		set(self.is_pressed(KeyCode::Super), key_mods_bits::SUPER);
+		set(self.is_pressed(KeyCode::Tab), key_mods_bits::TAB);
+		set(self.is_pressed(KeyCode::CapsLock), key_mods_bits::CAPS);
+		set(self.is_pressed(KeyCode::Delete), key_mods_bits::DEL);
+		set(self.is_pressed(KeyCode::AltGr), key_mods_bits::ALTGR);
+		//set(self.is_pressed(KeyCode::Home), key_mods_bits::HOME);
+		//set(self.is_pressed(KeyCode::End), key_mods_bits::END);
+		//set(self.any_function_key_pressed(), key_mods_bits::FUNC);
+		bits
+	}
 }
 
 impl Simulator {
@@ -198,12 +320,69 @@ impl Simulator {
 			rng: fastrand::Rng::new(),
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
-			held_keys: HashSet::new(),
-			key_modifiers: 0,
+			keyboard: KeyboardSnapshot::default(),
 			driven_inputs: HashMap::new(),
 			caching: CachingState::default(),
 			use_caching: true,
 		}
+	}
+
+	/// Marks `code` pressed, stamping the current simulation-clock time as
+	/// its last touch (see [`KeyTouch`]).
+	pub fn press_key(&mut self, code: KeyCode) {
+		let now = self.start_time.elapsed().as_nanos();
+		self.keyboard.set(code, true, now);
+	}
+
+	/// Marks `code` released, stamping the current simulation-clock time.
+	pub fn release_key(&mut self, code: KeyCode) {
+		let now = self.start_time.elapsed().as_nanos();
+		self.keyboard.set(code, false, now);
+	}
+
+	/// Presses or releases `code` depending on `pressed` -- convenience for
+	/// callers that already have a winit `ElementState`-shaped bool.
+	pub fn set_key_pressed(&mut self, code: KeyCode, pressed: bool) {
+		if pressed { self.press_key(code) } else { self.release_key(code) }
+	}
+
+	/// Releases every currently-held key at once (focus-lost handling).
+	pub fn release_all_keys(&mut self) {
+		let now = self.start_time.elapsed().as_nanos();
+		self.keyboard.release_all(now);
+	}
+
+	/// Whether `c` (already normalised the way the `Key` chip expects --
+	/// uppercase letters, plain digits) is currently held.
+	pub fn is_key_held(&self, c: char) -> bool {
+		self.keyboard.is_pressed(KeyCode::Char(c))
+	}
+
+	/// Current `key_mods_bits` bitmask, derived live from the keyboard
+	/// snapshot rather than stored separately.
+	pub fn key_modifiers(&self) -> u16 {
+		self.keyboard.modifiers_bitmask()
+	}
+
+	/// Back-compat setter for code that thinks in terms of a `key_mods_bits`
+	/// bitmask rather than individual key presses (tests, and seeding
+	/// modifiers already held when a project opens -- see
+	/// `viewer::app::App::open_project`). Presses/releases the matching
+	/// keys in the snapshot so `key_modifiers()` reflects `bits` afterwards.
+	/// The `FUNC` bit has no single physical key backing it, so it's
+	/// approximated by the first function key.
+	pub fn set_modifier_bits(&mut self, bits: u16) {
+		self.set_key_pressed(KeyCode::Shift, bits & key_mods_bits::SHIFT != 0);
+		self.set_key_pressed(KeyCode::Control, bits & key_mods_bits::CONTROL != 0);
+		self.set_key_pressed(KeyCode::Alt, bits & key_mods_bits::ALT != 0);
+		self.set_key_pressed(KeyCode::Super, bits & key_mods_bits::SUPER != 0);
+		self.set_key_pressed(KeyCode::Tab, bits & key_mods_bits::TAB != 0);
+		self.set_key_pressed(KeyCode::CapsLock, bits & key_mods_bits::CAPS != 0);
+		self.set_key_pressed(KeyCode::Delete, bits & key_mods_bits::DEL != 0);
+		self.set_key_pressed(KeyCode::AltGr, bits & key_mods_bits::ALTGR != 0);
+		self.set_key_pressed(KeyCode::Home, bits & key_mods_bits::HOME != 0);
+		self.set_key_pressed(KeyCode::End, bits & key_mods_bits::END != 0);
+		self.set_key_pressed(KeyCode::Function(1), bits & key_mods_bits::FUNC != 0);
 	}
 
 	pub const fn root(&self) -> ChipIdx {
@@ -731,11 +910,11 @@ impl Simulator {
 			}
 			E::Key => {
 				let key_char = self.chips[chip_idx.0].internal_state.first().copied().unwrap_or(0) as u8 as char;
-				let is_held = self.held_keys.contains(&key_char);
+				let is_held = self.is_key_held(key_char);
 				set_out!(0, PinState::from_bool(is_held));
 			}
 			E::KeyMods => {
-				set_out!(0, PinState::from_raw((self.key_modifiers & 0xFF) as u16));
+				set_out!(0, PinState::from_raw(self.key_modifiers() & 0xFF));
 			}
 			E::DisplayRgb => self.process_display_rgb(chip_idx),
 			E::DisplayDot => self.process_display_dot(chip_idx),

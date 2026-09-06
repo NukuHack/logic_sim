@@ -61,5 +61,5 @@ pub use save_system::{
 	default_chip_collections, default_starred_list,
 };
 pub use settings::{AppSettings, FullScreenMode};
-pub use sim::{ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator, key_mods_bits};
+pub use sim::{ChipIdx, ExternalInput, KeyCode, KeyboardSnapshot, PinIdx, SimChip, SimPin, Simulator, key_mods_bits};
 pub use ui_menu::{MainMenu, MenuOutcome};

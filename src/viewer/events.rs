@@ -79,8 +79,7 @@ impl ApplicationHandler for App {
 			WindowEvent::Focused(false) => {
 				self.modifiers = winit::keyboard::ModifiersState::empty();
 				if let Screen::Viewer(v) = &mut self.screen {
-					v.sim.clear_held_keys();
-					v.sim.set_key_modifiers(0);
+					v.sim.release_all_keys();
 				}
 			}
 
@@ -532,19 +531,20 @@ impl App {
 
 	pub(crate) fn handle_key_event(&mut self, event: &winit::event::KeyEvent) {
 		let pressed = event.state == ElementState::Pressed;
-		// Feed the Key chip's held-key set on both press and release (not just press, unlike the
-		// shortcut handling below) since it needs to know when a key stops being held. The chip
-		// stores/compares its target letter in capitals, so lowercase 'a' must register as 'A'
-		// here. Typed characters are only *simulation input* while no UI surface wants them,
-		// though: `UiStack::keyboard_stop` says when the top of the stack owns typing outright (a
-		// text field, or the key-select popup capturing its next key as data) -- configuring a Key
-		// chip to 'A' must not itself hold 'A' down in the simulator.
-		if let Some(c) = crate::viewer::input::char_for_keys(event.physical_key, &event.logical_key)
-			&& let Screen::Viewer(v) = &mut self.screen
-			&& c.is_ascii_alphanumeric()
+		// Feed the simulator's whole keyboard snapshot on both press and release (not just
+		// press, unlike the shortcut handling below) since chips need to know when a key stops
+		// being held. This covers every tracked button, not just the Key chip's alphanumeric
+		// set (see `sim::KeyboardSnapshot` / `input::sim_keycode_for_event`) -- the chip
+		// stores/compares its target letter in capitals, so lowercase 'a' must still register as
+		// 'A' here. Typed characters/keys are only *simulation input* while no UI surface wants
+		// them, though: `UiStack::keyboard_stop` says when the top of the stack owns typing
+		// outright (a text field, or the key-select popup capturing its next key as data) --
+		// configuring a Key chip to 'A' must not itself hold 'A' down in the simulator.
+		if let Screen::Viewer(v) = &mut self.screen
 			&& !v.stack.keyboard_stop()
+			&& let Some(code) = crate::viewer::input::sim_keycode_for_event(event.physical_key, &event.logical_key)
 		{
-			if pressed { v.sim.held_key_press(c) } else { v.sim.held_key_release(c) }
+			v.sim.set_key_pressed(code, pressed);
 		}
 
 		if !pressed {

@@ -24,7 +24,7 @@ pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct CachingState {
 	/// Keyed by chip name. Replaces the original's `Dictionary<string, uint[][]> combinationalChipCaches`
 	pub combinational_chip_cache: HashMap<Arc<str>, Box<dyn CachedGate>>,
@@ -32,12 +32,6 @@ pub struct CachingState {
 	/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
 	/// Same interned-`Arc<str>` sharing as [`combinational_chip_cache`].
 	pub not_combinational_chip_cache: HashSet<Arc<str>>,
-}
-
-impl Default for CachingState {
-	fn default() -> Self {
-		Self { combinational_chip_cache: HashMap::new(), not_combinational_chip_cache: HashSet::new() }
-	}
 }
 
 /// Mirrors `SimChip.CalculateNumberOfInputBits`: total width in bits across
