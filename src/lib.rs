@@ -3,17 +3,24 @@
 //! viewer UI, and re-exports the public API surface used by the binary.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
-// for quick check : #![forbid(unsafe_code)]
+// #![forbid(unsafe_code)]
 //#![warn(missing_docs)]
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
-#![allow(clippy::cast_possible_truncation)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,        // signed to unsigned
+    clippy::cast_precision_loss,   // float precision loss
+	clippy::too_long_first_doc_paragraph,
+	clippy::must_use_candidate,
+)]
 #![warn(
     missing_debug_implementations,
 	unused_qualifications,
     rust_2018_idioms,    // Still useful for backward compatibility patterns
     rust_2021_compatibility, // Warns about things that changed in 2021
-    rust_2024_compatibility  // Warns about things that changed in 2024 (when stable)
+    rust_2024_compatibility,  // Warns about things that changed in 2024 (when stable)
 )]
 
 pub mod audio;

@@ -100,10 +100,10 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 					&& let Some(c) = v.prefs.chip_collections.get_mut(i)
 				{
 					let old_name = c.name.clone();
-					c.name = new_name.clone();
+					c.name.clone_from(&new_name);
 					for item in &mut v.prefs.starred_list {
 						if item.is_collection && item.name.eq_ignore_ascii_case(&old_name) {
-							item.name = new_name.clone();
+							item.name.clone_from(&new_name);
 						}
 					}
 				}

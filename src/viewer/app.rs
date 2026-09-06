@@ -27,7 +27,6 @@ pub(crate) enum Screen {
 	Menu,
 	/// Boxed so `Screen` itself stays small -- `ViewerState` is by far the
 	/// biggest value in the app and would otherwise bloat every `Screen`
-	/// (clippy::large_enum_variant).
 	Viewer(Box<ViewerState>),
 }
 
@@ -92,7 +91,7 @@ impl App {
 			}
 		};
 
-		App {
+		Self {
 			paths,
 			menu,
 			screen: Screen::Menu,
@@ -117,10 +116,7 @@ impl App {
 			Screen::Viewer(v) => {
 				// A view-only chip on screen extends the chip chain
 				// ("project / root > viewed"), like the banner shows.
-				let chip = match v.view_stack.last() {
-					Some(top) => format!("{} > {}", v.root_chip_name, top.name),
-					None => v.root_chip_name.clone(),
-				};
+				let chip = v.view_stack.last().map_or_else(|| v.root_chip_name.clone(), |top| format!("{} > {}", v.root_chip_name, top.name));
 				format!("Digital Logic Sim -- {} / {}", v.prefs.project_name, chip)
 			}
 		}
@@ -188,7 +184,7 @@ impl App {
 		// is about to be dropped -- silence any sounding buzzer instead of
 		// letting it drone on under the menu.
 		let shared = std::sync::Arc::clone(&self.audio);
-		shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).sim_audio.silence();
+		shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner).sim_audio.silence();
 		self.menu.on_menu_opened();
 		self.set_window_title();
 	}
@@ -200,51 +196,52 @@ impl App {
 	}
 
 	pub(crate) fn handle_menu_action(&mut self, action: UiAction, event_loop: &winit::event_loop::ActiveEventLoop) {
+		use UiAction as UA;
 		match action {
-			UiAction::NewProject => {
+			UA::NewProject => {
 				self.menu.choose_new_project();
 				self.open_name_popup_with("");
 			}
-			UiAction::OpenProjectScreen => self.menu.choose_open_project(),
-			UiAction::SettingsScreen => self.menu.choose_settings(),
-			UiAction::AboutScreen => self.menu.choose_about(),
-			UiAction::Quit => event_loop.exit(),
-			UiAction::BackToMain => self.menu.back_to_main(),
+			UA::OpenProjectScreen => self.menu.choose_open_project(),
+			UA::SettingsScreen => self.menu.choose_settings(),
+			UA::AboutScreen => self.menu.choose_about(),
+			UA::Quit => event_loop.exit(),
+			UA::BackToMain => self.menu.back_to_main(),
 
-			UiAction::SelectProject(i) => self.menu.select_project(i),
-			UiAction::OpenSelected => {
+			UA::SelectProject(i) => self.menu.select_project(i),
+			UA::OpenSelected => {
 				if let Some(MenuOutcome::OpenProject { name }) = self.menu.open_selected() {
 					self.open_project(&name);
 				}
 			}
-			UiAction::RenameSelected => {
+			UA::RenameSelected => {
 				let current = self.menu.selected_project().map(|p| p.project_name.clone()).unwrap_or_default();
 				self.menu.request_rename_selected();
 				if self.menu.popup() == PopupKind::RenameProject {
 					self.open_name_popup_with(&current);
 				}
 			}
-			UiAction::DuplicateSelected => {
+			UA::DuplicateSelected => {
 				self.menu.request_duplicate_selected();
 				if self.menu.popup() == PopupKind::DuplicateProject {
 					self.open_name_popup_with("");
 				}
 			}
-			UiAction::DeleteSelected => self.menu.request_delete_selected(),
-			UiAction::RefreshProjects => self.menu.refresh_projects(),
+			UA::DeleteSelected => self.menu.request_delete_selected(),
+			UA::RefreshProjects => self.menu.refresh_projects(),
 
-			UiAction::PopupConfirm => self.confirm_popup(),
-			UiAction::PopupCancel => {
+			UA::PopupConfirm => self.confirm_popup(),
+			UA::PopupCancel => {
 				self.menu.cancel_popup();
 				self.text_input.clear();
 			}
 
-			UiAction::ToggleVsync => {
+			UA::ToggleVsync => {
 				let mut s = self.menu.edited_settings();
 				s.vsync_enabled = !s.vsync_enabled;
 				self.menu.set_edited_settings(s);
 			}
-			UiAction::CycleFullscreenMode => {
+			UA::CycleFullscreenMode => {
 				use crate::FullScreenMode as E;
 				let mut s = self.menu.edited_settings();
 				s.fullscreen_mode = match s.fullscreen_mode {
@@ -255,7 +252,7 @@ impl App {
 				};
 				self.menu.set_edited_settings(s);
 			}
-			UiAction::ApplySettings => {
+			UA::ApplySettings => {
 				if let Err(e) = self.menu.apply_settings() {
 					self.status = Some(format!("Failed to save settings: {e}"));
 				}
@@ -333,8 +330,10 @@ pub(crate) fn create_render_state(window: std::sync::Arc<winit::window::Window>,
 
 /// Entry point: sets up logging (which needs the save directory to know
 /// where its log files go) and the save paths, then runs the event loop.
+/// # Errors
+/// anything from the window even loop, or by the app itself
 pub fn run() -> Result<(), winit::error::EventLoopError> {
-	let data_dir = std::env::args().nth(1).map(std::path::PathBuf::from).unwrap_or_else(SavePaths::unity_persistent_data_dir);
+	let data_dir = std::env::args().nth(1).map_or_else(SavePaths::unity_persistent_data_dir, std::path::PathBuf::from);
 	SavePaths::ensure_directory_exists(&data_dir).ok();
 
 	// Kept alive for the whole run on purpose: dropping the handle shuts

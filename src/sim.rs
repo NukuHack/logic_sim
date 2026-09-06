@@ -969,7 +969,7 @@ impl Simulator {
 	}
 
 	/// Snapshots every pin's live state (`SimPin::state`) keyed by its
-	/// owner-chip id-path + pin id + is_input flag. Paired with
+	/// owner-chip id-path + pin id + `is_input` flag. Paired with
 	/// [`restore_pin_states`] to carry signal levels across a rebuild so
 	/// the renderer doesn't see a frame of DISCONNECTED defaults.
 	pub fn capture_pin_states(&self) -> PinStateMap {
@@ -987,7 +987,7 @@ impl Simulator {
 			let pin = &self.pins[p.0];
 			let mut pin_key = key.clone();
 			pin_key.push(pin.id);
-			pin_key.push(pin.is_input as i32);
+			pin_key.push(i32::from(pin.is_input));
 			map.insert(pin_key, pin.state);
 		}
 		for &sub in &chip.sub_chips {
@@ -1018,7 +1018,7 @@ impl Simulator {
 			}
 			let mut pin_key = key.clone();
 			pin_key.push(pin.id);
-			pin_key.push(pin.is_input as i32);
+			pin_key.push(i32::from(pin.is_input));
 			if let Some(&saved) = map.get(&pin_key) {
 				self.pins[p.0].state = saved;
 			}
@@ -1030,12 +1030,12 @@ impl Simulator {
 	}
 }
 
-/// Pin state snapshot keyed by (owner-chip id-path, pin id, is_input).
+/// Pin state snapshot keyed by (owner-chip id-path, pin id, `is_input`).
 /// Used by `rebuild_sim` to carry live wire/signal states across rebuilds
 /// so the renderer doesn't see a frame of DISCONNECTED defaults.
 pub type PinStateMap = HashMap<Vec<i32>, PinState>;
 
-/// Recursively build the flat pin/chip arenas from a ChipDescription tree.
+/// Recursively build the flat pin/chip arenas from a `ChipDescription` tree.
 fn build_recursive(
 	desc: &ChipDescription,
 	library: &ChipLibrary,

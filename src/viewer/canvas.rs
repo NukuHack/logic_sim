@@ -93,11 +93,11 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		// bitwise).
 		let start_is_bus = match pending_ref.start {
 			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
-				bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type())
+				bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(ChipType::is_bus_type)
 			}
 			PendingWireEnd::WireTap { .. } => false,
 		};
-		let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(|t| t.is_bus_type());
+		let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(ChipType::is_bus_type);
 		if v.prefs.prefs_can_complete_wire_connection == 0 && pending_ref.bit_count != hit.bit_count && start_is_bus == end_is_bus {
 			*status = Some(format!("Can't connect {}-bit to {}-bit pins", pending_ref.bit_count.to_int(), hit.bit_count.to_int()));
 			return;
@@ -108,8 +108,8 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 		// instantly.
 		let bus_start_owner = match pending_ref.start {
 			PendingWireEnd::Pin { owner_id: start_owner, .. } => {
-				let start_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(|t| t.is_bus_type());
-				let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(|t| t.is_bus_type());
+				let start_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, start_owner).is_some_and(ChipType::is_bus_type);
+				let end_is_bus = bus_wiring::owner_chip_type(root_desc, &v.library, hit.owner_id).is_some_and(ChipType::is_bus_type);
 				(start_is_bus && end_is_bus).then_some(start_owner)
 			}
 			PendingWireEnd::WireTap { .. } => None,
@@ -126,41 +126,38 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 
 		let pending = v.pending_wire.take().expect("checked above");
 
-		let mut wire = match bus_start_owner {
-			Some(start_owner) => {
-				// Resolve on a scratch copy -- the resolver reads sibling
-				// descriptions out of the same library the edited chip
-				// lives in -- then write the converted/linked chip back.
-				let mut edited = v.library.get(&root_chip_name).clone();
-				match bus_wiring::resolve_bus_pair_completion(&mut edited, &v.library, start_owner, hit.owner_id) {
-					Ok((source, target)) => {
-						*v.library.get_mut(&root_chip_name) = edited;
-						WireDescription::new(source, target)
-					}
-					Err(reason) => {
-						v.pending_wire = Some(pending);
-						*status = Some(reason.to_string());
-						return;
-					}
+		let mut wire = if let Some(start_owner) = bus_start_owner {
+			// Resolve on a scratch copy -- the resolver reads sibling
+			// descriptions out of the same library the edited chip
+			// lives in -- then write the converted/linked chip back.
+			let mut edited = v.library.get(&root_chip_name).clone();
+			match bus_wiring::resolve_bus_pair_completion(&mut edited, &v.library, start_owner, hit.owner_id) {
+				Ok((source, target)) => {
+					*v.library.get_mut(&root_chip_name) = edited;
+					WireDescription::new(source, target)
+				}
+				Err(reason) => {
+					v.pending_wire = Some(pending);
+					*status = Some(reason.to_string());
+					return;
 				}
 			}
-			None => {
-				let end_pin_address = PinAddress::new(hit.owner_id, hit.pin_id);
-				if pending.start.is_source() {
-					match pending.start {
-						PendingWireEnd::Pin { owner_id, pin_id, .. } => WireDescription::new(PinAddress::new(owner_id, pin_id), end_pin_address),
-						PendingWireEnd::WireTap { wire_index, segment_index, point, source_pin_address } => {
-							WireDescription::new_tapped_source(source_pin_address, end_pin_address, wire_index as i32, segment_index, point)
-						}
+		} else {
+			let end_pin_address = PinAddress::new(hit.owner_id, hit.pin_id);
+			if pending.start.is_source() {
+				match pending.start {
+					PendingWireEnd::Pin { owner_id, pin_id, .. } => WireDescription::new(PinAddress::new(owner_id, pin_id), end_pin_address),
+					PendingWireEnd::WireTap { wire_index, segment_index, point, source_pin_address } => {
+						WireDescription::new_tapped_source(source_pin_address, end_pin_address, wire_index as i32, segment_index, point)
 					}
-				} else {
-					// The clicked pin is the real source; the wire always started from a plain pin in this
-					// branch (a wire tap is always treated as the source -- see `PendingWireEnd::is_source`).
-					let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else {
-						unreachable!("a wire tap is always the source end, so this branch never sees one")
-					};
-					WireDescription::new(end_pin_address, PinAddress::new(owner_id, pin_id))
 				}
+			} else {
+				// The clicked pin is the real source; the wire always started from a plain pin in this
+				// branch (a wire tap is always treated as the source -- see `PendingWireEnd::is_source`).
+				let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else {
+					unreachable!("a wire tap is always the source end, so this branch never sees one")
+				};
+				WireDescription::new(end_pin_address, PinAddress::new(owner_id, pin_id))
 			}
 		};
 
@@ -284,7 +281,7 @@ fn default_internal_data(chip_type: Option<ChipType>) -> Option<Vec<u32>> {
 		// Bound to 'K' by default (`DescriptionCreator.CreateDefaultInstanceData`),
 		// so a freshly-placed KEY chip responds to a keypress right away
 		// instead of silently sitting bound to the (unpressable) null character until configured.
-		Some(ChipType::Key) => Some(vec![b'K' as u32]),
+		Some(ChipType::Key) => Some(vec![u32::from(b'K')]),
 		// [duration, ticks_remaining, input_old] -- see `sim::process_builtin_chip`'s `Pulse` arm,
 		// which indexes all three unconditionally. 50 simulation ticks matches the original's
 		// fresh-placement pulse width; the other two are just-started runtime state, always zero.
@@ -375,10 +372,9 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			duplicate.position = place_pos;
 			duplicate
 		} else {
-			let internal_data = match component.linked_bus_partner {
-				Some(partner_index) => Some(vec![(first_id + partner_index as i32) as u32]),
-				None => default_internal_data(chip_types[index]),
-			};
+			let internal_data = component
+				.linked_bus_partner
+				.map_or_else(|| default_internal_data(chip_types[index]), |partner_index| Some(vec![(first_id + partner_index as i32) as u32]));
 			SubChipDescription { name: component.name.clone(), id, internal_data, position: place_pos, label: None, pin_colour_info: Vec::new() }
 		};
 		chip.sub_chips.push(subchip);
@@ -413,7 +409,9 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 	}
 
 	v.rebuild_sim();
-	if !attached_wires.is_empty() {
+	if attached_wires.is_empty() {
+		crate::viewer::undo::record_add_elements(v, placed_subchips, placed_pins);
+	} else {
 		let first_new_wire = v.library.get(&v.root_chip_name).wires.len();
 		let chip = v.library.get_mut(&v.root_chip_name);
 		chip.wires.extend(attached_wires);
@@ -424,8 +422,6 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			.map(|index| (v.library.get(&v.root_chip_name).wires[index].clone(), index))
 			.collect();
 		crate::viewer::undo::record_add_elements_with_wires(v, placed_subchips, placed_pins, wire_entries);
-	} else {
-		crate::viewer::undo::record_add_elements(v, placed_subchips, placed_pins);
 	}
 }
 
@@ -497,7 +493,7 @@ pub(crate) fn build_pending_place_scene(
 
 	// Include duplicated wires in the ghost so they render at the same translucent alpha as the
 	// carried components.
-	for wire in pending.first().map(|(_, c)| c.attached_wires.as_slice()).unwrap_or(&[]) {
+	for wire in pending.first().map_or_else(|| &[] as &[WireDescription], |(_, c)| c.attached_wires.as_slice()) {
 		let mut w = (*wire).clone();
 		w.points = w.points.iter().map(|p| *p + centroid).collect();
 		w.cached_source_point += centroid;

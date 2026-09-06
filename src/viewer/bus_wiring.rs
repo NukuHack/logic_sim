@@ -21,7 +21,7 @@ pub fn owner_chip_type(chip: &ChipDescription, library: &ChipLibrary, owner_id: 
 pub fn is_bus_wire(chip: &ChipDescription, library: &ChipLibrary, wire: &WireDescription) -> bool {
 	let source_type = owner_chip_type(chip, library, wire.source_pin_address.pin_owner_id);
 	let target_type = owner_chip_type(chip, library, wire.target_pin_address.pin_owner_id);
-	source_type.is_some_and(|t| t.is_bus_origin_type()) && target_type.is_some_and(|t| t.is_bus_terminus_type())
+	source_type.is_some_and(ChipType::is_bus_origin_type) && target_type.is_some_and(ChipType::is_bus_terminus_type)
 }
 
 /// The electrical target of a connection landing on `wire` -- mirrors
@@ -88,7 +88,7 @@ pub fn resolve_bus_pair_completion(
 	end_owner: i32,
 ) -> Result<(PinAddress, PinAddress), &'static str> {
 	let start_type = owner_chip_type(chip, library, start_owner).ok_or("That component no longer exists")?;
-	if !start_type.is_bus_type() || !owner_chip_type(chip, library, end_owner).is_some_and(|t| t.is_bus_type()) {
+	if !start_type.is_bus_type() || !owner_chip_type(chip, library, end_owner).is_some_and(ChipType::is_bus_type) {
 		return Err("Both wire ends must be bus chips");
 	}
 

@@ -76,11 +76,11 @@ impl MainMenu {
 
 	// ---- Queries (for driving a UI) ----
 
-	pub fn screen(&self) -> MenuScreen {
+	pub const fn screen(&self) -> MenuScreen {
 		self.screen
 	}
 
-	pub fn popup(&self) -> PopupKind {
+	pub const fn popup(&self) -> PopupKind {
 		self.popup
 	}
 
@@ -88,7 +88,7 @@ impl MainMenu {
 		&self.projects
 	}
 
-	pub fn selected_project_index(&self) -> Option<usize> {
+	pub const fn selected_project_index(&self) -> Option<usize> {
 		self.selected_project_index
 	}
 
@@ -112,7 +112,7 @@ impl MainMenu {
 	/// Mirrors `MainMenu.OnMenuOpened`: resets to the main screen with no
 	/// popup or selection. Call when transitioning into the startup screen
 	/// (e.g. after quitting back out of a project).
-	pub fn on_menu_opened(&mut self) {
+	pub const fn on_menu_opened(&mut self) {
 		self.screen = MenuScreen::Main;
 		self.popup = PopupKind::None;
 		self.selected_project_index = None;
@@ -149,24 +149,24 @@ impl MainMenu {
 	}
 
 	/// Mirrors choosing "About" on the main screen.
-	pub fn choose_about(&mut self) {
+	pub const fn choose_about(&mut self) {
 		self.screen = MenuScreen::About;
 	}
 
 	/// Mirrors choosing "Quit" on the main screen.
-	pub fn choose_quit(&self) -> MenuOutcome {
+	pub const fn choose_quit(&self) -> MenuOutcome {
 		MenuOutcome::Quit
 	}
 
 	// ---- Load Project screen ----
 
-	pub fn select_project(&mut self, index: usize) {
+	pub const fn select_project(&mut self, index: usize) {
 		if index < self.projects.len() {
 			self.selected_project_index = Some(index);
 		}
 	}
 
-	pub fn request_delete_selected(&mut self) {
+	pub const fn request_delete_selected(&mut self) {
 		if self.selected_project_index.is_some() {
 			self.popup = PopupKind::DeleteConfirmation;
 		}
@@ -216,6 +216,9 @@ impl MainMenu {
 	/// Mirrors `MainMenu.DrawDeleteProjectConfirmationPopup`'s "Delete"
 	/// button: deletes the selected project (with a backup copy, matching
 	/// the original's default), then refreshes the list.
+	/// # Errors
+	///
+	/// only error if it propagates from `delete_project`
 	pub fn confirm_delete(&mut self) -> std::io::Result<()> {
 		let Some(project) = self.selected_project() else { return Ok(()) };
 		let name = project.project_name.clone();
@@ -243,6 +246,9 @@ impl MainMenu {
 	/// Mirrors `MainMenu.OnNamePopupConfirmed`: performs whichever action the currently-open
 	/// name popup was for (new/rename/duplicate), closes the popup, and refreshes the project
 	/// list.
+	/// # Errors
+	///
+	/// only error if it propagates from `create_or_load_project`
 	pub fn confirm_name_popup(&mut self, name: &str) -> std::io::Result<Option<MenuOutcome>> {
 		let kind = self.popup;
 		match kind {
@@ -287,13 +293,16 @@ impl MainMenu {
 	/// hand it back here (there's no field-by-field API since the fields
 	/// themselves -- resolution, fullscreen mode, vsync -- have no menu
 	/// logic of their own beyond "hold the edited value").
-	pub fn set_edited_settings(&mut self, settings: AppSettings) {
+	pub const fn set_edited_settings(&mut self, settings: AppSettings) {
 		self.edited_settings = settings;
 	}
 
 	/// Mirrors pressing "APPLY" on the settings screen: persists
 	/// `edited_settings` and returns it wrapped in `MenuOutcome` so the
 	/// host can apply it to the actual window/renderer.
+	/// # Errors
+	///
+	/// only error if it propagates from `save_app_settings`
 	pub fn apply_settings(&mut self) -> std::io::Result<MenuOutcome> {
 		crate::save_system::Saver::save_app_settings(&self.paths, &self.edited_settings)?;
 		Ok(MenuOutcome::SettingsApplied(self.edited_settings))

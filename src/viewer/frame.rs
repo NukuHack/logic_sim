@@ -267,7 +267,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		let root_desc = v.library.get_arc(&scene_chip_name);
 		let bounds = bounding_box(&v.chip_scene_buf).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
 		if let Some((min, max)) = bounds {
-			v.camera.fit_to_bounds(min, max, 0.15)
+			v.camera.fit_to_bounds(min, max, 0.15);
 		} else {
 			// No geometry at all -- e.g. a brand-new blank chip has no components/wires yet, so
 			// there's nothing to fit to. Fall back to a fixed, comfortable default instead of leaving

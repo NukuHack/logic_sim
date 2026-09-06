@@ -11,7 +11,7 @@ use crate::render::scene;
 use crate::render::theme;
 use crate::sim::key_mods_bits;
 use crate::viewer::state::ViewerState;
-use crate::{PinAddress, SubChipDescription, WireConnectionType, WireDescription};
+use crate::{ChipType, PinAddress, SubChipDescription, WireConnectionType, WireDescription};
 use glam::Vec2;
 use std::collections::HashMap;
 
@@ -89,7 +89,7 @@ pub(crate) fn start_placing(v: &mut ViewerState, chip_name: &str) {
 		PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() },
 	)];
 
-	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus())
+	if let Some(terminus_type) = chip_type.and_then(ChipType::corresponding_bus_terminus)
 		&& let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type)
 	{
 		let terminus_name = desc.name.clone();
@@ -115,14 +115,14 @@ pub(crate) fn add_to_placing(v: &mut ViewerState, chip_name: &str) {
 	cancel_all(v);
 	v.pending_wire = None;
 
-	let last_offset = v.pending_place.last().map(|(pos, _)| *pos).unwrap_or(Vec2::ZERO);
+	let last_offset = v.pending_place.last().map_or(Vec2::ZERO, |(pos, _)| *pos);
 	let offset = last_offset + Vec2::new(layout::GRID_SIZE * 2.0, -layout::GRID_SIZE * 2.0);
 
 	let chip_type = v.library.try_get(chip_name).map(|d| d.chip_type);
 	v.pending_place
 		.push((offset, PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() }));
 
-	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus())
+	if let Some(terminus_type) = chip_type.and_then(ChipType::corresponding_bus_terminus)
 		&& let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type)
 	{
 		let terminus_name = desc.name.clone();
@@ -369,7 +369,7 @@ mod tests {
 	fn viewer_with_builtins() -> ViewerState {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
-		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
+		library.add(crate::ChipDescription::new("ROOT", ChipType::Custom));
 		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
@@ -781,7 +781,7 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 	// Copies with re-mapped links: a partner duplicated alongside points
 	// at its fresh id; one left behind clears to "no partner" so no
 	// dangling link survives into delete cascades.
-	let linked_partner = |s: &SubChipDescription| s.internal_data.as_ref().and_then(|d| d.first()).map(|&v| v as i32).unwrap_or(0);
+	let linked_partner = |s: &SubChipDescription| s.internal_data.as_ref().and_then(|d| d.first()).map_or(0, |&v| v as i32);
 	let mut carry: Vec<(Vec2, PendingComponent)> = Vec::with_capacity(originals.len());
 	for source in &originals {
 		let mut copy = source.clone();
@@ -826,13 +826,12 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 		copy.cached_target_point -= centroid;
 
 		if copy.connection_type != WireConnectionType::ToPins {
-			match wire_index_map.get(&(copy.connected_wire_index.max(0) as usize)) {
-				Some(&new_idx) => copy.connected_wire_index = new_idx as i32,
-				None => {
-					copy.connection_type = WireConnectionType::ToPins;
-					copy.connected_wire_index = 0;
-					copy.connected_wire_segment_index = 0;
-				}
+			if let Some(&new_idx) = wire_index_map.get(&(copy.connected_wire_index.max(0) as usize)) {
+				copy.connected_wire_index = new_idx as i32
+			} else {
+				copy.connection_type = WireConnectionType::ToPins;
+				copy.connected_wire_index = 0;
+				copy.connected_wire_segment_index = 0;
 			}
 		}
 		wire_index_map.insert(old_idx, attached_wires.len());
@@ -856,7 +855,7 @@ mod duplicate_tests {
 	fn viewer_with_builtins() -> ViewerState {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
-		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
+		library.add(crate::ChipDescription::new("ROOT", ChipType::Custom));
 		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 

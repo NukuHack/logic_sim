@@ -6,17 +6,18 @@
 //! shape.
 
 use crate::description::{ChipDescription, DisplayDescription, NameLocation};
-use crate::render::customize_ui::{CustomizeCtx, CustomizeFrameOut, CustomizeInteraction, default_display_scale, display_entries};
+use crate::render::customize_ui::{CustomizeCtx, CustomizeFrameOut, CustomizeInteraction, PreviewLayout, default_display_scale, display_entries};
 use crate::render::layout::{self, GRID_SIZE};
 use crate::render::scene::lookup::SimulatorPinState;
 use crate::render::theme;
+use crate::render::ui_kit::Frame;
 use crate::viewer::state::{Overlay, ViewerState};
 use glam::Vec2;
 
 /// Draft customization session for the open chip. `saved_save_text`
 /// snapshots the save popup's name field: the shared text buffer is
 /// borrowed by the hex colour field while this workspace is open and
-/// restored on close (see `close_top_overlay`'s CustomizeChip arm).
+/// restored on close (see `close_top_overlay`'s `CustomizeChip` arm).
 pub(crate) struct CustomizeState {
 	pub(crate) draft: ChipDescription,
 	pub(crate) saved_save_text: String,
@@ -28,7 +29,7 @@ pub(crate) struct CustomizeState {
 	pub(crate) zoom_factor: f32,
 	/// Screen-space cache written back by every built frame -- event
 	/// handlers map cursors through it between frames.
-	pub(crate) layout: crate::render::customize_ui::PreviewLayout,
+	pub(crate) layout: PreviewLayout,
 }
 
 // ---- open / close ------------------------------------------------------
@@ -54,7 +55,7 @@ pub(crate) fn open_customize(v: &mut ViewerState) {
 		list_scroll: 0.0,
 		list_scroll_max: 0.0,
 		zoom_factor: 1.0,
-		layout: Default::default(),
+		layout: PreviewLayout::default(),
 	});
 	v.open_overlay(Overlay::CustomizeChip);
 	v.overlay_text_input = hex_of(colour_seed);
@@ -72,13 +73,13 @@ pub(crate) fn confirm_customize(v: &mut ViewerState, status: &mut Option<String>
 		chip.colour = finalize_colour(customize.draft.colour);
 		chip.name_location = customize.draft.name_location;
 		chip.size = customize.draft.size;
-		chip.displays = customize.draft.displays.clone();
+		chip.displays.clone_from(&customize.draft.displays);
 		chip.cache_kind = customize.draft.cache_kind;
 	}
 	v.rebuild_sim();
 	v.overlay_text_input = customize.saved_save_text;
 	v.close_top_overlay();
-	*status = Some(format!("Customized '{}'", root_chip_name));
+	*status = Some(format!("Customized '{root_chip_name}'"));
 }
 
 /// CANCEL (or Escape over the whole workspace): discards the draft --
@@ -192,7 +193,7 @@ pub(crate) fn handle_preview_click(v: &mut ViewerState) {
 			let world = customize.layout.screen_to_world(v.last_cursor);
 			let chip_type =
 				customize.draft.sub_chips.iter().find(|s| s.id == sub_chip_id).and_then(|s| v.library.try_get(&s.name)).map(|d| d.chip_type);
-			let scale = chip_type.map(default_display_scale).unwrap_or(1.0);
+			let scale = chip_type.map_or(1.0, default_display_scale);
 			customize.draft.displays.push(DisplayDescription::new(sub_chip_id, snap(world), scale));
 			customize.interaction = CustomizeInteraction::None;
 		}
@@ -300,7 +301,7 @@ pub(crate) fn update_live_interaction(v: &mut ViewerState) {
 /// state for the next frame's event mapping.
 pub(crate) fn build_layer(v: &ViewerState, vw: f32, vh: f32, mouse: Vec2) -> CustomizeFrameOut {
 	let Some(customize) = v.customize.as_ref() else {
-		return CustomizeFrameOut { frame: Default::default(), layout: Default::default(), list_scroll_max: 0.0 };
+		return CustomizeFrameOut { frame: Frame::default(), layout: PreviewLayout::default(), list_scroll_max: 0.0 };
 	};
 	let entries = display_entries(&customize.draft, &v.library);
 	let sim_guard = v.sim.lock();
@@ -323,7 +324,7 @@ pub(crate) fn build_layer(v: &ViewerState, vw: f32, vh: f32, mouse: Vec2) -> Cus
 
 /// Writes the freshly-built frame's screen facts back onto the customize
 /// state (called by frame.rs right after `build_layer`).
-pub(crate) fn cache_layout(v: &mut ViewerState, layout: crate::render::customize_ui::PreviewLayout, list_scroll_max: f32) {
+pub(crate) const fn cache_layout(v: &mut ViewerState, layout: PreviewLayout, list_scroll_max: f32) {
 	if let Some(customize) = v.customize.as_mut() {
 		customize.layout = layout;
 		customize.list_scroll_max = list_scroll_max;
@@ -345,7 +346,7 @@ fn enforce_min_size(draft: &mut ChipDescription) {
 	draft.size = component_max(draft.size, min_size_for(draft));
 }
 
-fn component_max(a: Vec2, b: Vec2) -> Vec2 {
+const fn component_max(a: Vec2, b: Vec2) -> Vec2 {
 	Vec2::new(a.x.max(b.x), a.y.max(b.y))
 }
 

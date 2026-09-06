@@ -48,13 +48,13 @@ impl ContextTarget {
 	/// sync.
 	pub(crate) fn parse(target: &str) -> Option<Self> {
 		if let Some(rest) = target.strip_prefix("component:") {
-			rest.parse().ok().map(ContextTarget::Component)
+			rest.parse().ok().map(Self::Component)
 		} else if let Some(rest) = target.strip_prefix("wire:") {
-			rest.parse().ok().map(ContextTarget::Wire)
+			rest.parse().ok().map(Self::Wire)
 		} else if let Some(rest) = target.strip_prefix("devpin:in:") {
-			rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: true, id })
+			rest.parse().ok().map(|id| Self::DevPin { is_input: true, id })
 		} else if let Some(rest) = target.strip_prefix("devpin:out:") {
-			rest.parse().ok().map(|id| ContextTarget::DevPin { is_input: false, id })
+			rest.parse().ok().map(|id| Self::DevPin { is_input: false, id })
 		} else {
 			const PLAIN_TARGETS: [(&str, PlainTargetCtor); 3] =
 				[("libchip:", ContextTarget::LibChip), ("barchip:", ContextTarget::BarChip), ("flyoutchip:", ContextTarget::FlyoutChip)];
@@ -184,7 +184,6 @@ pub(crate) fn apply_context_menu_action(
 				v.open_overlay(Overlay::PinEdit(PinEditState { is_input, pin_id: id, display_mode_index, colour }));
 			}
 		}
-		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. }) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
 
 		(ContextMenuAction::Configure, ContextTarget::Component(id)) => {
 			let sub_chip_name = v.library.get(&root_chip_name).sub_chips.iter().find(|s| s.id == id).map(|s| s.name.clone());
@@ -214,7 +213,9 @@ pub(crate) fn apply_context_menu_action(
 			}
 		}
 
-		(ContextMenuAction::Delete, ContextTarget::Component(id)) => crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id)),
+		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. } | ContextTarget::Component(id)) => {
+			crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id))
+		}
 
 		_ => {}
 	}
