@@ -160,11 +160,7 @@ impl Vec2 {
 
 	pub fn normalize(&self) -> Self {
 		let mag = self.magnitude();
-		if mag == 0.0 {
-			Self::ZERO
-		} else {
-			*self / mag
-		}
+		if mag == 0.0 { Self::ZERO } else { *self / mag }
 	}
 
 	pub fn dot(&self, other: &Self) -> f32 {

@@ -11,7 +11,7 @@ use crate::save_system::loader::Loader;
 use crate::save_system::paths::SavePaths;
 use crate::save_system::project::Project;
 use crate::save_system::saver::Saver;
-use crate::save_system::version::{Version, DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE};
+use crate::save_system::version::{DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE, Version};
 
 /// Preference constant mirroring `PreferencesMenu.DisplayMode_OnHover`,
 /// used as the default for newly-created projects.
@@ -67,9 +67,5 @@ pub fn create_project(paths: &SavePaths, project_name: &str) -> io::Result<Proje
 /// effects, which belong to whatever integrates this with a live app):
 /// loads the project if it already exists on disk, otherwise creates it.
 pub fn create_or_load_project(paths: &SavePaths, project_name: &str) -> io::Result<Project> {
-	if Loader::project_exists(paths, project_name) {
-		Loader::load_project(paths, project_name)
-	} else {
-		create_project(paths, project_name)
-	}
+	if Loader::project_exists(paths, project_name) { Loader::load_project(paths, project_name) } else { create_project(paths, project_name) }
 }

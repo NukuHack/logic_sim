@@ -19,14 +19,14 @@ use crate::structs::Vec2;
 use std::collections::HashMap;
 
 pub use crate::render::foundation::{
-	apply_alpha, bounding_box, point_in_circle, point_in_rect, point_in_rounded_rect, RoundCorners, SceneGeometry, SceneVertex, TextLabel,
+	RoundCorners, SceneGeometry, SceneVertex, TextLabel, apply_alpha, bounding_box, point_in_circle, point_in_rect, point_in_rounded_rect,
 };
 pub use displays::{display_base_size, is_display_type};
 pub use grid::build_grid;
 pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
-pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
-pub use placed::{clear_type_layout_cache, place_sub_chips, place_sub_chips_into, PlacedBuf, PlacedSubChip};
-pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};
+pub use pin_hits::{PinHit, hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin};
+pub use placed::{PlacedBuf, PlacedSubChip, clear_type_layout_cache, place_sub_chips, place_sub_chips_into};
+pub use wire_endpoints::{WireTapHit, closest_wire_hit, hit_test_wire};
 pub use wires::{delete_wire, delete_wire_old, delete_wire_segment};
 
 /// Finds whichever placed subchip's body (as laid out by [`place_sub_chips`]) contains

@@ -11,7 +11,7 @@ use crate::render::scene::{hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, p
 use crate::render::ui_stack::{InputResult, LayerId};
 use crate::structs::Vec2;
 use crate::viewer::app::{App, Screen};
-use crate::viewer::state::{sync_stack_with_state, DeleteDragSweep, ViewerAction, ViewerState};
+use crate::viewer::state::{DeleteDragSweep, ViewerAction, ViewerState, sync_stack_with_state};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -217,12 +217,11 @@ impl App {
 					// On mouse release in Customize workspace: commit in-flight drag interactions
 					// (MovingDisplay, ScalingDisplay, Resizing). PlacingDisplay remains attached to cursor until clicked.
 					if v.stack.top_id() == Some(LayerId::CustomizePanel) {
-						if let Some(c) = v.customize.as_ref() {
-							if (c.interaction.is_active() && !matches!(c.interaction, CustomizeInteraction::PlacingDisplay { .. }))
-								|| c.interaction.is_resizing()
-							{
-								crate::viewer::customize::handle_preview_click(v);
-							}
+						if let Some(c) = v.customize.as_ref()
+							&& ((c.interaction.is_active() && !matches!(c.interaction, CustomizeInteraction::PlacingDisplay { .. }))
+								|| c.interaction.is_resizing())
+						{
+							crate::viewer::customize::handle_preview_click(v);
 						}
 					} else if v.pending_wire.is_some() && matches!(v.stack.top_id(), None | Some(LayerId::Canvas)) {
 						// An in-progress wire also tries to complete on
@@ -540,14 +539,14 @@ impl App {
 		// though: `UiStack::keyboard_stop` says when the top of the stack owns typing outright (a
 		// text field, or the key-select popup capturing its next key as data) -- configuring a Key
 		// chip to 'A' must not itself hold 'A' down in the simulator.
-		if let Some(c) = crate::viewer::input::char_for_keys(event.physical_key, &event.logical_key) {
-			if let Screen::Viewer(v) = &mut self.screen {
-				if c.is_ascii_alphanumeric() && !v.stack.keyboard_stop() {
-					match pressed {
-						true => v.sim.held_key_press(c),
-						false => v.sim.held_key_release(c),
-					}
-				}
+		if let Some(c) = crate::viewer::input::char_for_keys(event.physical_key, &event.logical_key)
+			&& let Screen::Viewer(v) = &mut self.screen
+			&& c.is_ascii_alphanumeric()
+			&& !v.stack.keyboard_stop()
+		{
+			match pressed {
+				true => v.sim.held_key_press(c),
+				false => v.sim.held_key_release(c),
 			}
 		}
 

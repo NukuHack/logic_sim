@@ -5,13 +5,13 @@ use std::io;
 use std::path::Path;
 
 use crate::description::{ChipDescription, ChipLibrary};
-use crate::json::{serialize_chip_description_for_save, ProjectDescription};
+use crate::json::{ProjectDescription, serialize_chip_description_for_save};
 use crate::save_system::loader::Loader;
 use crate::save_system::paths::SavePaths;
 use crate::save_system::timestamp::now_iso8601;
 use crate::save_system::util::{copy_directory, ensure_unique_file_name};
 use crate::save_system::version::DLS_VERSION;
-use crate::settings::{serialize_app_settings, AppSettings};
+use crate::settings::{AppSettings, serialize_app_settings};
 
 pub struct Saver;
 

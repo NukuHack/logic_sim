@@ -12,8 +12,8 @@
 //! always building a correctly-sized `internal_state` regardless of what (if anything) was saved.
 
 use logic_sim::{
-	pin_state::PinState, ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator,
-	SubChipDescription, Vec2, WireDescription,
+	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, Vec2,
+	WireDescription, pin_state::PinState,
 };
 
 const SUBCHIP_ID: i32 = 1;

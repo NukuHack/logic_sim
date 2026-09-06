@@ -20,11 +20,7 @@ const WORD_BITS: u32 = Bits::BITS;
 
 /// Number of `Word`s needed to hold `bits` bits.
 pub fn words_for(bits: u32) -> usize {
-	if bits == 0 {
-		0
-	} else {
-		((bits - 1) / WORD_BITS + 1) as usize
-	}
+	if bits == 0 { 0 } else { ((bits - 1) / WORD_BITS + 1) as usize }
 }
 
 /// Splits `n` into a full-word count and the bit-width of the partial word above them (0 if `n`
@@ -82,11 +78,7 @@ pub fn not(a: &[Bits], n: u32) -> Vec<Bits> {
 	(0..words_for(n))
 		.map(|i| {
 			let w = !a.get(i).copied().unwrap_or(0);
-			if i < full_words {
-				w
-			} else {
-				w & (((1 as Bits) << rem) - 1)
-			}
+			if i < full_words { w } else { w & (((1 as Bits) << rem) - 1) }
 		})
 		.collect()
 }
@@ -176,11 +168,7 @@ pub fn field(a: &[Bits], start: u32, n: u32) -> Vec<Bits> {
 	(0..words_for(n))
 		.map(|w| {
 			let word = field_word(a, start, w);
-			if w < full_words {
-				word
-			} else {
-				word & (((1 as Bits) << rem) - 1)
-			}
+			if w < full_words { word } else { word & (((1 as Bits) << rem) - 1) }
 		})
 		.collect()
 }
@@ -232,11 +220,7 @@ pub fn truncate(a: &[Bits], n: u32) -> Vec<Bits> {
 	(0..words_for(n))
 		.map(|i| {
 			let w = a.get(i).copied().unwrap_or(0);
-			if i < full_words {
-				w
-			} else {
-				w & (((1 as Bits) << rem) - 1)
-			}
+			if i < full_words { w } else { w & (((1 as Bits) << rem) - 1) }
 		})
 		.collect()
 }

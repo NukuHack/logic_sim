@@ -2,9 +2,9 @@
 //! new-chip creation, and switching the viewer to a different chip -- everything that moves
 //! whole `ChipDescription`s between the in-memory library and the project's on-disk chip
 //! files.
-use crate::gate_op::{calculate_num_input_bits, is_combinational, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
+use crate::gate_op::{MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING, calculate_num_input_bits, is_combinational};
 use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
-use crate::viewer::library::{is_custom_chip, DEFAULT_LIBRARY_COLLECTION_NAME};
+use crate::viewer::library::{DEFAULT_LIBRARY_COLLECTION_NAME, is_custom_chip};
 use crate::viewer::state::{Overlay, PendingUnsavedAction, ViewerState};
 use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver, Simulator};
 
@@ -163,7 +163,7 @@ fn random_initial_chip_colour() -> [f32; 4] {
 	}
 	let mut rng = rand::thread_rng();
 	use rand::Rng;
-	hsv_to_rgb(rng.gen::<f32>(), rng.gen_range(0.2..=1.0), rng.gen_range(0.2..=1.0))
+	hsv_to_rgb(rng.r#gen::<f32>(), rng.gen_range(0.2..=1.0), rng.gen_range(0.2..=1.0))
 }
 
 /// The save-time parent cascade (`Project.UpdateAndSaveAffectedChips`): every chip whose

@@ -6,8 +6,8 @@
 use logic_sim::register_all_builtins;
 use logic_sim::render::scene::{PinStateLookup, SimulatorPinState};
 use logic_sim::{
-	parse_chip_description, serialize_chip_description, ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount,
-	PinDescription, Simulator, SubChipDescription, Vec2, WireDescription,
+	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, Vec2,
+	WireDescription, parse_chip_description, serialize_chip_description,
 };
 
 #[test]

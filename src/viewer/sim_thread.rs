@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use crate::pin_state::PinState;
 use crate::sim::Simulator;
-use crate::viewer::sim_timing::{accumulate_tick_debt, restore_unfinished_ticks, take_due_ticks, PerfWindow};
+use crate::viewer::sim_timing::{PerfWindow, accumulate_tick_debt, restore_unfinished_ticks, take_due_ticks};
 
 /// How long the worker idles between passes while paused -- the
 /// `Thread.Sleep(10)` of the original's paused branch.

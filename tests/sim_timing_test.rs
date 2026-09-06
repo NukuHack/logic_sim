@@ -3,7 +3,7 @@
 //! `SimThread` adaptation in `viewer::sim_timing`), exercised through
 //! their public API.
 
-use logic_sim::viewer::sim_timing::{accumulate_tick_debt, take_due_ticks, PerfWindow, MAX_CATCHUP_SECS, MAX_STEPS_PER_FRAME, PERF_WINDOW_SECS};
+use logic_sim::viewer::sim_timing::{MAX_CATCHUP_SECS, MAX_STEPS_PER_FRAME, PERF_WINDOW_SECS, PerfWindow, accumulate_tick_debt, take_due_ticks};
 use std::time::{Duration, Instant};
 
 #[test]

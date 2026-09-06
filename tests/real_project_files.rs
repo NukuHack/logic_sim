@@ -3,7 +3,7 @@
 //! verbatim. The goal is to prove this port's save/load system is actually backwards compatible
 //! with files the original game produces -- not just with hand-written test fixtures.
 
-use logic_sim::{can_open_project, parse_project_description, Loader, SavePaths, Saver};
+use logic_sim::{Loader, SavePaths, Saver, can_open_project, parse_project_description};
 
 const GOL: &str = include_str!("fixtures/Projects/GOL/ProjectDescription.json");
 const MAIN_TEST: &str = include_str!("fixtures/Projects/MainTest/ProjectDescription.json");

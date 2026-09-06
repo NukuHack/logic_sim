@@ -147,7 +147,7 @@ fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<
 		}
 	}
 
-	let mut queue: Vec<i32> = in_degree.iter().filter(|(_, &deg)| deg == 0).map(|(&id, _)| id).collect();
+	let mut queue: Vec<i32> = in_degree.iter().filter(|&(_, &deg)| deg == 0).map(|(&id, _)| id).collect();
 	let mut visited = 0usize;
 	while let Some(id) = queue.pop() {
 		visited += 1;
@@ -377,11 +377,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 				}
 			}
 		}
-		if natives.len() == output_pins.len() {
-			Some(natives)
-		} else {
-			None
-		}
+		if natives.len() == output_pins.len() { Some(natives) } else { None }
 	};
 
 	let lut = Lut::new(cache_rows);

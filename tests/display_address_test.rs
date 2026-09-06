@@ -9,8 +9,8 @@
 //! sequencing behaves as the source implies.
 
 use logic_sim::{
-	pin_state::PinState, ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator,
-	SubChipDescription, Vec2, WireDescription,
+	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, Vec2,
+	WireDescription, pin_state::PinState,
 };
 
 const SUBCHIP_ID: i32 = 1;

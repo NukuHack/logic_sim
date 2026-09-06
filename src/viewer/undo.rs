@@ -12,11 +12,11 @@
 //! simulation; anything that would no longer resolve is skipped silently rather than half-
 //! applied, mirroring the original swallowing its own trigger exceptions.
 
+use crate::ChipLibrary;
 use crate::description::{ChipDescription, PinAddress, PinDescription, SubChipDescription, WireDescription};
 use crate::render::scene;
 use crate::viewer::canvas::{self, compute_component_delete_set};
 use crate::viewer::state::ViewerState;
-use crate::ChipLibrary;
 
 /// The editor's whole undo history for the current chip. Cleared wherever
 /// the edited root changes (a new chip means a new controller in the

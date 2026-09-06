@@ -14,8 +14,8 @@ use crate::viewer::popups::{apply_prefs_field_text, confirm_key_select_popup, co
 use crate::viewer::save_flow::{
 	confirm_save_chip_popup, confirm_unsaved_changes_popup, request_exit_to_menu, request_start_new_chip, save_chip_mode,
 };
-use crate::viewer::state::{open_preferences, open_save_chip, open_search, Overlay, ViewerState};
-use crate::{sim, SavePaths, Saver};
+use crate::viewer::state::{Overlay, ViewerState, open_preferences, open_save_chip, open_search};
+use crate::{SavePaths, Saver, sim};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 
 /// Convert winit's modifier state into the `Simulator::key_modifiers`
@@ -71,10 +71,10 @@ fn digit_from_keycode(code: KeyCode) -> Option<char> {
 /// the layout happens to produce for it.
 // Add this helper function in the same file, above `char_for_keys`
 pub(crate) fn char_for_keys(physical_key: PhysicalKey, logical_key: &Key) -> Option<char> {
-	if let PhysicalKey::Code(code) = physical_key {
-		if let Some(digit) = digit_from_keycode(code) {
-			return Some(digit);
-		}
+	if let PhysicalKey::Code(code) = physical_key
+		&& let Some(digit) = digit_from_keycode(code)
+	{
+		return Some(digit);
 	}
 
 	if let Key::Character(s) = logical_key {
@@ -112,12 +112,11 @@ pub(crate) fn handle_viewer_key(
 	// docs) -- falls through to the `Key::Character` arm below
 	// unchanged for everything else (letters, and any layout where the
 	// digit key's own character already matches).
-	if target == Some(LayerId::KeySelect) {
-		if let Some(c @ '0'..='9') = char_for_keys(event.physical_key, &event.logical_key) {
-			if let Some(state) = v.key_select_mut() {
-				state.chosen = Some(c);
-			}
-		}
+	if target == Some(LayerId::KeySelect)
+		&& let Some(c @ '0'..='9') = char_for_keys(event.physical_key, &event.logical_key)
+		&& let Some(state) = v.key_select_mut()
+	{
+		state.chosen = Some(c);
 	}
 
 	if !s.is_empty() {
@@ -148,10 +147,10 @@ pub(crate) fn handle_viewer_key(
 		else if target == Some(LayerId::KeySelect) {
 			if let Some(c) = s.chars().next() {
 				let upper = c.to_ascii_uppercase();
-				if editor_ui::KEY_SELECT_ALLOWED_CHARS.contains(upper) {
-					if let Some(state) = v.key_select_mut() {
-						state.chosen = Some(upper);
-					}
+				if editor_ui::KEY_SELECT_ALLOWED_CHARS.contains(upper)
+					&& let Some(state) = v.key_select_mut()
+				{
+					state.chosen = Some(upper);
 				}
 			}
 		} else if matches!(target, Some(LayerId::Naming | LayerId::SaveChip | LayerId::PinEdit))

@@ -5,7 +5,7 @@
 //! to decide what to draw. See the crate docs / tests for a typical host app event-loop usage example.
 
 use crate::json::ProjectDescription;
-use crate::save_system::{can_open_project, valid_file_name, SavePaths};
+use crate::save_system::{SavePaths, can_open_project, valid_file_name};
 use crate::settings::AppSettings;
 
 /// Which top-level screen of the startup flow is currently shown. Mirrors

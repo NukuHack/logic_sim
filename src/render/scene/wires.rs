@@ -4,7 +4,7 @@
 //! without orphaning anything that taps onto it.
 
 use crate::description::{ChipDescription, ChipLibrary, Color, WireConnectionType, WireDescription};
-use crate::render::foundation::{offset_polyline, SceneGeometry};
+use crate::render::foundation::{SceneGeometry, offset_polyline};
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_colour};
 use crate::render::scene::placed::PlacedSubChip;

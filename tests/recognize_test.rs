@@ -1,4 +1,4 @@
-use logic_sim::gate_op::{recognize, registry, CachedGate, Lut, Native};
+use logic_sim::gate_op::{CachedGate, Lut, Native, recognize, registry};
 use logic_sim::pin_state::LogicState;
 
 /// Evaluates a `recognize()`-returned (or otherwise narrow: <=64 input bits, a single <=32-bit

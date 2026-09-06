@@ -89,16 +89,16 @@ pub(crate) fn start_placing(v: &mut ViewerState, chip_name: &str) {
 		PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() },
 	)];
 
-	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus()) {
-		if let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type) {
-			let terminus_name = desc.name.clone();
-			carry[0].0 = Vec2::new(-BUS_PAIR_SPACING / 2.0, 0.0);
-			carry.push((
-				Vec2::new(BUS_PAIR_SPACING / 2.0, 0.0),
-				PendingComponent { name: terminus_name, linked_bus_partner: Some(0), duplicate_of: None, attached_wires: Vec::new() },
-			));
-			carry[0].1.linked_bus_partner = Some(1);
-		}
+	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus())
+		&& let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type)
+	{
+		let terminus_name = desc.name.clone();
+		carry[0].0 = Vec2::new(-BUS_PAIR_SPACING / 2.0, 0.0);
+		carry.push((
+			Vec2::new(BUS_PAIR_SPACING / 2.0, 0.0),
+			PendingComponent { name: terminus_name, linked_bus_partner: Some(0), duplicate_of: None, attached_wires: Vec::new() },
+		));
+		carry[0].1.linked_bus_partner = Some(1);
 	}
 
 	v.pending_place = carry;
@@ -122,17 +122,17 @@ pub(crate) fn add_to_placing(v: &mut ViewerState, chip_name: &str) {
 	v.pending_place
 		.push((offset, PendingComponent { name: chip_name.to_string(), linked_bus_partner: None, duplicate_of: None, attached_wires: Vec::new() }));
 
-	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus()) {
-		if let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type) {
-			let terminus_name = desc.name.clone();
-			let new_idx = v.pending_place.len() - 1;
-			let partner_offset = offset + Vec2::new(BUS_PAIR_SPACING, 0.0);
-			v.pending_place.push((
-				partner_offset,
-				PendingComponent { name: terminus_name, linked_bus_partner: Some(new_idx), duplicate_of: None, attached_wires: Vec::new() },
-			));
-			v.pending_place[new_idx].1.linked_bus_partner = Some(new_idx + 1);
-		}
+	if let Some(terminus_type) = chip_type.and_then(|t| t.corresponding_bus_terminus())
+		&& let Some(desc) = v.library.iter().find(|d| d.chip_type == terminus_type)
+	{
+		let terminus_name = desc.name.clone();
+		let new_idx = v.pending_place.len() - 1;
+		let partner_offset = offset + Vec2::new(BUS_PAIR_SPACING, 0.0);
+		v.pending_place.push((
+			partner_offset,
+			PendingComponent { name: terminus_name, linked_bus_partner: Some(new_idx), duplicate_of: None, attached_wires: Vec::new() },
+		));
+		v.pending_place[new_idx].1.linked_bus_partner = Some(new_idx + 1);
 	}
 }
 
@@ -181,10 +181,10 @@ pub(crate) fn update_move_to_cursor(v: &mut ViewerState, cursor_world: Vec2) {
 			let originals = originals.clone();
 
 			let mut delta = cursor_world - anchor;
-			if let Some((_, first_original)) = originals.first() {
-				if v.should_snap_to_grid() {
-					delta = snap_to_grid_centred(*first_original + delta) - *first_original;
-				}
+			if let Some((_, first_original)) = originals.first()
+				&& v.should_snap_to_grid()
+			{
+				delta = snap_to_grid_centred(*first_original + delta) - *first_original;
 			}
 
 			let root_chip_name = v.root_chip_name.clone();
@@ -248,10 +248,10 @@ pub(crate) fn cancel_all(v: &mut ViewerState) {
 	// mode itself stays on (`CancelEverything` doesn't exit it either).
 	if let CanvasInteraction::WireBendDrag { wire_index, bend_index, original } = v.canvas_interaction {
 		let root_chip_name = v.root_chip_name.clone();
-		if let Some(wire) = v.library.get_mut(&root_chip_name).wires.get_mut(wire_index) {
-			if let Some(point) = wire.points.get_mut(bend_index) {
-				*point = original;
-			}
+		if let Some(wire) = v.library.get_mut(&root_chip_name).wires.get_mut(wire_index)
+			&& let Some(point) = wire.points.get_mut(bend_index)
+		{
+			*point = original;
 		}
 	}
 	v.canvas_interaction = CanvasInteraction::None;

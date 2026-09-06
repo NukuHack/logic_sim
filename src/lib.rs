@@ -23,14 +23,14 @@ pub use description::{
 	ValueDisplayMode, WireConnectionType, WireDescription,
 };
 pub use json::{
-	is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description, parse_project_description, serialize_chip_description,
-	serialize_project_description, ChipCollection, ProjectDescription, StarredItem,
+	ChipCollection, ProjectDescription, StarredItem, is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description,
+	parse_project_description, serialize_chip_description, serialize_project_description,
 };
 pub use save_system::{
-	can_open_project, create_or_load_project, create_project, default_chip_collections, default_starred_list, Loader, SavePaths, Saver, Version,
-	DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE,
+	DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE, Loader, SavePaths, Saver, Version, can_open_project, create_or_load_project, create_project,
+	default_chip_collections, default_starred_list,
 };
 pub use settings::{AppSettings, FullScreenMode};
-pub use sim::{key_mods_bits, ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator};
+pub use sim::{ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator, key_mods_bits};
 pub use structs::Vec2;
 pub use ui_menu::{MainMenu, MenuOutcome};

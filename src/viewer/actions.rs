@@ -17,7 +17,7 @@ use crate::viewer::popups::{
 use crate::viewer::save_flow::{
 	confirm_save_chip_as, confirm_save_chip_popup, confirm_save_chip_rename, confirm_unsaved_changes_popup, request_open_chip,
 };
-use crate::viewer::state::{reset_preferences_draft, LibraryMode, Overlay, ViewerState};
+use crate::viewer::state::{LibraryMode, Overlay, ViewerState, reset_preferences_draft};
 use crate::{SavePaths, Saver};
 
 /// Applies a click on one of the editor overlays.
@@ -70,11 +70,11 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 			v.overlay_text_input.clear();
 		}
 		EA::BeginRenameCollection => {
-			if let LibrarySelection::Collection(i) = v.library_selection {
-				if let Some(c) = v.prefs.chip_collections.get(i) {
-					v.overlay_text_input = c.name.clone();
-					v.library_mode = LibraryMode::RenamingCollection;
-				}
+			if let LibrarySelection::Collection(i) = v.library_selection
+				&& let Some(c) = v.prefs.chip_collections.get(i)
+			{
+				v.overlay_text_input = c.name.clone();
+				v.library_mode = LibraryMode::RenamingCollection;
 			}
 		}
 		EA::RequestDeleteCollection => {
@@ -95,16 +95,15 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				if v.library_mode == LibraryMode::CreatingCollection {
 					v.prefs.chip_collections.push(ChipCollection::new(&new_name, Vec::<String>::new()));
 					v.library_selection = LibrarySelection::Collection(v.prefs.chip_collections.len() - 1);
-				} else if v.library_mode == LibraryMode::RenamingCollection {
-					if let LibrarySelection::Collection(i) = v.library_selection {
-						if let Some(c) = v.prefs.chip_collections.get_mut(i) {
-							let old_name = c.name.clone();
-							c.name = new_name.clone();
-							for item in &mut v.prefs.starred_list {
-								if item.is_collection && item.name.eq_ignore_ascii_case(&old_name) {
-									item.name = new_name.clone();
-								}
-							}
+				} else if v.library_mode == LibraryMode::RenamingCollection
+					&& let LibrarySelection::Collection(i) = v.library_selection
+					&& let Some(c) = v.prefs.chip_collections.get_mut(i)
+				{
+					let old_name = c.name.clone();
+					c.name = new_name.clone();
+					for item in &mut v.prefs.starred_list {
+						if item.is_collection && item.name.eq_ignore_ascii_case(&old_name) {
+							item.name = new_name.clone();
 						}
 					}
 				}

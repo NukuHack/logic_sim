@@ -5,10 +5,10 @@
 
 use logic_sim::save_system::Project;
 use logic_sim::save_system::{
-	can_open_project, copy_directory, create_or_load_project, create_project, default_starred_list, ensure_unique_directory_name,
-	ensure_unique_file_name, valid_file_name, Version, DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE,
+	DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE, Version, can_open_project, copy_directory, create_or_load_project, create_project,
+	default_starred_list, ensure_unique_directory_name, ensure_unique_file_name, valid_file_name,
 };
-use logic_sim::settings::{parse_app_settings, serialize_app_settings, AppSettings, FullScreenMode};
+use logic_sim::settings::{AppSettings, FullScreenMode, parse_app_settings, serialize_app_settings};
 use logic_sim::{ChipDescription, ChipLibrary, ChipType, Loader, ProjectDescription, SavePaths, Saver};
 use std::path::PathBuf;
 

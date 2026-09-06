@@ -4,9 +4,9 @@
 //! working state because it carries the pin-address/tap bookkeeping the
 //! canvas interaction (and its preview) needs.
 
+use crate::PinBitCount;
 use crate::description::PinAddress;
 use crate::structs::Vec2;
-use crate::PinBitCount;
 
 /// One endpoint of an in-progress wire placement (`ViewerState::pending_wire`),
 /// fixed at the moment the wire is started -- either a real pin (a

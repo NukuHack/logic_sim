@@ -115,10 +115,9 @@ pub struct Simulator {
 	can_dynamic_reorder_this_frame: bool,
 
 	pcg_rng_state: u32,
-	/// `StdRng` rather than `ThreadRng` so a whole built `Simulator` is
-	/// `Send` and can be stepped on the background sim thread (see
-	/// `viewer::sim_thread`); nothing about the simulation depends on
-	/// which thread's entropy pool seeded it.
+	/// `StdRng` rather than `ThreadRng` so a whole built `Simulator` is `Send`
+	/// and can be stepped on the background sim thread, nothing about the
+	/// simulation depends on which thread's entropy pool seeded it.
 	rng: StdRng,
 
 	start_time: Instant,
@@ -293,7 +292,7 @@ impl Simulator {
 	pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput], audio: &mut crate::audio::SimAudio) {
 		audio.init_frame();
 
-		self.pcg_rng_state = self.rng.gen::<u32>();
+		self.pcg_rng_state = self.rng.r#gen::<u32>();
 		self.can_dynamic_reorder_this_frame = self.simulation_frame.is_multiple_of(100);
 		self.simulation_frame += 1;
 
@@ -495,7 +494,7 @@ impl Simulator {
 		}
 
 		if no_sub_chips_ready {
-			next_index = (self.rng.gen::<u32>() as usize) % num;
+			next_index = (self.rng.r#gen::<u32>() as usize) % num;
 
 			if is_non_bus_chip_remaining {
 				for _ in 0..num {
@@ -954,12 +953,12 @@ impl Simulator {
 			ChipType::Pulse => 1,
 			_ => 0,
 		};
-		if skip_leading != usize::MAX {
-			if let Some(saved) = map.get(&key) {
-				let state = &mut self.chips[idx.0].internal_state;
-				for (slot, &value) in state.iter_mut().zip(saved).skip(skip_leading) {
-					*slot = value;
-				}
+		if skip_leading != usize::MAX
+			&& let Some(saved) = map.get(&key)
+		{
+			let state = &mut self.chips[idx.0].internal_state;
+			for (slot, &value) in state.iter_mut().zip(saved).skip(skip_leading) {
+				*slot = value;
 			}
 		}
 		let mut i = 0;

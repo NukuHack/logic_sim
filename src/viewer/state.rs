@@ -879,8 +879,8 @@ mod view_stack_tests {
 	//! its enter/pop/fallback and banner-string contracts.
 
 	use super::*;
-	use crate::description::{ChipDescription, SubChipDescription};
 	use crate::ChipType;
+	use crate::description::{ChipDescription, SubChipDescription};
 
 	fn viewer_with_viewable_component() -> (ViewerState, i32) {
 		let mut library = ChipLibrary::new();

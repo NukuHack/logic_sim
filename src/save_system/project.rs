@@ -4,9 +4,9 @@
 //! (undo stacks, camera, the currently-viewed chip, audio, ...) that belongs with the editor/sim
 //! integration this port doesn't include yet, not with save/load.
 
+use crate::ChipLibrary;
 use crate::description::ChipDescription;
 use crate::json::ProjectDescription;
-use crate::ChipLibrary;
 
 pub struct Project {
 	pub description: ProjectDescription,

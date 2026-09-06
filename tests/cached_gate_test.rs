@@ -3,7 +3,7 @@
 //! `recognize`), and the [`CachedGate`] bridge on [`Native`]/[`NativeList`] that lets those two
 //! closed-form evaluators slot into the same `u64`-in/`u32`-out entry point `Lut` uses.
 
-use logic_sim::gate_op::{build_lut, registry, CachedGate, Lut, Native, NativeList};
+use logic_sim::gate_op::{CachedGate, Lut, Native, NativeList, build_lut, registry};
 
 fn eval_row(gate: &dyn CachedGate, out_len: usize, input: u64) -> Vec<u32> {
 	let mut out = vec![0u32; out_len];

@@ -11,7 +11,7 @@ use crate::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use crate::viewer::input::encode_modifiers;
 use crate::viewer::save_flow::unique_new_chip_name;
 use crate::viewer::state::ViewerState;
-use crate::{default_chip_collections, default_starred_list, ChipDescription, ChipType, SavePaths};
+use crate::{ChipDescription, ChipType, SavePaths, default_chip_collections, default_starred_list};
 
 /// How long the transient status/error toast stays on screen before
 /// dismissing itself -- no interaction required.
@@ -313,11 +313,11 @@ impl App {
 	/// since it appeared. Runs every redraw -- the render loop ticks even
 	/// when nothing else happens, so the expiry needs no interaction.
 	pub(crate) fn expire_status_toast(&mut self) {
-		if let Some(since) = self.status_since {
-			if since.elapsed() >= STATUS_TOAST_LINGER {
-				self.status = None;
-				self.status_since = None;
-			}
+		if let Some(since) = self.status_since
+			&& since.elapsed() >= STATUS_TOAST_LINGER
+		{
+			self.status = None;
+			self.status_since = None;
 		}
 	}
 }

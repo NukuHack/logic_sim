@@ -13,7 +13,7 @@ use crate::viewer::bus_wiring;
 use crate::viewer::chip_interaction;
 use crate::viewer::state::ViewerState;
 use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
-use crate::{builtins, ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireConnectionType, WireDescription};
+use crate::{ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireConnectionType, WireDescription, builtins};
 
 /// Finds whichever bit of one of `root_desc`'s own boundary *input* dev-pins (if any)
 /// `world_pos` landed on -- the same per-bit grid `scene::pins::draw_input_dev_pin_body`
@@ -365,11 +365,11 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			// and per-instance pin colours verbatim; only id and position
 			// are fresh. A carried link partner re-points through the
 			// same first_id+index scheme the pair-placement path uses.
-			if let Some(partner_index) = component.linked_bus_partner {
-				if let Some(data) = duplicate.internal_data.as_mut() {
-					data.resize(2, 0);
-					data[0] = (first_id + partner_index as i32) as u32;
-				}
+			if let Some(partner_index) = component.linked_bus_partner
+				&& let Some(data) = duplicate.internal_data.as_mut()
+			{
+				data.resize(2, 0);
+				data[0] = (first_id + partner_index as i32) as u32;
 			}
 			duplicate.id = id;
 			duplicate.position = place_pos;
@@ -393,11 +393,7 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 		for (offset, _) in &carry {
 			acc += world_pos + *offset;
 		}
-		if carry.is_empty() {
-			acc
-		} else {
-			acc / carry.len() as f32
-		}
+		if carry.is_empty() { acc } else { acc / carry.len() as f32 }
 	};
 	// `duplicate_selection` stores `connected_wire_index` as a *local*
 	// index within this carried batch (0-based, in push order) rather

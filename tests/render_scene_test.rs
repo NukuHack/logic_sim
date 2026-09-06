@@ -3,20 +3,20 @@
 //! wire-tap hit-testing, pin shapes/hover labels, subchip placement, and
 //! live simulator-backed pin lookups -- all via `build_scene` and friends.
 
+use logic_sim::Vec2;
 use logic_sim::description::Color;
 use logic_sim::description::{ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, PinDescription, SubChipDescription, WireDescription};
 use logic_sim::pin_state::LogicState;
 use logic_sim::render::camera::Camera;
-use logic_sim::render::foundation::{bounding_box, SceneVertex};
+use logic_sim::render::foundation::{SceneVertex, bounding_box};
 use logic_sim::render::layout;
 use logic_sim::render::scene::{
-	build_grid, build_scene, closest_wire_hit, hit_test_any_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, place_sub_chips, AllLow,
-	PinStateLookup, SimulatorPinState,
+	AllLow, PinStateLookup, SimulatorPinState, build_grid, build_scene, closest_wire_hit, hit_test_any_pin, hit_test_input_dev_pin_bit,
+	hit_test_sub_chip_pin, place_sub_chips,
 };
 use logic_sim::render::theme;
 use logic_sim::render::theme::Rgba;
 use logic_sim::sim::Simulator;
-use logic_sim::Vec2;
 
 /// Lookup that always reports `Disconnected`, regardless of palette
 /// index -- for testing that disconnected wires render flat black rather

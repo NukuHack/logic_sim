@@ -9,7 +9,7 @@ use crate::structs::Vec2;
 use std::collections::HashMap;
 
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_position};
-use crate::render::scene::placed::{place_sub_chips, PlacedSubChip};
+use crate::render::scene::placed::{PlacedSubChip, place_sub_chips};
 
 /// Memoizes resolved wire-endpoint world positions within one `build_scene`
 /// call, keyed by `(wire index into chip.wires, is_target)`. Needed because

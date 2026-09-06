@@ -21,11 +21,7 @@ pub fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
 		let dx = b.x - a.x;
 		let dy = b.y - a.y;
 		let len = (dx * dx + dy * dy).sqrt();
-		if len < 1e-6 {
-			None
-		} else {
-			Some(Vec2::new(-dy / len, dx / len))
-		}
+		if len < 1e-6 { None } else { Some(Vec2::new(-dy / len, dx / len)) }
 	}
 
 	for i in 0..n {

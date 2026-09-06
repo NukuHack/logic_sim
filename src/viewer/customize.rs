@@ -6,7 +6,7 @@
 //! shape.
 
 use crate::description::{ChipDescription, DisplayDescription, NameLocation};
-use crate::render::customize_ui::{default_display_scale, display_entries, CustomizeCtx, CustomizeFrameOut, CustomizeInteraction};
+use crate::render::customize_ui::{CustomizeCtx, CustomizeFrameOut, CustomizeInteraction, default_display_scale, display_entries};
 use crate::render::layout::{self, GRID_SIZE};
 use crate::render::scene::lookup::SimulatorPinState;
 use crate::render::theme;
@@ -125,10 +125,10 @@ pub(crate) fn apply_hex_input(v: &mut ViewerState) {
 
 /// Corner-bracket press: begins resizing from that corner.
 pub(crate) fn start_resize(v: &mut ViewerState, corner: usize) {
-	if let Some(customize) = v.customize.as_mut() {
-		if !customize.interaction.is_active() {
-			customize.interaction = CustomizeInteraction::Resizing { corner: corner % 4 };
-		}
+	if let Some(customize) = v.customize.as_mut()
+		&& !customize.interaction.is_active()
+	{
+		customize.interaction = CustomizeInteraction::Resizing { corner: corner % 4 };
 	}
 }
 
@@ -390,7 +390,7 @@ mod tests {
 	use super::*;
 	use crate::description::{ChipType, PinBitCount, PinDescription};
 	use crate::pin_state::PinState;
-	use crate::render::customize_ui::{display_entries, CustomizeInteraction};
+	use crate::render::customize_ui::{CustomizeInteraction, display_entries};
 
 	fn sized_draft() -> ChipDescription {
 		let mut d = ChipDescription::new("D", ChipType::Custom);
@@ -457,7 +457,7 @@ mod tests {
 	#[test]
 	fn customize_preview_lights_embedded_displays_from_live_sim_state() {
 		use crate::viewer::frame::build_viewer_stack;
-		use crate::viewer::state::{editor_action, Overlay, ViewerAction};
+		use crate::viewer::state::{Overlay, ViewerAction, editor_action};
 		use crate::{register_all_builtins, render::ui_stack::LayerId};
 
 		let mut library = crate::ChipLibrary::new();

@@ -5,7 +5,7 @@
 
 use crate::description::{ChipDescription, WireConnectionType};
 use crate::render::layout;
-use crate::render::scene::placed::{place_sub_chips, PlacedSubChip};
+use crate::render::scene::placed::{PlacedSubChip, place_sub_chips};
 use crate::render::scene::wire_endpoints::{WireCtx, WirePointCache};
 use crate::structs::Vec2;
 use crate::viewer::state::{ViewerState, WireEditState};
@@ -206,10 +206,10 @@ fn wire_end_neighbours(v: &ViewerState, wire_index: usize) -> (Vec2, Vec2) {
 pub(crate) fn commit_drag(v: &mut ViewerState, wire_index: usize, bend_index: usize, original: Vec2) {
 	let after = crate::viewer::undo::capture_wire_list(v);
 	let mut before_wires = after.wires.clone();
-	if let Some((wire, _)) = before_wires.get_mut(wire_index) {
-		if let Some(point) = wire.points.get_mut(bend_index) {
-			*point = original;
-		}
+	if let Some((wire, _)) = before_wires.get_mut(wire_index)
+		&& let Some(point) = wire.points.get_mut(bend_index)
+	{
+		*point = original;
 	}
 	crate::viewer::undo::record_wire_list_edit(v, crate::viewer::undo::FullWireState { wires: before_wires });
 }

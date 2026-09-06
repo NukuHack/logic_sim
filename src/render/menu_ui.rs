@@ -10,7 +10,7 @@ use crate::render::ui_kit::{self, Frame, UiCtx};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, MenuScreen, PopupKind};
 
-pub use crate::render::ui_kit::{to_world, UiRect};
+pub use crate::render::ui_kit::{UiRect, to_world};
 
 /// Something a click on a `UiButton` should cause the host app to do.
 /// Mirrors (a UI-level view of) `MainMenu`'s methods -- `viewer::app`

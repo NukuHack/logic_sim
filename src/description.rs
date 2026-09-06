@@ -2,7 +2,7 @@
 //! build the runtime simulation graph. Mirrors DLS.Description in the
 //! original C# codebase.
 use crate::{
-	render::theme::{Rgba, COLORS},
+	render::theme::{COLORS, Rgba},
 	structs::Vec2,
 };
 use num_enum::{IntoPrimitive, TryFromPrimitive};

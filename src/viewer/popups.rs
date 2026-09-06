@@ -219,22 +219,22 @@ pub(crate) fn paste_rom_editor(v: &mut ViewerState, status: &mut Option<String>)
 /// (`EditorAction::ConfirmKey`) and pressing Enter directly, mirroring
 /// `confirm_naming_popup`.
 pub(crate) fn confirm_key_select_popup(v: &mut ViewerState, status: &mut Option<String>) {
-	if let Some(state) = v.key_select().copied() {
-		if let Some(c) = state.chosen {
-			match state.purpose {
-				KeySelectPurpose::Rebind => {
-					// No actual keybind system exists to rebind yet -- this
-					// just reports the choice back so the popup is usable
-					// and testable end-to-end ahead of that being wired up.
-					*status = Some(format!("Key '{c}' chosen (not yet wired to an action)"));
+	if let Some(state) = v.key_select().copied()
+		&& let Some(c) = state.chosen
+	{
+		match state.purpose {
+			KeySelectPurpose::Rebind => {
+				// No actual keybind system exists to rebind yet -- this
+				// just reports the choice back so the popup is usable
+				// and testable end-to-end ahead of that being wired up.
+				*status = Some(format!("Key '{c}' chosen (not yet wired to an action)"));
+			}
+			KeySelectPurpose::ConfigureKeyChar(id) => {
+				let root_chip_name = v.root_chip_name.clone();
+				if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
+					sub.internal_data = Some(vec![c as u32]);
 				}
-				KeySelectPurpose::ConfigureKeyChar(id) => {
-					let root_chip_name = v.root_chip_name.clone();
-					if let Some(sub) = v.library.get_mut(&root_chip_name).sub_chips.iter_mut().find(|s| s.id == id) {
-						sub.internal_data = Some(vec![c as u32]);
-					}
-					v.rebuild_sim();
-				}
+				v.rebuild_sim();
 			}
 		}
 	}

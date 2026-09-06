@@ -3,9 +3,9 @@
 //! snapping). Deliberately kept free of any wgpu/GPU types so it can be unit tested without a graphics
 //! device. The renderer proper (`render::gpu`) turns the output of this module into vertex buffers.
 
+use crate::ChipDescription;
 use crate::description::{ChipType, NameLocation, PinBitCount};
 use crate::structs::Vec2;
-use crate::ChipDescription;
 
 // ---- World draw settings (DrawSettings.cs) ----------------------------------
 

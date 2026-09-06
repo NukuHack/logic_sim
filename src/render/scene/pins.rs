@@ -125,11 +125,7 @@ fn dev_pin_value_text(pin_state: &dyn PinStateLookup, pin_id: i32, bit_count: Pi
 			// Two's complement across exactly this pin's width: anything
 			// with the sign bit set wraps to its negative value.
 			let sign_bit = 1u32 << (bit_width - 1);
-			if raw >= sign_bit {
-				format!("{}", raw as i64 - (1u32 << bit_width) as i64)
-			} else {
-				format!("{raw}")
-			}
+			if raw >= sign_bit { format!("{}", raw as i64 - (1u32 << bit_width) as i64) } else { format!("{raw}") }
 		}
 		ValueDisplayMode::Hex => format!("{raw:X}"),
 	}

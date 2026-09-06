@@ -3,21 +3,21 @@
 //! menu, every editor overlay builder, and the startup-menu screen
 //! builders -- all exercised through their public constructors.
 
-use logic_sim::json::{ChipCollection, ProjectDescription, StarredItem};
-use logic_sim::render::context_menu::{build_context_menu, ContextMenuAction, ContextMenuItem, ContextMenuState};
-use logic_sim::render::editor_ui::{
-	build_chip_library_panel, build_key_select_popup, build_pin_edit_popup, build_preferences_panel, build_rom_editor_popup, build_save_chip_popup,
-	build_search_popup, build_simple_naming_popup, build_starred_bottom_bar, build_starred_collection_popup, build_unsaved_changes_popup,
-	ChipLibraryState, EditorAction, LibrarySelection, PrefValueField, PrefsPanelState, SaveChipMode, SearchPopupState, BOTTOM_BAR_HEIGHT,
-	KEY_SELECT_ALLOWED_CHARS, ROM_WORD_COUNT,
-};
-use logic_sim::render::menu_ui::{build, build_popup_frame, build_screen, status_label, UiAction};
-use logic_sim::render::ui_kit::{hovered_button, text_field_row, Button, Frame, FONT_SIZE};
-use logic_sim::render::ui_kit::{to_world, UiCtx, UiRect};
-use logic_sim::render::ui_stack::{Capture, InputResult, LayerId, StackLayer, UiStack};
-use logic_sim::save_system::{create_project, SavePaths};
-use logic_sim::ui_menu::MainMenu;
 use logic_sim::Vec2;
+use logic_sim::json::{ChipCollection, ProjectDescription, StarredItem};
+use logic_sim::render::context_menu::{ContextMenuAction, ContextMenuItem, ContextMenuState, build_context_menu};
+use logic_sim::render::editor_ui::{
+	BOTTOM_BAR_HEIGHT, ChipLibraryState, EditorAction, KEY_SELECT_ALLOWED_CHARS, LibrarySelection, PrefValueField, PrefsPanelState, ROM_WORD_COUNT,
+	SaveChipMode, SearchPopupState, build_chip_library_panel, build_key_select_popup, build_pin_edit_popup, build_preferences_panel,
+	build_rom_editor_popup, build_save_chip_popup, build_search_popup, build_simple_naming_popup, build_starred_bottom_bar,
+	build_starred_collection_popup, build_unsaved_changes_popup,
+};
+use logic_sim::render::menu_ui::{UiAction, build, build_popup_frame, build_screen, status_label};
+use logic_sim::render::ui_kit::{Button, FONT_SIZE, Frame, hovered_button, text_field_row};
+use logic_sim::render::ui_kit::{UiCtx, UiRect, to_world};
+use logic_sim::render::ui_stack::{Capture, InputResult, LayerId, StackLayer, UiStack};
+use logic_sim::save_system::{SavePaths, create_project};
+use logic_sim::ui_menu::MainMenu;
 use std::collections::HashSet;
 
 /// Scratch-directory helper (the crate's own `test_util::temp_dir` is

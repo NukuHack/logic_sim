@@ -8,9 +8,9 @@
 //! reset) stay inline in `src/ui_menu.rs` -- they cannot be expressed
 //! through the public API.
 
-use logic_sim::save_system::{create_project, SavePaths};
+use logic_sim::save_system::{SavePaths, create_project};
 use logic_sim::settings::AppSettings;
-use logic_sim::ui_menu::{MainMenu, MenuOutcome, MenuScreen, PopupKind, MAX_PROJECT_NAME_LENGTH};
+use logic_sim::ui_menu::{MAX_PROJECT_NAME_LENGTH, MainMenu, MenuOutcome, MenuScreen, PopupKind};
 
 /// Scratch-directory helper (the crate's own `test_util::temp_dir` is
 /// unit-test-only).

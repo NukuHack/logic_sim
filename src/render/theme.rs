@@ -102,11 +102,7 @@ pub fn luminance(c: Rgba) -> f32 {
 /// nuance is skipped here in favour of a plain black/white pick, which stays
 /// legible on every body colour.
 pub fn text_colour_for_background(bg: Rgba) -> Rgba {
-	if luminance(bg) > 0.57 {
-		[0.0, 0.0, 0.0, 1.0]
-	} else {
-		[1.0, 1.0, 1.0, 1.0]
-	}
+	if luminance(bg) > 0.57 { [0.0, 0.0, 0.0, 1.0] } else { [1.0, 1.0, 1.0, 1.0] }
 }
 
 /// Colour for one of the 8 state-palette indices in a given logic state, clamped like
@@ -117,9 +113,5 @@ pub fn state_colour(state: LogicState, color: Color) -> Rgba {
 		return STATE_DISCONNECTED_COL;
 	}
 	let high = color.to_rgba();
-	if state == LogicState::High {
-		high
-	} else {
-		dim(high)
-	}
+	if state == LogicState::High { high } else { dim(high) }
 }

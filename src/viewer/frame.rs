@@ -8,19 +8,19 @@ use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
 use crate::render::layout::{self, force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
 use crate::render::scene::{
-	bounding_box, build_grid, build_scene, build_scene_with_spans_into, fade_component, fade_wire, AllLow, SceneGeometry, SimulatorPinState,
+	AllLow, SceneGeometry, SimulatorPinState, bounding_box, build_grid, build_scene, build_scene_with_spans_into, fade_component, fade_wire,
 };
 use crate::render::theme;
-use crate::render::ui_kit::{pin_geometry_to_screen, to_world, Button, UiCtx, UiRect};
+use crate::render::ui_kit::{Button, UiCtx, UiRect, pin_geometry_to_screen, to_world};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
 
-use crate::viewer::canvas::{build_pending_place_scene, draw_pending_wire_preview, DELETE_DRAG_ALPHA, PENDING_PLACEMENT_ALPHA};
+use crate::viewer::canvas::{DELETE_DRAG_ALPHA, PENDING_PLACEMENT_ALPHA, build_pending_place_scene, draw_pending_wire_preview};
 use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};
 use crate::viewer::save_flow::save_chip_mode;
-use crate::viewer::state::{editor_action, LibraryMode, NamingPurpose, Overlay, SceneTarget, ViewerAction, ViewerState};
+use crate::viewer::state::{LibraryMode, NamingPurpose, Overlay, SceneTarget, ViewerAction, ViewerState, editor_action};
 
 /// Camera zoom used for a chip with no geometry to fit to (a brand-new blank
 /// chip, before anything's been placed on it). Chips are laid out in grid

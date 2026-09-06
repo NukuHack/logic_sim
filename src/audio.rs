@@ -316,11 +316,7 @@ fn promote_worker_to_realtime() {}
 /// The gain + clip stage of `AudioUnity.OnAudioFilterRead`: anything past
 /// [`CLIP_THRESHOLD`] is flattened to exactly that magnitude, preserving sign.
 pub fn process_output_sample(raw: f32) -> f32 {
-	if raw.abs() > CLIP_THRESHOLD {
-		CLIP_THRESHOLD * raw.signum()
-	} else {
-		raw
-	}
+	if raw.abs() > CLIP_THRESHOLD { CLIP_THRESHOLD * raw.signum() } else { raw }
 }
 
 /// Band-limited square wave (`AudioState.SquareWave`): odd harmonics only.

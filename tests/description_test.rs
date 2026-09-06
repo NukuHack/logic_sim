@@ -3,8 +3,8 @@
 //! (segment + cached attachment point) while keeping the *real* signal
 //! source address -- the on-disk conventions every other layer relies on.
 
-use logic_sim::description::{PinAddress, WireConnectionType, WireDescription};
 use logic_sim::Vec2;
+use logic_sim::description::{PinAddress, WireConnectionType, WireDescription};
 
 #[test]
 fn new_wire_attaches_both_ends_directly_to_pins() {

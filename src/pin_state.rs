@@ -34,11 +34,7 @@ impl LogicState {
 
 	#[inline(always)]
 	pub const fn from_bool(high: bool) -> Self {
-		if high {
-			LogicState::High
-		} else {
-			LogicState::Low
-		}
+		if high { LogicState::High } else { LogicState::Low }
 	}
 
 	#[inline(always)]
@@ -408,11 +404,7 @@ impl PinState {
 
 #[inline(always)]
 const fn width_mask(width: u32) -> u8 {
-	if width >= 8 {
-		u8::MAX
-	} else {
-		((1u16 << width) - 1) as u8
-	}
+	if width >= 8 { u8::MAX } else { ((1u16 << width) - 1) as u8 }
 }
 
 #[cfg(test)]

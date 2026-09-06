@@ -36,12 +36,11 @@ pub fn bus_corrected_target(chip: &ChipDescription, library: &ChipLibrary, wire:
 	// A bus wire always runs origin-output -> terminus-input, so the origin
 	// owns the source end; feed its (hidden) input pin.
 	let owner_id = wire.source_pin_address.pin_owner_id;
-	if let Some(sub) = chip.sub_chips.iter().find(|s| s.id == owner_id) {
-		if let Some(desc) = library.try_get(&sub.name) {
-			if let Some(input_pin) = desc.input_pins.first() {
-				return PinAddress::new(owner_id, input_pin.id);
-			}
-		}
+	if let Some(sub) = chip.sub_chips.iter().find(|s| s.id == owner_id)
+		&& let Some(desc) = library.try_get(&sub.name)
+		&& let Some(input_pin) = desc.input_pins.first()
+	{
+		return PinAddress::new(owner_id, input_pin.id);
 	}
 	wire.target_pin_address
 }

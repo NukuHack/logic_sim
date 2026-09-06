@@ -5,10 +5,10 @@ use std::io;
 
 use crate::builtins;
 use crate::description::{ChipDescription, ChipLibrary};
-use crate::json::{parse_project_description, ProjectDescription};
+use crate::json::{ProjectDescription, parse_project_description};
 use crate::save_system::paths::SavePaths;
 use crate::save_system::project::Project;
-use crate::settings::{parse_app_settings, AppSettings};
+use crate::settings::{AppSettings, parse_app_settings};
 
 pub struct Loader;
 

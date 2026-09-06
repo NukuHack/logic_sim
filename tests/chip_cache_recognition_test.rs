@@ -13,7 +13,7 @@
 
 use logic_sim::description::{CacheKind, ChipDescription, ChipType, PinAddress, PinBitCount, PinDescription, SubChipDescription};
 use logic_sim::gate_op::recalculate_chip_cache;
-use logic_sim::{load_chip_library_from_dir, register_all_builtins, ChipLibrary, Simulator, Vec2};
+use logic_sim::{ChipLibrary, Simulator, Vec2, load_chip_library_from_dir, register_all_builtins};
 use std::path::Path;
 
 fn fixture_dir() -> std::path::PathBuf {

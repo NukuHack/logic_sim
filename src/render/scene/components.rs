@@ -4,7 +4,7 @@
 //! segment / RGB / dot / LED displays, key bindings).
 
 use crate::description::{ChipType, NameLocation};
-use crate::render::foundation::{point_in_rect, SceneGeometry, TextLabel};
+use crate::render::foundation::{SceneGeometry, TextLabel, point_in_rect};
 use crate::render::layout;
 use crate::render::scene::displays::{self, ClipRect};
 use crate::render::scene::lookup::PinStateLookup;
@@ -60,17 +60,17 @@ pub(crate) fn draw_component(
 		});
 	}
 	// draw label if hovered
-	if let Some(label) = &sub.label {
-		if is_hovered {
-			let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
-			geo.labels.push(TextLabel {
-				pos: label_pos,
-				text: label.into(),
-				colour: theme::text_colour_for_background(body_colour),
-				font_size: theme::FONT_SIZE_CHIP_NAME,
-				width: sub.size.x,
-			});
-		}
+	if let Some(label) = &sub.label
+		&& is_hovered
+	{
+		let label_pos = sub.centre - Vec2::new(0.0, sub.size.y / 2.0 + theme::FONT_SIZE_CHIP_NAME);
+		geo.labels.push(TextLabel {
+			pos: label_pos,
+			text: label.into(),
+			colour: theme::text_colour_for_background(body_colour),
+			font_size: theme::FONT_SIZE_CHIP_NAME,
+			width: sub.size.x,
+		});
 	}
 }
 

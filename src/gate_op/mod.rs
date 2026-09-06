@@ -22,11 +22,11 @@ mod eval;
 mod recognize;
 
 pub use caching::{
-	calculate_num_input_bits, is_combinational, recalculate_chip_cache, reset_received_flags_on_all_pins, CachingState,
-	MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING,
+	CachingState, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING, calculate_num_input_bits, is_combinational,
+	recalculate_chip_cache, reset_received_flags_on_all_pins,
 };
 pub use eval::{Bits, CachedGate, Lut, Native, NativeList, NativeMulti, NativeSplit};
-pub use recognize::{recognize, registry, Candidate};
+pub use recognize::{Candidate, recognize, registry};
 
 /// Largest input width a [`Lut`] table can be built at all: `1u64 << in_bits` (the row count)
 /// would overflow above this. Not a memory budget -- a real table is unbuildable long before

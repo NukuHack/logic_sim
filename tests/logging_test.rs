@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use flexi_logger::{Level, LogSpecification};
-use logic_sim::logging::{init, log_dir, scratch, DEFAULT_LOG_SPEC};
+use logic_sim::logging::{DEFAULT_LOG_SPEC, init, log_dir, scratch};
 
 #[test]
 fn our_code_logs_at_debug_while_third_parties_stay_at_warn() {

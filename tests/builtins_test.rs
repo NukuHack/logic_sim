@@ -1,4 +1,4 @@
-use logic_sim::{load_chip_library_from_dir, pin_state::PinState, register_all_builtins, ExternalInput, PinAddress, Simulator};
+use logic_sim::{ExternalInput, PinAddress, Simulator, load_chip_library_from_dir, pin_state::PinState, register_all_builtins};
 use std::path::Path;
 
 fn fixture_dir() -> std::path::PathBuf {

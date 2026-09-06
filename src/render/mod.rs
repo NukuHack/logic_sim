@@ -15,12 +15,12 @@ pub mod ui_kit;
 pub mod ui_stack;
 
 pub use camera::Camera;
-pub use context_menu::{build_context_menu, ContextMenuButton, ContextMenuFrame, ContextMenuItem, ContextMenuState};
+pub use context_menu::{ContextMenuButton, ContextMenuFrame, ContextMenuItem, ContextMenuState, build_context_menu};
 pub use editor_ui::{EditorAction, EditorButton, EditorFrame};
 pub use menu_ui::{MenuFrame, UiAction, UiButton, UiRect};
 pub use scene::{
-	bounding_box, build_grid, build_scene, closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit,
-	hit_test_sub_chip, hit_test_sub_chip_pin, hit_test_wire, place_sub_chips, AllLow, PinHit, PinStateLookup, PlacedSubChip, SceneGeometry,
-	SceneVertex, TextLabel, WireTapHit,
+	AllLow, PinHit, PinStateLookup, PlacedSubChip, SceneGeometry, SceneVertex, TextLabel, WireTapHit, bounding_box, build_grid, build_scene,
+	closest_wire_hit, delete_wire, hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip, hit_test_sub_chip_pin,
+	hit_test_wire, place_sub_chips,
 };
 pub use ui_stack::{Capture, Dispatch, InputResult, LayerId, StackLayer, UiStack};

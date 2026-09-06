@@ -2,7 +2,7 @@
 //! frequency table, volume handling and smoothing, plus `AudioState`'s
 //! waveform mixing and the output clip stage -- all pure logic, no device.
 
-use logic_sim::audio::{process_output_sample, AudioState, SimAudio, FREQ_COUNT};
+use logic_sim::audio::{AudioState, FREQ_COUNT, SimAudio, process_output_sample};
 
 #[test]
 fn frequency_table_climbs_semitones_from_a0() {
@@ -126,7 +126,7 @@ fn output_stage_flattens_peaks_but_passes_quiet_samples_through() {
 }
 
 mod end_to_end {
-	use logic_sim::audio::{SimAudio, FREQ_COUNT};
+	use logic_sim::audio::{FREQ_COUNT, SimAudio};
 	use logic_sim::description::{ChipDescription, ChipLibrary, ChipType, SubChipDescription};
 	use logic_sim::pin_state::PinState;
 	use logic_sim::sim::{ExternalInput, Simulator};

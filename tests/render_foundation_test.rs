@@ -3,20 +3,20 @@
 //! transforms, the colour palette, chip/pin layout math, and the CPU-side
 //! GPU-vertex conversion -- everything reachable without a GPU device.
 
+use logic_sim::Vec2;
 use logic_sim::description::{Color, PinBitCount};
 use logic_sim::pin_state::LogicState;
 use logic_sim::render::camera::Camera;
 use logic_sim::render::foundation::{
-	apply_alpha, bounding_box, offset_polyline, point_in_rect, point_in_rounded_rect, RoundCorners, SceneGeometry, SceneVertex, TextLabel,
+	RoundCorners, SceneGeometry, SceneVertex, TextLabel, apply_alpha, bounding_box, offset_polyline, point_in_rect, point_in_rounded_rect,
 };
-use logic_sim::render::gpu::{scene_to_vertices, upload_ready_bytes, Vertex};
+use logic_sim::render::gpu::{Vertex, scene_to_vertices, upload_ready_bytes};
 use logic_sim::render::layout::{
-	calculate_default_pin_layout, calculate_min_chip_size_for_pins, estimate_text_width, grid_line_thickness, min_chip_height_for_pins,
-	pin_world_position, snap_to_grid, snap_to_grid_scalar, AVG_CHAR_WIDTH_RATIO, GRID_MIN_PIXEL_THICKNESS, GRID_SIZE, GRID_THICKNESS,
-	SUB_CHIP_PIN_INSET,
+	AVG_CHAR_WIDTH_RATIO, GRID_MIN_PIXEL_THICKNESS, GRID_SIZE, GRID_THICKNESS, SUB_CHIP_PIN_INSET, calculate_default_pin_layout,
+	calculate_min_chip_size_for_pins, estimate_text_width, grid_line_thickness, min_chip_height_for_pins, pin_world_position, snap_to_grid,
+	snap_to_grid_scalar,
 };
-use logic_sim::render::theme::{self, dim, state_colour, text_colour_for_background, COLORS, STATE_DISCONNECTED_COL};
-use logic_sim::Vec2;
+use logic_sim::render::theme::{self, COLORS, STATE_DISCONNECTED_COL, dim, state_colour, text_colour_for_background};
 
 #[test]
 fn rect_produces_two_triangles_six_verts() {

@@ -4,16 +4,16 @@
 //! edge pins, name label and any displays already placed on it, drawn at true relative scale
 //! so resizing reads correctly.
 
+use crate::ChipLibrary;
 use crate::description::{ChipDescription, ChipType, DisplayDescription, NameLocation, PinBitCount};
 use crate::render::editor_ui::{EditorAction, EditorButton, EditorFrame};
-use crate::render::foundation::{apply_alpha, SceneGeometry, TextLabel};
+use crate::render::foundation::{SceneGeometry, TextLabel, apply_alpha};
 use crate::render::layout;
 use crate::render::scene::displays;
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::theme::{self, Rgba};
 use crate::render::ui_kit::{self, UiCtx, UiRect};
 use crate::structs::Vec2;
-use crate::ChipLibrary;
 
 /// What the player is currently grabbing in the customize preview.
 /// Payloads carry whatever the interaction needs to apply/cancel itself
@@ -176,11 +176,7 @@ fn list_scroll_max(entry_count: usize, viewport_h: f32) -> f32 {
 }
 
 fn effective_body_colour(draft: &ChipDescription) -> Rgba {
-	if draft.colour[3] > 0.0 {
-		draft.colour
-	} else {
-		theme::CHIP_BODY_COL
-	}
+	if draft.colour[3] > 0.0 { draft.colour } else { theme::CHIP_BODY_COL }
 }
 
 /// Builds the whole customize workspace for one frame: dark backdrop,
@@ -458,24 +454,24 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 	append_world_to_frame(&mut frame.geometry, &world, centre_px, px_per_unit, ui.vh);
 
 	// Placement ghost, following the cursor at its would-be scale.
-	if let CustomizeInteraction::PlacingDisplay { sub_chip_id } = ctx.interaction {
-		if let Some(desc) = ctx.draft.sub_chips.iter().find(|s| s.id == sub_chip_id).and_then(|s| ctx.library.try_get(&s.name)) {
-			let mut ghost = SceneGeometry::default();
-			let cursor_world = Vec2::new((mouse.x - centre_px.x) / px_per_unit, -(mouse.y - centre_px.y) / px_per_unit);
-			displays::draw_subchip_displays(
-				&mut ghost,
-				cursor_world,
-				Vec2::splat(f32::MAX),
-				&ctx.draft.sub_chips,
-				&[DisplayDescription::new(sub_chip_id, Vec2::ZERO, default_display_scale(desc.chip_type))],
-				ctx.library,
-				ctx.pin_state,
-				body_colour,
-				false,
-			);
-			apply_alpha(&mut ghost, 0.65);
-			append_world_to_frame(&mut frame.geometry, &ghost, centre_px, px_per_unit, ui.vh);
-		}
+	if let CustomizeInteraction::PlacingDisplay { sub_chip_id } = ctx.interaction
+		&& let Some(desc) = ctx.draft.sub_chips.iter().find(|s| s.id == sub_chip_id).and_then(|s| ctx.library.try_get(&s.name))
+	{
+		let mut ghost = SceneGeometry::default();
+		let cursor_world = Vec2::new((mouse.x - centre_px.x) / px_per_unit, -(mouse.y - centre_px.y) / px_per_unit);
+		displays::draw_subchip_displays(
+			&mut ghost,
+			cursor_world,
+			Vec2::splat(f32::MAX),
+			&ctx.draft.sub_chips,
+			&[DisplayDescription::new(sub_chip_id, Vec2::ZERO, default_display_scale(desc.chip_type))],
+			ctx.library,
+			ctx.pin_state,
+			body_colour,
+			false,
+		);
+		apply_alpha(&mut ghost, 0.65);
+		append_world_to_frame(&mut frame.geometry, &ghost, centre_px, px_per_unit, ui.vh);
 	}
 
 	// ---- Interaction affordances (screen-space) ----
@@ -555,10 +551,10 @@ fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: U
 		};
 		if let Some(i) = carried.and_then(|i| ctx.draft.displays.get(i)) {
 			let resolved = ctx.draft.sub_chips.iter().find(|s| s.id == i.sub_chip_id).and_then(|s| ctx.library.try_get(&s.name));
-			if let Some(resolved) = resolved {
-				if let Some((drect, _)) = placed_rect(i, resolved) {
-					draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 1.0, 1.0, 1.0]);
-				}
+			if let Some(resolved) = resolved
+				&& let Some((drect, _)) = placed_rect(i, resolved)
+			{
+				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 1.0, 1.0, 1.0]);
 			}
 		}
 	}
