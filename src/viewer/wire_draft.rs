@@ -6,7 +6,7 @@
 
 use crate::PinBitCount;
 use crate::description::PinAddress;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// One endpoint of an in-progress wire placement (`ViewerState::pending_wire`),
 /// fixed at the moment the wire is started -- either a real pin (a

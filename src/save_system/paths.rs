@@ -27,25 +27,46 @@ impl SavePaths {
 		Self { root: root.into() }
 	}
 
-	/// A best-effort, non-Unity-specific default data directory:
-	/// `<platform data dir>/DigitalLogicSim`. Falls back to
-	/// `./DigitalLogicSimData` if no platform data directory can be
-	/// determined (e.g. relevant env vars are unset).
+	/// A best-effort, non-Unity-specific default data directory using the `dirs` crate.
+	/// Uses the appropriate platform-specific data directory:
+	/// - Windows: `%APPDATA%\DigitalLogicSim`
+	/// - macOS: `~/Library/Application Support/DigitalLogicSim`
+	/// - Linux: `~/.local/share/DigitalLogicSim`
+	/// - Falls back to `./DigitalLogicSimData` if no platform data directory can be determined.
 	pub fn default_data_dir() -> PathBuf {
-		platform_data_dir().unwrap_or_else(|| PathBuf::from(".")).join("DigitalLogicSim")
+		dirs::data_dir().map(|d| d.join("DigitalLogicSim")).unwrap_or_else(|| PathBuf::from(".").join("DigitalLogicSimData"))
 	}
 
 	/// The exact save-data directory the original Unity build of Digital Logic Sim uses
 	/// (`Application.persistentDataPath`), so this port reads/writes the *same* projects a
-	/// player already has on disk instead of a parallel `DigitalLogicSim` folder next to it: -
-	/// Windows: `%USERPROFILE%\AppData\LocalLow\SebastianLague\Digital-Logic-Sim\` - macOS:
-	/// `~/Library/Application Support/SebastianLague/Digital-Logic-Sim/` - Linux:
-	/// `~/.config/unity3d/SebastianLague/Digital-Logic-Sim/` Falls back to `./Digital-Logic-Sim`
-	/// (relative to the current working directory) if the relevant environment variables aren't
-	/// set, so the app still has *somewhere* writable to start from rather than failing
-	/// outright.
+	/// player already has on disk:
+	/// - Windows: `%USERPROFILE%\AppData\LocalLow\SebastianLague\Digital-Logic-Sim\`
+	/// - macOS: `~/Library/Application Support/SebastianLague/Digital-Logic-Sim/`
+	/// - Linux: `~/.config/unity3d/SebastianLague/Digital-Logic-Sim/`
+	/// - Falls back to `./Digital-Logic-Sim` (relative to the current working directory)
+	///   if the relevant environment variables aren't set.
+	///
+	/// Unity's `Application.persistentDataPath` convention specifically (as
+	/// opposed to `platform_data_dir`'s more generic "a reasonable place to
+	/// put app data" used by `default_data_dir`): `LocalLow` (not `Roaming`)
+	/// on Windows, and `~/.config/unity3d` (not XDG data home) on Linux.
 	pub fn unity_persistent_data_dir() -> PathBuf {
-		unity_persistent_data_dir_impl().unwrap_or_else(|| PathBuf::from("Digital-Logic-Sim"))
+		let path = {
+			#[cfg(target_os = "windows")]
+			{
+				"AppData/LocalLow/SebastianLague/Digital-Logic-Sim"
+			}
+			#[cfg(target_os = "macos")]
+			{
+				"Library/Application Support/SebastianLague/Digital-Logic-Sim"
+			}
+			#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+			{
+				".config/unity3d/SebastianLague/Digital-Logic-Sim"
+			}
+		};
+
+		dirs::home_dir().map(|home| home.join(path)).unwrap_or_else(|| PathBuf::from("Digital-Logic-Sim"))
 	}
 
 	pub fn root(&self) -> &Path {
@@ -90,42 +111,5 @@ impl SavePaths {
 
 	pub fn project_description_path(&self, project_name: &str) -> PathBuf {
 		self.project_path(project_name).join(PROJECT_FILE_NAME)
-	}
-}
-
-fn platform_data_dir() -> Option<PathBuf> {
-	#[cfg(target_os = "windows")]
-	{
-		std::env::var_os("APPDATA").map(PathBuf::from)
-	}
-	#[cfg(target_os = "macos")]
-	{
-		std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"))
-	}
-	#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-	{
-		std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-	}
-}
-
-/// Unity's `Application.persistentDataPath` convention specifically (as
-/// opposed to `platform_data_dir`'s more generic "a reasonable place to
-/// put app data" used by `default_data_dir`): `LocalLow` (not `Roaming`)
-/// on Windows, and `~/.config/unity3d` (not XDG data home) on Linux.
-fn unity_persistent_data_dir_impl() -> Option<PathBuf> {
-	#[cfg(target_os = "windows")]
-	{
-		// `%APPDATA%` is `...\AppData\Roaming`; Unity's LocalLow folder is a sibling of `Roaming`/`Local`
-		// under `...\AppData\` and (unlike them) has no dedicated env var, so it's derived from `%USERPROFILE%`.
-		std::env::var_os("USERPROFILE")
-			.map(|home| PathBuf::from(home).join("AppData").join("LocalLow").join("SebastianLague").join("Digital-Logic-Sim"))
-	}
-	#[cfg(target_os = "macos")]
-	{
-		std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Application Support/SebastianLague/Digital-Logic-Sim"))
-	}
-	#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-	{
-		std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config/unity3d/SebastianLague/Digital-Logic-Sim"))
 	}
 }

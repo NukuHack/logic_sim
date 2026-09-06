@@ -5,7 +5,7 @@ use crate::render::camera::Camera;
 use crate::render::foundation::SceneGeometry;
 use crate::render::layout;
 use crate::render::theme::Rgba;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// How many grid lines to skip between each one actually drawn, based on
 /// the current view's world-space half-height. Thins the grid out as the

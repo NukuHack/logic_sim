@@ -15,7 +15,7 @@ pub mod wires;
 use crate::description::{ChipDescription, ChipLibrary};
 use crate::render::layout;
 use crate::render::theme;
-use crate::structs::Vec2;
+use glam::Vec2;
 use std::collections::HashMap;
 
 pub use crate::render::foundation::{

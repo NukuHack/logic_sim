@@ -3,7 +3,7 @@
 //! wire-tap hit-testing, pin shapes/hover labels, subchip placement, and
 //! live simulator-backed pin lookups -- all via `build_scene` and friends.
 
-use logic_sim::Vec2;
+use glam::Vec2;
 use logic_sim::description::Color;
 use logic_sim::description::{ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount, PinDescription, SubChipDescription, WireDescription};
 use logic_sim::pin_state::LogicState;
@@ -44,7 +44,7 @@ fn nand_desc() -> ChipDescription {
 fn test_camera() -> Camera {
 	// 800x400 viewport, zoom=100 -> screen_half_width=4, screen_half_height=2
 	// world units, comfortably inside the `skip == 1` (< 8) band.
-	let mut cam = Camera::new(logic_sim::Vec2::new(800.0, 400.0));
+	let mut cam = Camera::new(Vec2::new(800.0, 400.0));
 	cam.zoom = 100.0;
 	cam
 }

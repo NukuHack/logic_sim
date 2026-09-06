@@ -10,7 +10,7 @@ use crate::json::ProjectDescription;
 use crate::json::StarredItem;
 use crate::render::theme;
 use crate::render::ui_kit::{self, Frame, UiCtx, UiRect};
-use crate::structs::Vec2;
+use glam::Vec2;
 use std::collections::HashSet;
 
 pub use crate::render::ui_kit::to_world;

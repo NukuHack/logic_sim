@@ -636,6 +636,7 @@ mod tests {
 	use super::*;
 	use crate::viewer::actions::open_library_panel;
 	use crate::viewer::state::open_save_chip;
+	use glam::Vec2;
 
 	#[test]
 	fn unique_new_chip_name_never_collides_with_existing_drafts() {
@@ -659,7 +660,7 @@ mod tests {
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
 		library.add(ChipDescription::new("OTHER", ChipType::Custom));
-		let v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 
 		assert!(!valid_save_name(&v, ""), "blank");
 		assert!(!valid_save_name(&v, "   "), "whitespace");
@@ -681,7 +682,7 @@ mod tests {
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
 		library.add(ChipDescription::new("OTHER", ChipType::Custom));
 
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		let root = v.root_chip_name.clone();
 
 		// Fill every kind of canvas draft state on ROOT.
@@ -689,7 +690,7 @@ mod tests {
 		try_place_pending_components_via_public_path(&mut v);
 		let id = v.library.get(&root).sub_chips[0].id;
 		v.selected_ids.push(id);
-		crate::viewer::chip_interaction::begin_drag_on_component(&mut v, id, crate::structs::Vec2::ZERO);
+		crate::viewer::chip_interaction::begin_drag_on_component(&mut v, id, Vec2::ZERO);
 		v.pending_wire = None;
 		assert!(has_draft_state(&v), "precondition: drafts exist");
 
@@ -718,8 +719,7 @@ mod tests {
 		let paths = SavePaths::new(&root);
 		crate::create_project(&paths, "P").expect("project created");
 
-		let mut v =
-			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 
 		// Seed the cache as if ROOT's subtree had already been simulated
 		// and some chip's truth table built.
@@ -744,7 +744,7 @@ mod tests {
 	}
 
 	fn try_place_pending_components_via_public_path(v: &mut ViewerState) {
-		crate::viewer::canvas::try_place_pending_components(v, crate::structs::Vec2::ZERO, &mut None);
+		crate::viewer::canvas::try_place_pending_components(v, Vec2::ZERO, &mut None);
 	}
 
 	fn has_draft_state(v: &ViewerState) -> bool {
@@ -768,8 +768,7 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		let mut v =
-			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.prefs = project.description;
 
 		let mut status = None;
@@ -809,7 +808,7 @@ mod tests {
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new(root, ChipType::Custom));
 		library.add(ChipDescription::new(other, ChipType::Custom));
-		let v = ViewerState::new("P", library, root.to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let v = ViewerState::new("P", library, root.to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		for name in [root, other] {
 			Saver::save_chip(paths, "P", &v.library, &v.library.get(name).clone()).expect("chip written");
 		}
@@ -826,8 +825,7 @@ mod tests {
 			let mut library = ChipLibrary::new();
 			crate::register_all_builtins(&mut library);
 			library.add(ChipDescription::new("ROOT", ChipType::Custom));
-			let mut v =
-				ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+			let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 			v.prefs = crate::create_project(&paths, "P").expect("project").description;
 			v
 		};
@@ -836,7 +834,7 @@ mod tests {
 		let name = v.root_chip_name.clone();
 		// Give it pins so the min-size stamp has something to compute from.
 		let mut pin = crate::PinDescription::new("IN", 1, crate::PinBitCount::Bit1);
-		pin.position = crate::structs::Vec2::ZERO;
+		pin.position = Vec2::ZERO;
 		v.library.get_mut(&name).input_pins.push(pin);
 
 		open_save_chip(&mut v);
@@ -872,8 +870,7 @@ mod tests {
 		for name in ["ROOT", "OLD NAME"] {
 			library.add(ChipDescription::new(name, ChipType::Custom));
 		}
-		let mut v =
-			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.prefs = crate::create_project(&paths, "P").expect("project").description;
 		Saver::save_chip(&paths, "P", &v.library, &v.library.get("OLD NAME").clone()).expect("saved");
 
@@ -906,12 +903,11 @@ mod tests {
 		crate::register_all_builtins(&mut library);
 		let mut child = ChipDescription::new("CHILD", ChipType::Custom);
 		let mut pin = PinDescription::new("OUT", 1, crate::PinBitCount::Bit1);
-		pin.position = crate::structs::Vec2::ZERO;
+		pin.position = Vec2::ZERO;
 		child.output_pins.push(pin);
 		library.add(child.clone());
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		let mut v =
-			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.prefs = crate::create_project(&paths, "P").expect("project").description;
 		Saver::save_chip(&paths, "P", &v.library, &v.library.get("CHILD").clone()).expect("child saved");
 
@@ -921,7 +917,7 @@ mod tests {
 			name: "CHILD".into(),
 			id: 9,
 			internal_data: None,
-			position: crate::structs::Vec2::ZERO,
+			position: Vec2::ZERO,
 			label: None,
 			pin_colour_info: vec![],
 		});
@@ -944,7 +940,7 @@ mod tests {
 
 	fn place_a_nand(v: &mut ViewerState) {
 		crate::viewer::chip_interaction::start_placing(v, "NAND");
-		crate::viewer::canvas::try_place_pending_components(v, crate::structs::Vec2::ZERO, &mut None);
+		crate::viewer::canvas::try_place_pending_components(v, Vec2::ZERO, &mut None);
 	}
 
 	/// The dirty-detection contract: a saved-but-unedited chip is clean,

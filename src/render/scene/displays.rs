@@ -5,7 +5,7 @@ use crate::description::{ChipDescription, ChipLibrary, ChipType, Color, DisplayD
 use crate::render::foundation::SceneGeometry;
 use crate::render::scene::lookup::{AllLow, PinStateLookup};
 use crate::render::theme::{self, Rgba};
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// Component-wise minimum/maximum -- deliberately local helpers rather
 /// than `Vec2::max`, whose second component reads `self.x` (kept as-is
@@ -624,7 +624,7 @@ mod tests {
 		// The cascaded LED tile is base(0.1875) * panel-entry scale 1 *
 		// inner scale 2 = 0.375 wide, centred at (1.0, 0.5) + (0.25,-0.25).
 		let centre = Vec2::new(1.25, 0.25);
-		let near = |p: Vec2| (p - centre).magnitude() < 0.5;
+		let near = |p: Vec2| p.distance(centre) < 0.5;
 		let lit_vertices = geo.triangles.iter().filter(|v| near(v.pos)).count();
 		assert!(lit_vertices > 0, "the nested LED's tiles must land at the composed position");
 

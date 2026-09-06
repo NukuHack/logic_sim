@@ -126,11 +126,12 @@ fn output_stage_flattens_peaks_but_passes_quiet_samples_through() {
 }
 
 mod end_to_end {
+	use glam::Vec2;
+	use logic_sim::PinAddress;
 	use logic_sim::audio::{FREQ_COUNT, SimAudio};
 	use logic_sim::description::{ChipDescription, ChipLibrary, ChipType, SubChipDescription};
 	use logic_sim::pin_state::PinState;
 	use logic_sim::sim::{ExternalInput, Simulator};
-	use logic_sim::{PinAddress, Vec2};
 
 	fn buzzer_chip() -> (ChipLibrary, ChipDescription) {
 		let mut library = ChipLibrary::new();

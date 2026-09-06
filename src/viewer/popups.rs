@@ -300,6 +300,7 @@ pub(crate) fn confirm_led_colour_popup(v: &mut ViewerState) {
 mod tests {
 	use super::*;
 	use crate::viewer::state::PinEditState;
+	use glam::Vec2;
 
 	#[test]
 	fn parse_rom_word_accepts_decimal_and_hex() {
@@ -353,7 +354,7 @@ mod tests {
 		let mut library = crate::ChipLibrary::new();
 		let chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
 		library.add(chip);
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.open_overlay(crate::viewer::state::Overlay::RomEditor(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 }));
 		v.overlay_text_input = "999".to_string();
 		v
@@ -402,7 +403,7 @@ mod tests {
 		let mut chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
 		chip.output_pins.push(crate::PinDescription::new("OUT", 4, bit_count));
 		library.add(chip);
-		ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
 	}
 
 	fn open_pin_edit(v: &mut ViewerState, state: PinEditState) {

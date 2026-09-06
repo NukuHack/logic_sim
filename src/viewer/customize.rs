@@ -10,8 +10,8 @@ use crate::render::customize_ui::{CustomizeCtx, CustomizeFrameOut, CustomizeInte
 use crate::render::layout::{self, GRID_SIZE};
 use crate::render::scene::lookup::SimulatorPinState;
 use crate::render::theme;
-use crate::structs::Vec2;
 use crate::viewer::state::{Overlay, ViewerState};
+use glam::Vec2;
 
 /// Draft customization session for the open chip. `saved_save_text`
 /// snapshots the save popup's name field: the shared text buffer is
@@ -155,7 +155,7 @@ pub(crate) fn start_scale_display(v: &mut ViewerState, index: usize) {
 	customize.interaction = CustomizeInteraction::ScalingDisplay {
 		index,
 		centre,
-		start_dist: (cursor_world - centre).magnitude().max(0.05),
+		start_dist: (cursor_world - centre).length().max(0.05),
 		start_scale: customize.draft.displays[index].scale,
 	};
 }
@@ -287,7 +287,7 @@ pub(crate) fn update_live_interaction(v: &mut ViewerState) {
 		}
 		CustomizeInteraction::ScalingDisplay { index, centre, start_dist, start_scale } => {
 			if let Some(display) = customize.draft.displays.get_mut(index) {
-				let dist = (cursor_world - centre).magnitude();
+				let dist = (cursor_world - centre).length();
 				display.scale = (start_scale * dist / start_dist).clamp(0.05, 100.0);
 			}
 		}

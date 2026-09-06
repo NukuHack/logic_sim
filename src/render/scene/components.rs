@@ -10,7 +10,7 @@ use crate::render::scene::displays::{self, ClipRect};
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::placed::PlacedSubChip;
 use crate::render::theme;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// Layer 3 (top): draws one placed subchip's body + name/label text, last
 /// of the scene layers so a component's body is never occluded by a wire

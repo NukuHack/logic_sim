@@ -3,7 +3,7 @@
 //! menu, every editor overlay builder, and the startup-menu screen
 //! builders -- all exercised through their public constructors.
 
-use logic_sim::Vec2;
+use glam::Vec2;
 use logic_sim::json::{ChipCollection, ProjectDescription, StarredItem};
 use logic_sim::render::context_menu::{ContextMenuAction, ContextMenuItem, ContextMenuState, build_context_menu};
 use logic_sim::render::editor_ui::{

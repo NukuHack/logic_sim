@@ -3,9 +3,9 @@
 //! through `Simulator::held_keys` / `Simulator::key_modifiers` here -- the actual winit event ->
 //! `Simulator` field plumbing lives in the GPU-window binaries, which aren't exercised by `cargo test`.
 
+use glam::Vec2;
 use logic_sim::description::{ChipDescription, ChipType, PinAddress, PinBitCount, SubChipDescription, WireDescription};
 use logic_sim::sim::key_mods_bits;
-use logic_sim::structs::Vec2;
 use logic_sim::{ChipLibrary, Simulator};
 
 /// Builds a tiny custom `ChipDescription` that places a single instance of

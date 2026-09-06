@@ -1,6 +1,7 @@
+use glam::Vec2;
 use logic_sim::{
 	ChipCollection, ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount,
-	PinDescription, ProjectDescription, Simulator, StarredItem, SubChipDescription, ValueDisplayMode, Vec2, WireConnectionType, WireDescription,
+	PinDescription, ProjectDescription, Simulator, StarredItem, SubChipDescription, ValueDisplayMode, WireConnectionType, WireDescription,
 	is_equivalent_json, load_chip_library_from_dir, load_project, parse_chip_description, pin_state::PinState, serialize_chip_description,
 };
 use std::path::Path;

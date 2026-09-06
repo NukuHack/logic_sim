@@ -8,28 +8,35 @@ edition = "2024"
 default-run = "app"
 
 [dependencies]
+# fast (pseudo-)random number gen
 rand = "0.8"
+# serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Single source of truth for the on-disk enum discriminants: the
-# `from_int`/`to_int` wrappers delegate to the derived TryFrom/Into.
+# small mapper for enums
 num_enum = "0.7"
 # logger
 flexi_logger = "0.31"
 log = "0.4"
-
+# for math
+glam = { version = "0.33.6", features = ["f64"] }
+# cross platform directory access
+dirs = "7.0.0"
 # ---- rendering (wgpu + wgsl) ----
 wgpu = "22"
+# low level byte manipulation
 bytemuck = { version = "1", features = ["derive"] }
+# minimal async executor
 pollster = "0.3"
+# Cross-platform windowhandler
 winit = "0.30"
+# text renderin all-in-one
 glyphon = "0.6"
+# low level audio driver
 cpal = "0.18.2"
-# rtkit client for the audio worker's SCHED_FIFO promotion (see
-# `audio::promote_worker_to_realtime`); pure Rust, no dbus system headers.
+# rtkit client for the audio worker's SCHED_FIFO promotion, pure Rust, no dbus system headers.
 zbus = "5"
-# System clipboard access for the ROM editor's Copy/Paste buttons
-# (`render::editor_ui::build_rom_editor_popup`, `viewer::popups::rom_copy`/`rom_paste`).
+# System clipboard access (`viewer::popups::rom_copy`/`rom_paste`).
 arboard = "3"
 
 [lib]

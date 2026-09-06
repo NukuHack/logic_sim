@@ -8,12 +8,12 @@ use crate::render::camera::Camera;
 use crate::render::layout;
 use crate::render::scene::{self, SceneGeometry};
 use crate::render::theme;
-use crate::structs::Vec2;
 use crate::viewer::bus_wiring;
 use crate::viewer::chip_interaction;
 use crate::viewer::state::ViewerState;
 use crate::viewer::wire_draft::{PendingWire, PendingWireEnd};
 use crate::{ChipLibrary, ChipType, PinAddress, PinDescription, SubChipDescription, WireConnectionType, WireDescription, builtins};
+use glam::Vec2;
 
 /// Finds whichever bit of one of `root_desc`'s own boundary *input* dev-pins (if any)
 /// `world_pos` landed on -- the same per-bit grid `scene::pins::draw_input_dev_pin_body`

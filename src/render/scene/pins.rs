@@ -11,7 +11,7 @@ use crate::render::scene::lookup::PinStateLookup;
 use crate::render::scene::pin_hits::{point_in_dev_pin_body, point_in_pin_shape};
 use crate::render::scene::placed::PlacedSubChip;
 use crate::render::theme::{self, Rgba};
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// Draws a single subchip pin's connection shape at `pos`, coloured `colour`, scaled by
 /// `bit_count`: a plain circle for a 1-bit pin, or a "pill" (a rectangular body with a half-

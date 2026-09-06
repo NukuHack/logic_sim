@@ -13,7 +13,6 @@ pub mod render;
 pub mod save_system;
 pub mod settings;
 pub mod sim;
-pub mod structs;
 pub mod ui_menu;
 pub mod viewer;
 
@@ -32,5 +31,4 @@ pub use save_system::{
 };
 pub use settings::{AppSettings, FullScreenMode};
 pub use sim::{ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator, key_mods_bits};
-pub use structs::Vec2;
 pub use ui_menu::{MainMenu, MenuOutcome};

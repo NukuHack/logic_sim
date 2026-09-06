@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use crate::description::{ChipDescription, ChipLibrary, ChipType, Color, NameLocation, PinBitCount};
 use crate::render::layout;
 use crate::render::theme;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// Per-chip-TYPE layout (body size + pin y-offsets), the part of a
 /// `PlacedSubChip` that only depends on the referenced chip's own

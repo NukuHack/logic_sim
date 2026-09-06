@@ -10,9 +10,9 @@ use crate::render::layout::{self, snap_to_grid_centred};
 use crate::render::scene;
 use crate::render::theme;
 use crate::sim::key_mods_bits;
-use crate::structs::Vec2;
 use crate::viewer::state::ViewerState;
 use crate::{PinAddress, SubChipDescription, WireConnectionType, WireDescription};
+use glam::Vec2;
 use std::collections::HashMap;
 
 /// One component picked up for placement: which library chip to
@@ -822,8 +822,8 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 		copy.source_pin_address = PinAddress::new(*src_new, wire.source_pin_address.pin_id);
 		copy.target_pin_address = PinAddress::new(*dst_new, wire.target_pin_address.pin_id);
 		copy.points = wire.points.iter().map(|p| *p - centroid).collect();
-		copy.cached_source_point = copy.cached_source_point - centroid;
-		copy.cached_target_point = copy.cached_target_point - centroid;
+		copy.cached_source_point -= centroid;
+		copy.cached_target_point -= centroid;
 
 		if copy.connection_type != WireConnectionType::ToPins {
 			match wire_index_map.get(&(copy.connected_wire_index.max(0) as usize)) {

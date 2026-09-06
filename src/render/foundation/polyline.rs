@@ -1,7 +1,7 @@
 //! Polyline offsetting with proper miter joins: the shared maths behind
 //! stroked wire ribbons and per-bit bus strand layout.
 
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// Offsets every point of a polyline sideways by a constant perpendicular `distance`
 /// (positive = to the left of each segment's direction of travel, i.e. rotate the segment

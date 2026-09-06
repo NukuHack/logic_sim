@@ -17,6 +17,7 @@ use crate::description::{ChipDescription, PinAddress, PinDescription, SubChipDes
 use crate::render::scene;
 use crate::viewer::canvas::{self, compute_component_delete_set};
 use crate::viewer::state::ViewerState;
+use glam::Vec2;
 
 /// The editor's whole undo history for the current chip. Cleared wherever
 /// the edited root changes (a new chip means a new controller in the
@@ -64,7 +65,7 @@ struct WireListEditAction {
 }
 
 struct MoveAction {
-	entries: Vec<(i32, crate::structs::Vec2, crate::structs::Vec2)>,
+	entries: Vec<(i32, Vec2, Vec2)>,
 }
 
 /// The full wire list of the edited chip at capture time, each entry
@@ -116,7 +117,7 @@ fn record(v: &mut ViewerState, action: UndoAction) {
 
 /// Records a committed selection move: `entries` are
 /// `(id, grab-time position, dropped position)` per carried component.
-pub(crate) fn record_move(v: &mut ViewerState, entries: Vec<(i32, crate::structs::Vec2, crate::structs::Vec2)>) {
+pub(crate) fn record_move(v: &mut ViewerState, entries: Vec<(i32, Vec2, Vec2)>) {
 	if entries.is_empty() {
 		return;
 	}
@@ -607,7 +608,6 @@ mod tests {
 
 	use super::*;
 	use crate::description::{ChipType, PinBitCount};
-	use crate::structs::Vec2;
 	use crate::{ChipLibrary, PinAddress, WireDescription};
 
 	fn viewer_with_builtins() -> ViewerState {
@@ -810,8 +810,8 @@ mod edge_case_tests {
 
 	use super::*;
 	use crate::description::ChipType;
-	use crate::structs::Vec2;
 	use crate::{ChipLibrary, PinAddress, WireDescription};
+	use Vec2;
 
 	fn viewer_with_builtins() -> ViewerState {
 		let mut library = ChipLibrary::new();

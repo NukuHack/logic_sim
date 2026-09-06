@@ -2,7 +2,7 @@
 //! that the renderer needs (world <-> screen mapping) without any of the Unity input plumbing. Kept
 //! GPU-free and unit-testable; `render::gpu` consumes `Camera::view_proj_matrix` as a uniform.
 
-use crate::structs::Vec2;
+use glam::Vec2;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {

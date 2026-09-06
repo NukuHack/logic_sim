@@ -223,6 +223,7 @@ pub(crate) fn apply_context_menu_action(
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use glam::Vec2;
 
 	#[test]
 	fn context_target_parse_round_trips_every_prefix() {
@@ -268,7 +269,7 @@ mod tests {
 		pin.value_display_mode = mode;
 		chip.output_pins.push(pin);
 		library.add(chip);
-		ViewerState::new("", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
 	}
 
 	/// Right-click "Edit" on a boundary dev-pin opens the pin-edit popup
@@ -328,8 +329,7 @@ mod tests {
 		let mut selfie = crate::ChipDescription::new("SELFIE", ChipType::Custom);
 		selfie_subchip_root(&mut selfie);
 		library.add(selfie);
-		let mut v =
-			ViewerState::new("P", library, "ROOT".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.prefs.starred_list.push(crate::StarredItem::new("SELFIE", false));
 		Saver::save_chip(&paths, "P", &v.library, v.library.get("SELFIE")).expect("chip saved");
 		register_name_in_project_for_test(&mut v, &paths, "SELFIE");
@@ -367,7 +367,7 @@ mod tests {
 			name: "ROOT".into(),
 			id: 1,
 			internal_data: None,
-			position: crate::Vec2::ZERO,
+			position: Vec2::ZERO,
 			label: None,
 			pin_colour_info: vec![],
 		});

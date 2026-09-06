@@ -13,9 +13,9 @@ use crate::render::scene::{
 use crate::render::theme;
 use crate::render::ui_kit::{Button, UiCtx, UiRect, pin_geometry_to_screen, to_world};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
-use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
+use glam::Vec2;
 
 use crate::viewer::canvas::{DELETE_DRAG_ALPHA, PENDING_PLACEMENT_ALPHA, build_pending_place_scene, draw_pending_wire_preview};
 use crate::viewer::library::{is_custom_chip, is_listed_in_current_build, would_create_cycle};

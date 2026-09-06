@@ -6,7 +6,7 @@
 
 use crate::render::foundation::{SceneGeometry, TextLabel};
 use crate::render::menu_ui::UiRect;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 pub use crate::render::menu_ui::to_world;
 

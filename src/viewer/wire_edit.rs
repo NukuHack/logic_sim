@@ -7,8 +7,8 @@ use crate::description::{ChipDescription, WireConnectionType};
 use crate::render::layout;
 use crate::render::scene::placed::{PlacedSubChip, place_sub_chips};
 use crate::render::scene::wire_endpoints::{WireCtx, WirePointCache};
-use crate::structs::Vec2;
 use crate::viewer::state::{ViewerState, WireEditState};
+use glam::Vec2;
 use std::collections::HashMap;
 
 /// Screen-pixel distance for grabbing an existing bend handle or hitting a
@@ -101,7 +101,7 @@ pub(crate) fn bend_hit(v: &ViewerState, world_pos: Vec2) -> Option<usize> {
 	let mut best: Option<(f32, usize)> = None;
 	for (vi, p) in verts.iter().enumerate().skip(1).take(verts.len().saturating_sub(2)) {
 		let d = *p - world_pos;
-		let dist_sq = d.magnitude_sq();
+		let dist_sq = d.length_squared();
 		if dist_sq <= tol_sq && best.is_none_or(|(b, _)| dist_sq < b) {
 			best = Some((dist_sq, vi));
 		}
@@ -127,7 +127,7 @@ pub(crate) fn insert_point_at_click(v: &mut ViewerState, world_pos: Vec2) -> Opt
 	for seg in 0..verts.len().saturating_sub(1) {
 		let (a, b) = (verts[seg], verts[seg + 1]);
 		let point = crate::render::scene::wire_endpoints::closest_point_on_segment(world_pos, a, b);
-		let dist_sq = (point - world_pos).magnitude_sq();
+		let dist_sq = (point - world_pos).length_squared();
 		if dist_sq < best.0 {
 			best = (dist_sq, seg, point);
 		}

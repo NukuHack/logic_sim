@@ -6,8 +6,8 @@
 
 use crate::render::camera::Camera;
 use crate::render::foundation::{SceneGeometry, SceneVertex, TextLabel};
-use crate::structs::Vec2;
 use bytemuck::{Pod, Zeroable};
+use glam::Vec2;
 use glyphon::{
 	Attrs, Buffer as TextBuffer, Cache as TextCache, Color as GlyphColour, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
 	TextAtlas, TextBounds, TextRenderer, Viewport as TextViewport,

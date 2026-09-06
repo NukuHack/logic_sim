@@ -7,8 +7,8 @@
 use crate::render::foundation::TextLabel;
 use crate::render::theme;
 use crate::render::ui_kit::{self, Frame, UiCtx};
-use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, MenuScreen, PopupKind};
+use glam::Vec2;
 
 pub use crate::render::ui_kit::{UiRect, to_world};
 

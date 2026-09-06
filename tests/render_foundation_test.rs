@@ -3,7 +3,7 @@
 //! transforms, the colour palette, chip/pin layout math, and the CPU-side
 //! GPU-vertex conversion -- everything reachable without a GPU device.
 
-use logic_sim::Vec2;
+use glam::Vec2;
 use logic_sim::description::{Color, PinBitCount};
 use logic_sim::pin_state::LogicState;
 use logic_sim::render::camera::Camera;

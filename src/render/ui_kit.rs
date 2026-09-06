@@ -7,7 +7,7 @@
 use crate::render::camera::Camera;
 use crate::render::foundation::{SceneGeometry, TextLabel};
 use crate::render::theme;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 pub const FONT_SIZE: f32 = 18.0;
 

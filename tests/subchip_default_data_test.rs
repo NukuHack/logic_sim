@@ -11,9 +11,10 @@
 //! defends `Rom256x16`/`Pulse` the same way it already did `DisplayRgb`/`DisplayDot`/`DevRam8Bit`:
 //! always building a correctly-sized `internal_state` regardless of what (if anything) was saved.
 
+use glam::Vec2;
 use logic_sim::{
-	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, Vec2,
-	WireDescription, pin_state::PinState,
+	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, WireDescription,
+	pin_state::PinState,
 };
 
 const SUBCHIP_ID: i32 = 1;

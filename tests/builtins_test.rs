@@ -1,3 +1,4 @@
+use glam::Vec2;
 use logic_sim::{ExternalInput, PinAddress, Simulator, load_chip_library_from_dir, pin_state::PinState, register_all_builtins};
 use std::path::Path;
 
@@ -100,7 +101,7 @@ fn loaded_or_chip_simulates_correctly() {
 fn non_display_builtins_keep_default_zero_size() {
 	let chips = logic_sim::create_all_builtins();
 	let nand = chips.iter().find(|c| c.name == "NAND").unwrap();
-	assert_eq!(nand.size, logic_sim::Vec2::default());
+	assert_eq!(nand.size, Vec2::default());
 }
 
 /// The 3-state buffer passes its input through while enabled, and its
@@ -124,7 +125,7 @@ fn tri_state_buffer_output_floats_when_disabled() {
 		name: "3-STATE BUFFER".to_string(),
 		id: 1,
 		internal_data: None,
-		position: logic_sim::Vec2::ZERO,
+		position: Vec2::ZERO,
 		label: None,
 		pin_colour_info: Vec::new(),
 	}];

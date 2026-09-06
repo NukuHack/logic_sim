@@ -6,12 +6,12 @@
 
 use crate::render::gpu::Renderer;
 use crate::render::ui_stack::UiStack;
-use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, MenuOutcome, PopupKind};
 use crate::viewer::input::encode_modifiers;
 use crate::viewer::save_flow::unique_new_chip_name;
 use crate::viewer::state::ViewerState;
 use crate::{ChipDescription, ChipType, SavePaths, default_chip_collections, default_starred_list};
+use glam::Vec2;
 
 /// How long the transient status/error toast stays on screen before
 /// dismissing itself -- no interaction required.

@@ -6,7 +6,7 @@
 use crate::description::{ChipDescription, Color, PinBitCount};
 use crate::render::layout;
 use crate::render::scene::placed::PlacedSubChip;
-use crate::structs::Vec2;
+use glam::Vec2;
 use std::collections::HashMap;
 
 /// Resolves a wire's colour palette index from its source pin, mirroring

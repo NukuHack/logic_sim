@@ -13,7 +13,7 @@ use crate::render::scene::displays;
 use crate::render::scene::lookup::PinStateLookup;
 use crate::render::theme::{self, Rgba};
 use crate::render::ui_kit::{self, UiCtx, UiRect};
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// What the player is currently grabbing in the customize preview.
 /// Payloads carry whatever the interaction needs to apply/cancel itself
@@ -884,7 +884,7 @@ mod tests {
 			let expected_move_centre = map(*world_centre);
 			let move_btn = out.frame.buttons.iter().find(|b| b.action == EditorAction::CustomizeGrabDisplayMove(i)).expect("move hotspot");
 			assert!(
-				(move_btn.rect.centre() - expected_move_centre).magnitude() < 1e-3,
+				move_btn.rect.centre().distance(expected_move_centre) < 1e-3,
 				"display {i} move hotspot at {:?}, expected {:?}",
 				move_btn.rect.centre(),
 				expected_move_centre

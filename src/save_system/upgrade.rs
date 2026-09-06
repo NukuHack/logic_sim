@@ -63,7 +63,7 @@ mod tests {
 
 	use super::*;
 	use crate::description::{ChipType, PinBitCount, PinDescription, SubChipDescription};
-	use crate::structs::Vec2;
+	use glam::Vec2;
 
 	fn chip_with_input_colour(index: i32) -> ChipDescription {
 		let mut chip = ChipDescription::new("OLD", ChipType::Custom);

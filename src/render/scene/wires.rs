@@ -11,7 +11,7 @@ use crate::render::scene::placed::PlacedSubChip;
 use crate::render::scene::wire_endpoints::{WireCtx, WirePointCache};
 use crate::render::theme;
 use crate::render::{layout, place_sub_chips};
-use crate::structs::Vec2;
+use glam::Vec2;
 use std::collections::HashMap;
 
 /// Draws one wire's full `bit_count` as that many individually-coloured, 1-bit-wide parallel

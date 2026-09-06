@@ -8,7 +8,7 @@
 
 use crate::render::foundation::SceneGeometry;
 use crate::render::ui_kit::{Button, Frame, UiRect};
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// What happened when an input event was offered to the stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

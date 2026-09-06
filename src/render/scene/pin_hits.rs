@@ -7,7 +7,7 @@ use crate::description::{ChipDescription, PinBitCount};
 use crate::render::foundation::{point_in_circle, point_in_rect, point_in_rounded_rect};
 use crate::render::layout;
 use crate::render::scene::placed::PlacedSubChip;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// One real pin (never a wire tap -- see `WireTapHit` for that) hit by
 /// `hit_test_sub_chip_pin`/`hit_test_any_pin`: either a placed subchip's own pin or one of

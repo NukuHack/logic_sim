@@ -5,7 +5,7 @@
 
 use crate::ChipDescription;
 use crate::description::{ChipType, NameLocation, PinBitCount};
-use crate::structs::Vec2;
+use glam::Vec2;
 
 // ---- World draw settings (DrawSettings.cs) ----------------------------------
 

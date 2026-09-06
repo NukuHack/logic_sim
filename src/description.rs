@@ -1,10 +1,8 @@
 //! Static description of a chip (as loaded from a saved project), used to
 //! build the runtime simulation graph. Mirrors DLS.Description in the
 //! original C# codebase.
-use crate::{
-	render::theme::{COLORS, Rgba},
-	structs::Vec2,
-};
+use crate::render::theme::{COLORS, Rgba};
+use glam::Vec2;
 use num_enum::{IntoPrimitive, TryFromPrimitive};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]

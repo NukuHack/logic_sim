@@ -3,7 +3,7 @@
 //! hit-testing lines up with what's actually on screen instead of
 //! assuming a simpler shape than the one that was drawn.
 
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// A point-in-shape test matching `SceneGeometry::add_rounded_rect`'s actual drawn geometry
 /// exactly (same corner-rounding rules), so hover hit-testing lines up with what's on screen

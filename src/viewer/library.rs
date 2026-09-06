@@ -287,8 +287,8 @@ mod tests {
 	use super::*;
 	use crate::description::SubChipDescription;
 	use crate::json::StarredItem;
-	use crate::structs::Vec2;
 	use crate::{ChipDescription, ProjectDescription};
+	use glam::Vec2;
 
 	fn lib_with_chips(names: &[&str]) -> ChipLibrary {
 		let mut lib = ChipLibrary::new();
@@ -518,8 +518,7 @@ mod tests {
 	#[test]
 	fn delete_chip_from_library_preserves_sibling_collection_placement() {
 		let library = lib_with_chips(&["Keep A", "Keep B", "Doomed"]);
-		let mut v =
-			ViewerState::new("P", library, "Keep A".to_string(), crate::structs::Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "Keep A".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
 		v.prefs.chip_collections = vec![
 			ChipCollection::new("Custom Folder", vec!["Keep B".to_string(), "Doomed".to_string(), "Keep A".to_string()]),
 			ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()),

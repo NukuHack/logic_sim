@@ -14,8 +14,7 @@ use crate::viewer::customize::CustomizeState;
 use crate::viewer::sim_thread::SimHandle;
 use crate::viewer::wire_draft::PendingWire;
 use crate::{ChipLibrary, ProjectDescription};
-
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// Which inline sub-popup the library overlay's collection/chip-delete UI is showing, if any --
 /// replaces four bools (`creating_collection`/`renaming_collection`/`confirming_chip_delete`/

@@ -3,8 +3,8 @@
 //! (`CanCompleteWireConnection`'s restrictions), exercised through the
 //! public `viewer::bus_wiring` API.
 
+use glam::Vec2;
 use logic_sim::ChipLibrary;
-use logic_sim::Vec2;
 use logic_sim::description::{ChipDescription, ChipType, PinAddress, SubChipDescription, WireConnectionType, WireDescription};
 use logic_sim::register_all_builtins;
 use logic_sim::viewer::bus_wiring;

@@ -9,9 +9,9 @@ use crate::render::customize_ui::CustomizeInteraction;
 use crate::render::editor_ui::EditorAction;
 use crate::render::scene::{hit_test_dev_pin, hit_test_sub_chip, hit_test_wire, place_sub_chips};
 use crate::render::ui_stack::{InputResult, LayerId};
-use crate::structs::Vec2;
 use crate::viewer::app::{App, Screen};
 use crate::viewer::state::{DeleteDragSweep, ViewerAction, ViewerState, sync_stack_with_state};
+use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -615,7 +615,7 @@ impl App {
 		// code path that mutates `root_chip_name`.
 		self.set_window_title();
 
-		let (vw, vh) = self.viewport.to_tuple();
+		let (vw, vh) = self.viewport.into();
 
 		// Rebuild this screen's whole UI stack from live state -- layers bottom-to-top, each drawn
 		// back-to-front as its own fully-submitted pass, so a later layer's triangles paint over an

@@ -4,7 +4,7 @@
 
 use crate::render::foundation::polyline::offset_polyline;
 use crate::render::theme::Rgba;
-use crate::structs::Vec2;
+use glam::Vec2;
 
 /// A single coloured vertex, position in world space. Kept separate from
 /// any wgpu `Vertex` type so this module has zero GPU dependencies; the

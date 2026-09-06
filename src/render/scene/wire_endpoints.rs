@@ -5,7 +5,7 @@
 //! actually drawn" search and wire deletion.
 
 use crate::description::{ChipDescription, ChipLibrary, PinBitCount, WireConnectionType, WireDescription};
-use crate::structs::Vec2;
+use glam::Vec2;
 use std::collections::HashMap;
 
 use crate::render::scene::pin_resolve::{resolve_pin_bit_count, resolve_pin_position};

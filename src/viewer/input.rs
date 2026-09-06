@@ -416,8 +416,8 @@ fn prefs_field_accepts(v: &ViewerState, s: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::structs::Vec2;
 	use crate::viewer::chip_interaction::{self, CanvasInteraction};
+	use glam::Vec2;
 
 	#[test]
 	fn only_escape_and_modifiers_are_aimed_at_the_context_menu() {

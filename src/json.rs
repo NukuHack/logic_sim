@@ -8,7 +8,7 @@ use crate::description::{
 	CacheKind, ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, NameLocation, PinAddress, PinBitCount, PinDescription,
 	SubChipDescription, ValueDisplayMode, WireConnectionType, WireDescription,
 };
-use crate::structs::Vec2;
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -36,6 +36,7 @@ struct JsonPinDescription {
 	#[serde(rename = "ID")]
 	id: i32,
 	#[serde(rename = "Position", default)]
+	#[serde(with = "vec2_serde")]
 	position: Vec2,
 	#[serde(rename = "BitCount")]
 	bit_count: PinBitCount,
@@ -62,6 +63,7 @@ struct JsonSubChipDescription {
 	#[serde(rename = "Label", default)]
 	label: Option<String>,
 	#[serde(rename = "Position", default)]
+	#[serde(with = "vec2_serde")]
 	position: Vec2,
 	#[serde(rename = "OutputPinColourInfo", default)]
 	pin_colour_info: Option<Vec<JsonPinColourInfo>>,
@@ -82,6 +84,7 @@ struct JsonWireDescription {
 	#[serde(rename = "ConnectedWireSegmentIndex", default)]
 	connected_wire_segment_index: i32,
 	#[serde(rename = "Points", default)]
+	#[serde(with = "vec2_serde::vec")]
 	points: Vec<Vec2>,
 }
 
@@ -122,6 +125,7 @@ struct JsonDisplayDescription {
 	#[serde(rename = "SubChipID")]
 	id: i32,
 	#[serde(rename = "Position", default)]
+	#[serde(with = "vec2_serde")]
 	position: Vec2,
 	#[serde(rename = "Scale", default)]
 	scale: f32,
@@ -138,6 +142,7 @@ struct JsonChipDescription {
 	#[serde(rename = "ChipType")]
 	chip_type: ChipType,
 	#[serde(rename = "Size", default)]
+	#[serde(with = "vec2_serde")]
 	size: Vec2,
 	#[serde(rename = "Colour", default)]
 	colour: JsonColour,
@@ -559,4 +564,80 @@ pub fn load_project(project_dir: &Path) -> std::io::Result<(ProjectDescription, 
 
 	let (library, errors) = load_chip_library_from_dir(&project_dir.join("Chips"))?;
 	Ok((project, library, errors))
+}
+
+mod vec2_serde {
+	use glam::Vec2;
+	use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+	// Serialize a single Vec2 as {"x": 0.0, "y": 0.0}
+	pub fn serialize<S>(vec: &Vec2, serializer: S) -> Result<S::Ok, S::Error>
+	where
+		S: Serializer,
+	{
+		use serde::ser::SerializeStruct;
+		let mut state = serializer.serialize_struct("Vec2", 2)?;
+		state.serialize_field("x", &vec.x)?;
+		state.serialize_field("y", &vec.y)?;
+		state.end()
+	}
+
+	// Deserialize a single Vec2 from {"x": 0.0, "y": 0.0}
+	pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec2, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		#[derive(Deserialize)]
+		struct Vec2Helper {
+			x: f32, // Changed from f64 to f32 to match Vec2
+			y: f32, // Changed from f64 to f32
+		}
+		let helper = Vec2Helper::deserialize(deserializer)?;
+		Ok(Vec2::new(helper.x, helper.y))
+	}
+
+	// Module for handling Vec<Vec2>
+	pub mod vec {
+		use super::*;
+
+		pub fn serialize<S>(vec: &[Vec2], serializer: S) -> Result<S::Ok, S::Error>
+		where
+			S: Serializer,
+		{
+			use serde::ser::SerializeSeq;
+			let mut seq = serializer.serialize_seq(Some(vec.len()))?;
+			for item in vec {
+				// Serialize each item as an object
+				seq.serialize_element(&Vec2RefWrapper(item))?;
+			}
+			seq.end()
+		}
+
+		// Helper struct to serialize a reference to Vec2
+		struct Vec2RefWrapper<'a>(&'a Vec2);
+
+		impl<'a> Serialize for Vec2RefWrapper<'a> {
+			fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+			where
+				S: Serializer,
+			{
+				super::serialize(self.0, serializer)
+			}
+		}
+
+		pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<Vec2>, D::Error>
+		where
+			D: Deserializer<'de>,
+		{
+			#[derive(Deserialize)]
+			struct Vec2Helper {
+				x: f32, // Changed from f64 to f32
+				y: f32, // Changed from f64 to f32
+			}
+
+			// Deserialize as a sequence of Vec2Helper, then convert
+			let helpers = Vec::<Vec2Helper>::deserialize(deserializer)?;
+			Ok(helpers.into_iter().map(|h| Vec2::new(h.x, h.y)).collect())
+		}
+	}
 }

@@ -8,9 +8,10 @@
 //! individual address bits aren't swapped or dropped, and that the two-phase write/refresh
 //! sequencing behaves as the source implies.
 
+use glam::Vec2;
 use logic_sim::{
-	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, Vec2,
-	WireDescription, pin_state::PinState,
+	ChipDescription, ChipLibrary, ChipType, ExternalInput, PinAddress, PinBitCount, PinDescription, Simulator, SubChipDescription, WireDescription,
+	pin_state::PinState,
 };
 
 const SUBCHIP_ID: i32 = 1;
