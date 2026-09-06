@@ -161,9 +161,9 @@ fn random_initial_chip_colour() -> [f32; 4] {
 		};
 		[r, g, b, 1.0]
 	}
-	let mut rng = rand::thread_rng();
-	use rand::Rng;
-	hsv_to_rgb(rng.r#gen::<f32>(), rng.gen_range(0.2..=1.0), rng.gen_range(0.2..=1.0))
+	// fastrand::f32() is 0..1; lerp it into 0.2..=1.0 for saturation/value by hand
+	let lerp_0_2_to_1 = |t: f32| 0.2 + t * 0.8;
+	hsv_to_rgb(fastrand::f32(), lerp_0_2_to_1(fastrand::f32()), lerp_0_2_to_1(fastrand::f32()))
 }
 
 /// The save-time parent cascade (`Project.UpdateAndSaveAffectedChips`): every chip whose

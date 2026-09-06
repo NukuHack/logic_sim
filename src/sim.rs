@@ -7,8 +7,6 @@
 use crate::description::{CacheKind, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount};
 use crate::gate_op::CachingState;
 use crate::pin_state::PinState;
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
@@ -115,10 +113,10 @@ pub struct Simulator {
 	can_dynamic_reorder_this_frame: bool,
 
 	pcg_rng_state: u32,
-	/// `StdRng` rather than `ThreadRng` so a whole built `Simulator` is `Send`
-	/// and can be stepped on the background sim thread, nothing about the
+	/// A standalone `fastrand::Rng` rather than the thread-local generator so a whole built
+	/// `Simulator` is `Send` and can be stepped on the background sim thread, nothing about the
 	/// simulation depends on which thread's entropy pool seeded it.
-	rng: StdRng,
+	rng: fastrand::Rng,
 
 	start_time: Instant,
 	elapsed_seconds_old: f64,
@@ -155,7 +153,7 @@ impl Default for Simulator {
 			can_dynamic_reorder_this_frame: false,
 
 			pcg_rng_state: 0,
-			rng: StdRng::from_entropy(), // or StdRng::seed_from_u64(0) for deterministic
+			rng: fastrand::Rng::new(), // or fastrand::Rng::with_seed(0) for deterministic
 
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
@@ -195,7 +193,7 @@ impl Simulator {
 			needs_order_pass: true,
 			can_dynamic_reorder_this_frame: false,
 			pcg_rng_state: 0,
-			rng: StdRng::from_entropy(),
+			rng: fastrand::Rng::new(),
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
 			held_keys: HashSet::new(),
@@ -292,7 +290,7 @@ impl Simulator {
 	pub fn run_simulation_step(&mut self, external_inputs: &[ExternalInput], audio: &mut crate::audio::SimAudio) {
 		audio.init_frame();
 
-		self.pcg_rng_state = self.rng.r#gen::<u32>();
+		self.pcg_rng_state = self.rng.u32(..);
 		self.can_dynamic_reorder_this_frame = self.simulation_frame.is_multiple_of(100);
 		self.simulation_frame += 1;
 
@@ -494,7 +492,7 @@ impl Simulator {
 		}
 
 		if no_sub_chips_ready {
-			next_index = (self.rng.r#gen::<u32>() as usize) % num;
+			next_index = (self.rng.u32(..) as usize) % num;
 
 			if is_non_bus_chip_remaining {
 				for _ in 0..num {
@@ -1155,10 +1153,8 @@ fn build_internal_state(chip_type: ChipType, override_state: Option<&[u32]>) -> 
 		ChipType::DisplayRgb | ChipType::DisplayDot => vec![0u32; ADDRESS_SIZE_8BIT * 2 + 1],
 		ChipType::DevRam8Bit => {
 			let mut state = vec![0u32; ADDRESS_SIZE_8BIT + 1]; // +1 for clock edge state
-			let mut rng = rand::thread_rng();
-			use rand::RngCore;
 			for slot in state.iter_mut().take(ADDRESS_SIZE_8BIT) {
-				*slot = rng.next_u32();
+				*slot = fastrand::u32(..);
 			}
 			state
 		}
