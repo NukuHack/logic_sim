@@ -8,11 +8,12 @@ use crate::render::editor_ui::{self, LibrarySelection, PrefsPanelState};
 use crate::render::layout::{self, force_straight_line, snap_to_grid_centred};
 use crate::render::menu_ui::{self};
 use crate::render::scene::{
-	bounding_box, build_grid, build_scene, build_scene_with_spans_into, fade_component, fade_wire, AllLow, SceneGeometry, SimulatorPinState,
+	bounding_box, build_grid, build_scene, build_scene_with_spans_into, fade_component, fade_wire, AllLow, SceneGeometry, SnapshotPinState,
 };
 use crate::render::theme;
 use crate::render::ui_kit::{pin_geometry_to_screen, to_world, Button, UiCtx, UiRect};
 use crate::render::ui_stack::{Capture, LayerId, StackLayer, UiStack};
+use crate::sim::SimArena;
 use crate::structs::Vec2;
 use crate::ui_menu::{MainMenu, PopupKind};
 use crate::viewer::chip_interaction::{self, CanvasInteraction};
@@ -198,26 +199,27 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 	// being watched in view-only mode), else the edited root -- with pin
 	// states resolved against that chip's own live sim scope, which is
 	// exactly how a viewed subchip's subtree stays "live". Resolved once
-	// here: every call takes the shared arena's lock and walks the view
-	// path, so the name and the scope mustn't each resolve their own.
+	// here: every call reads the latest published snapshot and walks the
+	// view path, so the name and the scope mustn't each resolve their own.
 	let scene_target = v.resolve_scene_target();
 	let scene_chip_name = match &scene_target {
 		SceneTarget::EditRoot => v.root_chip_name.clone(),
 		SceneTarget::Viewed { name, .. } => name.clone(),
 	};
-	// The scene reads pin states straight out of the shared arena under a
-	// short-lived lock -- the read half of the original's per-frame
-	// `ViewedChip.UpdateStateFromSim` sync.
 	// Builds into `v.chip_scene_buf` (cleared, not reallocated) rather than
 	// a fresh `SceneGeometry` -- see that field's docs.
 	let (component_spans, wire_spans) = {
-		let sim_guard = v.sim.lock();
+		// A snapshot, not `v.sim.lock()`: this used to take the same mutex the simulation
+		// worker holds for the length of every tick, so a slow sweep could stall the frame right
+		// here. Reading the latest published `SimSnapshot` instead never contends with the
+		// worker at all -- see `viewer::sim_thread::SimHandle::snapshot`.
+		let snapshot = v.sim.snapshot();
 		let scope = match scene_target {
-			SceneTarget::EditRoot => sim_guard.root(),
+			SceneTarget::EditRoot => snapshot.root(),
 			SceneTarget::Viewed { scope, .. } => scope,
 		};
 		let root_ref = v.library.get(&scene_chip_name);
-		let lookup = SimulatorPinState { sim: &sim_guard, scope };
+		let lookup = SnapshotPinState { sim: &snapshot, scope };
 		build_scene_with_spans_into(&mut v.chip_scene_buf, &mut v.placed_buf, root_ref, &v.library, &lookup, Some(hover_world_pos), v.labels_visible)
 	};
 

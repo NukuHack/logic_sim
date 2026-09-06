@@ -8,8 +8,9 @@
 use crate::description::{ChipDescription, DisplayDescription, NameLocation};
 use crate::render::customize_ui::{default_display_scale, display_entries, CustomizeCtx, CustomizeFrameOut, CustomizeInteraction};
 use crate::render::layout::{self, GRID_SIZE};
-use crate::render::scene::lookup::SimulatorPinState;
+use crate::render::scene::lookup::SnapshotPinState;
 use crate::render::theme;
+use crate::sim::SimArena;
 use crate::structs::Vec2;
 use crate::viewer::state::{Overlay, ViewerState};
 
@@ -303,8 +304,10 @@ pub(crate) fn build_layer(v: &ViewerState, vw: f32, vh: f32, mouse: Vec2) -> Cus
 		return CustomizeFrameOut { frame: Default::default(), layout: Default::default(), list_scroll_max: 0.0 };
 	};
 	let entries = display_entries(&customize.draft, &v.library);
-	let sim_guard = v.sim.lock();
-	let pin_state = SimulatorPinState { sim: &sim_guard, scope: sim_guard.root() };
+	// A snapshot rather than `v.sim.lock()`: this overlay rebuilds every frame it's open, so it
+	// must never contend with the simulation worker's own lock -- see `SimHandle::snapshot`.
+	let snapshot = v.sim.snapshot();
+	let pin_state = SnapshotPinState { sim: &snapshot, scope: snapshot.root() };
 	let ctx = CustomizeCtx {
 		draft: &customize.draft,
 		library: &v.library,

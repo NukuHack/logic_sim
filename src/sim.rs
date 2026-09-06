@@ -23,7 +23,7 @@ pub struct PinIdx(pub usize);
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChipIdx(pub usize);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimPin {
 	pub id: i32,
 	pub parent_chip: ChipIdx,
@@ -60,7 +60,7 @@ impl SimPin {
 	}
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimChip {
 	pub chip_type: ChipType,
 	pub id: i32,
@@ -90,6 +90,83 @@ pub struct SimChip {
 impl SimChip {
 	pub fn is_ready(&self) -> bool {
 		self.num_inputs_ready == self.num_connected_inputs
+	}
+}
+
+/// Read-only view over a pin/chip arena, implemented by both the live [`Simulator`] and a
+/// [`SimSnapshot`] taken off it. Scene rendering (see `render::scene::lookup::ArenaPinState`)
+/// is written against this trait instead of `Simulator` directly, so it can run against whichever
+/// one the caller has to hand without caring which -- in particular, against a snapshot that
+/// isn't behind any lock at all.
+pub trait SimArena {
+	fn root(&self) -> ChipIdx;
+	fn pin(&self, idx: PinIdx) -> &SimPin;
+	fn chip(&self, idx: ChipIdx) -> &SimChip;
+
+	/// Mirrors [`Simulator::find_sub_chip`].
+	fn find_sub_chip(&self, chip: ChipIdx, id: i32) -> Option<ChipIdx> {
+		let c = self.chip(chip);
+		c.sub_chips.iter().copied().find(|&sub| self.chip(sub).id == id)
+	}
+
+	/// Mirrors [`Simulator::find_pin`].
+	fn find_pin(&self, chip: ChipIdx, address: PinAddress) -> Option<PinIdx> {
+		let c = self.chip(chip);
+
+		for &sub in &c.sub_chips {
+			let s = self.chip(sub);
+			if s.id == address.pin_owner_id {
+				for &p in s.input_pins.iter().chain(s.output_pins.iter()) {
+					if self.pin(p).id == address.pin_id {
+						return Some(p);
+					}
+				}
+			}
+		}
+
+		c.input_pins.iter().chain(c.output_pins.iter()).find(|&&p| self.pin(p).id == address.pin_owner_id).copied()
+	}
+}
+
+impl SimArena for Simulator {
+	fn root(&self) -> ChipIdx {
+		self.root
+	}
+	fn pin(&self, idx: PinIdx) -> &SimPin {
+		&self.pins[idx.0]
+	}
+	fn chip(&self, idx: ChipIdx) -> &SimChip {
+		&self.chips[idx.0]
+	}
+}
+
+/// An owned, point-in-time copy of everything a scene render reads off a [`Simulator`]: the pin
+/// and chip arenas plus the root index. Unlike the live `Simulator`, it sits behind no lock and
+/// is never mutated once captured -- the render thread can hold one for as long as it wants
+/// (across the whole frame build) without ever blocking the simulation worker, and the worker
+/// never blocks on the renderer either, since publishing a new snapshot is just handing over a
+/// freshly-built value (see `viewer::sim_thread::SimHandle::snapshot`).
+///
+/// Deliberately narrower than `Simulator`: it drops `held_keys`/`driven_inputs`/`caching`/`rng`/
+/// timing, none of which a scene render looks at, so a capture costs exactly two `Vec` clones
+/// rather than a clone of the whole simulator (LUT cache included).
+#[derive(Default)]
+pub struct SimSnapshot {
+	pins: Vec<SimPin>,
+	chips: Vec<SimChip>,
+	root: ChipIdx,
+	pub simulation_frame: u64,
+}
+
+impl SimArena for SimSnapshot {
+	fn root(&self) -> ChipIdx {
+		self.root
+	}
+	fn pin(&self, idx: PinIdx) -> &SimPin {
+		&self.pins[idx.0]
+	}
+	fn chip(&self, idx: ChipIdx) -> &SimChip {
+		&self.chips[idx.0]
 	}
 }
 
@@ -263,6 +340,14 @@ impl Simulator {
 		}
 
 		c.input_pins.iter().chain(c.output_pins.iter()).find(|&&p| self.pins[p.0].id == address.pin_owner_id).copied()
+	}
+
+	/// Cheap, read-only capture of everything a scene render needs (pin states, chip internal
+	/// states, arena topology) at this instant -- see [`SimSnapshot`]. Cloning the two arenas is
+	/// the whole cost; nothing here borrows from `self`, so the result outlives this call and can
+	/// be handed to another thread with no lock held for the rest of its life.
+	pub fn snapshot(&self) -> SimSnapshot {
+		SimSnapshot { pins: self.pins.clone(), chips: self.chips.clone(), root: self.root, simulation_frame: self.simulation_frame }
 	}
 
 	// ---- Player-driven input dev-pins (see `Self::driven_inputs`) ----

@@ -8,7 +8,7 @@ use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
 use crate::render::scene::{PlacedBuf, SceneGeometry};
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::key_mods_bits;
-use crate::sim::{ChipIdx, Simulator};
+use crate::sim::{ChipIdx, SimArena, Simulator};
 use crate::viewer::chip_interaction;
 use crate::viewer::customize::CustomizeState;
 use crate::viewer::sim_thread::SimHandle;
@@ -713,7 +713,9 @@ impl ViewerState {
 	/// falls back to the root rather than drawing something stale.
 	pub(crate) fn resolve_scene_target(&self) -> SceneTarget {
 		let Some(top) = self.view_stack.last() else { return SceneTarget::EditRoot };
-		let sim = self.sim.lock();
+		// A snapshot rather than `self.sim.lock()`: called every frame, so it must never
+		// contend with the simulation worker's own lock -- see `SimHandle::snapshot`.
+		let sim = self.sim.snapshot();
 		let mut scope = sim.root();
 		for id in &top.path {
 			let Some(next) = sim.find_sub_chip(scope, *id) else { return SceneTarget::EditRoot };

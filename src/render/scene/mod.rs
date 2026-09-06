@@ -23,7 +23,7 @@ pub use crate::render::foundation::{
 };
 pub use displays::{display_base_size, is_display_type};
 pub use grid::build_grid;
-pub use lookup::{AllLow, PinStateLookup, SimulatorPinState};
+pub use lookup::{AllLow, ArenaPinState, PinStateLookup, SimulatorPinState, SnapshotPinState};
 pub use pin_hits::{hit_test_any_pin, hit_test_dev_pin, hit_test_input_dev_pin_bit, hit_test_sub_chip_pin, PinHit};
 pub use placed::{clear_type_layout_cache, place_sub_chips, place_sub_chips_into, PlacedBuf, PlacedSubChip};
 pub use wire_endpoints::{closest_wire_hit, hit_test_wire, WireTapHit};

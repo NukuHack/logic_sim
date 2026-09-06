@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::pin_state::PinState;
-use crate::sim::Simulator;
+use crate::sim::{SimSnapshot, Simulator};
 use crate::viewer::sim_timing::{accumulate_tick_debt, restore_unfinished_ticks, take_due_ticks, PerfWindow};
 
 /// How long the worker idles between passes while paused -- the
@@ -88,30 +88,58 @@ fn lock_audio(audio: &crate::audio::SharedAudioState) -> std::sync::MutexGuard<'
 	audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// A [`SimSnapshot`] behind nothing but a pointer swap: publishing a new one is
+/// `*guard = Arc::new(new)`, and reading it is `guard.clone()` -- both O(1) and held for a
+/// handful of instructions, never for the length of a sim step. This is what actually
+/// decouples rendering from the simulation: the render thread never touches `SimHandle::sim`'s
+/// mutex at all, so a slow or bursty sweep on the worker can never make a frame wait.
+type SharedSnapshot = Arc<Mutex<Arc<SimSnapshot>>>;
+
+fn publish(shared: &SharedSnapshot, sim: &Simulator) {
+	let new = Arc::new(sim.snapshot());
+	*shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = new;
+}
+
 /// Main-thread handle over the simulated world: owns the shared
 /// `Simulator`, the worker thread, and the control plane. Dropping it
 /// stops the worker and joins it.
+///
+/// Rendering should almost never call [`Self::lock`] -- that's the same mutex the worker holds
+/// for the length of every sim step, so a frame built from it can stall behind a slow sweep. Call
+/// [`Self::snapshot`] instead: it reads the latest published [`SimSnapshot`] through a second,
+/// separate lock that's only ever held long enough to bump a refcount.
 #[derive(Default)]
 pub(crate) struct SimHandle {
 	sim: Arc<Mutex<Simulator>>,
 	controls: Arc<SimControls>,
+	snapshot: SharedSnapshot,
 	worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SimHandle {
 	/// Wraps `sim` and starts its background stepping thread.
 	pub(crate) fn new(sim: Simulator, audio: crate::audio::SharedAudioState) -> Self {
+		let snapshot = Arc::new(Mutex::new(Arc::new(sim.snapshot())));
 		let sim = Arc::new(Mutex::new(sim));
 		let controls = Arc::new(SimControls::new());
-		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), audio);
-		Self { sim, controls, worker: Some(worker) }
+		let worker = spawn_worker(Arc::clone(&sim), Arc::clone(&controls), Arc::clone(&snapshot), audio);
+		Self { sim, controls, snapshot, worker: Some(worker) }
 	}
 
 	/// Locks the shared simulator for reading/rendering or wholesale
 	/// mutation. Recovers from poisoning like every other lock here: an
 	/// audio panic must not take the editor down with it.
+	///
+	/// Prefer [`Self::snapshot`] for anything that runs every frame -- see the type's docs.
 	pub(crate) fn lock(&self) -> MutexGuard<'_, Simulator> {
 		lock_sim(&self.sim)
+	}
+
+	/// The latest [`SimSnapshot`] the worker (or a direct mutation below) has published: a
+	/// lock-free, point-in-time copy of the pin/chip arena, safe to hold for as long as a frame
+	/// build takes without ever blocking -- or being blocked by -- the simulation worker.
+	pub(crate) fn snapshot(&self) -> Arc<SimSnapshot> {
+		Arc::clone(&self.snapshot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
 	}
 
 	// ---- Keyboard state feeding (the old direct field writes) ----
@@ -119,6 +147,11 @@ impl SimHandle {
 	/// Flips one bit of an input dev-pin's player-driven state -- what
 	/// clicking that pin's per-bit grid does (see
 	/// `Simulator::toggle_driven_input_bit`).
+	/// Only touches `driven_inputs`, which the render snapshot doesn't copy (see
+	/// [`SimSnapshot`]'s docs) -- the pin itself only updates once the worker applies it during
+	/// its next step or paused-state pass, and that's exactly where the next snapshot publish
+	/// happens too. Nothing to publish from here: no extra snapshot clone on the every-click
+	/// path, and no change in when the flip becomes visible versus before this rework.
 	pub(crate) fn toggle_driven_input_bit(&self, pin_id: i32, bit_index: u32) {
 		self.lock().toggle_driven_input_bit(pin_id, bit_index);
 	}
@@ -217,6 +250,11 @@ impl SimHandle {
 		let mut guard = self.lock();
 		sim.caching = std::mem::take(&mut guard.caching);
 		*guard = sim;
+		// A wholesale swap like this changes the arena's whole topology (new chip loaded, or a
+		// rebuild after an edit) -- worth publishing immediately rather than waiting for the
+		// worker's own next pass, since the old snapshot doesn't just have stale pin states, it
+		// can have indices that no longer resolve to the same components at all.
+		publish(&self.snapshot, &guard);
 	}
 
 	/// Drops one cached LUT
@@ -236,17 +274,30 @@ impl Drop for SimHandle {
 	}
 }
 
-fn spawn_worker(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) -> std::thread::JoinHandle<()> {
+fn spawn_worker(
+	sim: Arc<Mutex<Simulator>>,
+	controls: Arc<SimControls>,
+	snapshot: SharedSnapshot,
+	audio: crate::audio::SharedAudioState,
+) -> std::thread::JoinHandle<()> {
 	std::thread::Builder::new()
 		.name("DLS_SimThread".to_string())
-		.spawn(move || worker_loop(sim, controls, audio))
+		.spawn(move || worker_loop(sim, controls, snapshot, audio))
 		.expect("failed to spawn sim thread")
 }
 
 /// Runs up to `max_steps` simulation ticks under a single acquisition of both locks
 /// (`SimThread.Run`'s `RunSimulationStep`, with `stepsPerClockTransition` assigned once per
-/// batch instead of once per tick).
-fn run_steps_batch(sim: &Mutex<Simulator>, audio: &crate::audio::SharedAudioState, steps_per_clock_transition: u32, max_steps: u64) -> u64 {
+/// batch instead of once per tick), then publishes a fresh snapshot before releasing the arena
+/// lock -- so the very next thing anyone can observe after this call is a `SimSnapshot` that's
+/// at least as new as every tick just run, with no window where a reader could see neither.
+fn run_steps_batch(
+	sim: &Mutex<Simulator>,
+	snapshot: &SharedSnapshot,
+	audio: &crate::audio::SharedAudioState,
+	steps_per_clock_transition: u32,
+	max_steps: u64,
+) -> u64 {
 	let mut sim = lock_sim(sim);
 	let mut audio_guard = lock_audio(audio);
 	sim.steps_per_clock_transition = steps_per_clock_transition;
@@ -259,10 +310,14 @@ fn run_steps_batch(sim: &Mutex<Simulator>, audio: &crate::audio::SharedAudioStat
 			break;
 		}
 	}
+	drop(audio_guard);
+	if done > 0 {
+		publish(snapshot, &sim);
+	}
 	done
 }
 
-fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) {
+fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, snapshot: SharedSnapshot, audio: crate::audio::SharedAudioState) {
 	#[derive(Default)]
 	struct WorkerPacing {
 		last_tick: Option<Instant>,
@@ -288,6 +343,10 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 				let mut sim_guard = lock_sim(&sim);
 				let mut audio_guard = lock_audio(&audio);
 				sim_guard.update_in_paused_state(&mut audio_guard.sim_audio);
+				drop(audio_guard);
+				// Keeps a direct mutation made while paused (e.g. toggling a switch) visible
+				// within one `PAUSED_SLEEP` interval instead of only at the next real step.
+				publish(&snapshot, &sim_guard);
 			}
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
@@ -306,7 +365,7 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 			// A requested single step runs exactly one tick regardless of
 			// pacing (`Project.advanceSingleSimStep`) and mustn't disturb
 			// the paused timing hold below.
-			run_steps_batch(&sim, &audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), 1);
+			run_steps_batch(&sim, &snapshot, &audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), 1);
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
 			pacing.window.record(now, 1);
@@ -341,7 +400,7 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 			continue;
 		}
 
-		let ran = run_steps_batch(&sim, &audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), due);
+		let ran = run_steps_batch(&sim, &snapshot, &audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), due);
 		if ran < due {
 			pacing.debt_ticks = restore_unfinished_ticks(pacing.debt_ticks, due - ran, target_ticks_per_second);
 		}

@@ -51,17 +51,24 @@ impl PinStateLookup for AllLow {
 	}
 }
 
-/// Live lookup backed by a running `Simulator`: resolves `(owner, pin)`
-/// addresses the same way the sim graph does (`Simulator::find_pin`) and
-/// reports the pin's per-bit state (`bit_logic_state`) as well as its
-/// first bit's state alone (`logic_state`, used wherever only a single
-/// representative colour is needed -- e.g. a pin's own drawn shape).
-pub struct SimulatorPinState<'a> {
-	pub sim: &'a crate::sim::Simulator,
+/// Live lookup backed by anything implementing [`crate::sim::SimArena`] -- a running
+/// `Simulator` behind its lock, or a lock-free [`crate::sim::SimSnapshot`] taken off one.
+/// Resolves `(owner, pin)` addresses the same way the sim graph does (`SimArena::find_pin`) and
+/// reports the pin's per-bit state (`bit_logic_state`) as well as its first bit's state alone
+/// (`logic_state`, used wherever only a single representative colour is needed -- e.g. a pin's
+/// own drawn shape).
+///
+/// Two names are exported for this same generic type: [`SimulatorPinState`] (backed directly by
+/// a locked `Simulator`, for the few call sites that need the truly-live arena) and
+/// [`SnapshotPinState`] (backed by a `SimSnapshot`, for scene rendering -- see
+/// `viewer::sim_thread::SimHandle::snapshot`). Prefer the snapshot form for anything that runs
+/// every frame: it never contends with the simulation worker's lock.
+pub struct ArenaPinState<'a, A: crate::sim::SimArena> {
+	pub sim: &'a A,
 	pub scope: crate::sim::ChipIdx,
 }
 
-impl<'a> PinStateLookup for SimulatorPinState<'a> {
+impl<'a, A: crate::sim::SimArena> PinStateLookup for ArenaPinState<'a, A> {
 	fn is_high(&self, pin_owner_id: i32, pin_id: i32) -> Option<bool> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;
@@ -87,9 +94,16 @@ impl<'a> PinStateLookup for SimulatorPinState<'a> {
 
 	fn enter_scope(&self, owner_id: i32) -> Option<Box<dyn PinStateLookup + '_>> {
 		let chip_idx = self.sim.find_sub_chip(self.scope, owner_id)?;
-		Some(Box::new(SimulatorPinState { sim: self.sim, scope: chip_idx }))
+		Some(Box::new(ArenaPinState { sim: self.sim, scope: chip_idx }))
 	}
 }
+
+/// See [`ArenaPinState`]. Backed by a locked, truly-live `Simulator`.
+pub type SimulatorPinState<'a> = ArenaPinState<'a, crate::sim::Simulator>;
+
+/// See [`ArenaPinState`]. Backed by a lock-free [`crate::sim::SimSnapshot`] -- use this one for
+/// anything that runs every frame (scene rendering, the customize overlay).
+pub type SnapshotPinState<'a> = ArenaPinState<'a, crate::sim::SimSnapshot>;
 
 #[cfg(test)]
 mod tests {}

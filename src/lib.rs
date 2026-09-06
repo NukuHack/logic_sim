@@ -31,6 +31,6 @@ pub use save_system::{
 	DLS_VERSION, DLS_VERSION_EARLIEST_COMPATIBLE,
 };
 pub use settings::{AppSettings, FullScreenMode};
-pub use sim::{key_mods_bits, ChipIdx, ExternalInput, PinIdx, SimChip, SimPin, Simulator};
+pub use sim::{key_mods_bits, ChipIdx, ExternalInput, PinIdx, SimArena, SimChip, SimPin, SimSnapshot, Simulator};
 pub use structs::Vec2;
 pub use ui_menu::{MainMenu, MenuOutcome};
