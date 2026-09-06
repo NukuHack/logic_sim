@@ -41,14 +41,14 @@ Or use the all-in-one script:
 | `Ctrl+R` | Rebuild/restart the simulation |
 | `Ctrl+H` | Toggle fit-to-view camera |
 | `Ctrl+G` | Toggle grid |
-| `(Ctrl/Shift)+D` | Duplicate selected |
+| `Ctrl+D` | Duplicate selected |
 | `Ctrl+Space` | Pause/resume the simulation |
 | `Space` (while paused) | Advance the simulation one step |
 | `Esc` | Cancel pending action / close topmost overlay / leave viewed chip / leave editor |
 | `Delete` | Remove/Delete current selected |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo the current chip's edit history |
 
-**Mouse:** middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select or drag it, drag on empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress).
+**Mouse:** middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select or drag it, drag on empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress). Shift r-click will delete everything under it (dragging is supported).
 
 ## Where data lives
 
@@ -87,7 +87,7 @@ RUST_LOG=warn,logic_sim=debug cargo run   # the default, spelled out
 
 - [CONTRIBUTING.md](CONTRIBUTING.md). In short: run `./build.sh -y` before opening a PR, follow `rustfmt.toml`, and keep modules documented and small.  
 
-- there are alwas a lot stuff to do   
+- there are always a lot stuff to do   
 
 ## License
 
