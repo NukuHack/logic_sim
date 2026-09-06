@@ -131,13 +131,13 @@ pub struct Simulator {
 	/// clicking a switch's bit grid toggles.
 	pub driven_inputs: HashMap<i32, PinState>,
 
-	/// Combinational-chip LUT cache + the "use caching at all" toggle --
-	/// see [`crate::gate_op`]. Public so the viewer's
-	/// customization checkbox (`ProjectDescription::prefs_use_caching`,
-	/// applied via `viewer::sim_thread::SimHandle::set_use_caching`) can
-	/// flip `caching.use_caching` directly through the shared-simulator
-	/// lock, same as every other prefs-driven field on this struct.
+	/// Combinational-chip cache -- see [`crate::gate_op`].
 	pub caching: CachingState,
+	/// The "use caching at all" toggle. This is just the copy the sim thread can read without
+	/// reaching across into viewer state. Public so the viewer's customization checkbox
+	/// (applied via `viewer::sim_thread::SimHandle::set_use_caching`) can flip it directly
+	/// through the shared-simulator lock, same as every other prefs-driven field here.
+	pub use_caching: bool,
 }
 
 impl Default for Simulator {
@@ -164,6 +164,7 @@ impl Default for Simulator {
 			driven_inputs: HashMap::new(),
 
 			caching: CachingState::default(),
+			use_caching: true,
 		}
 	}
 }
@@ -201,6 +202,7 @@ impl Simulator {
 			key_modifiers: 0,
 			driven_inputs: HashMap::new(),
 			caching: CachingState::default(),
+			use_caching: true,
 		}
 	}
 
@@ -377,7 +379,7 @@ impl Simulator {
 			return;
 		}
 
-		if self.caching.use_caching {
+		if self.use_caching {
 			let name = Arc::clone(&self.chips[chip_idx.0].name);
 
 			if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {

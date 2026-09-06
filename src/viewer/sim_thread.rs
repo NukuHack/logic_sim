@@ -207,9 +207,8 @@ impl SimHandle {
 	/// Flips the shared simulator's "use cached truth tables for
 	/// combinational chips" toggle -- the customization checkbox's
 	/// effect, applied every frame from `v.prefs.prefs_use_caching`
-	/// exactly like `set_paused`/`set_target_ticks_per_second` above.
 	pub(crate) fn set_use_caching(&self, enabled: bool) {
-		self.lock().caching.use_caching = enabled;
+		self.lock().use_caching = enabled;
 	}
 
 	/// Captures the built-up LUT cache out of the outgoing simulator

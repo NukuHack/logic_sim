@@ -340,7 +340,7 @@ pub fn build_preferences_panel(state: &PrefsPanelState<'_>, vw: f32, vh: f32, mo
 		PrefRow { label: "Straight wires", options: &STRAIGHT_WIRE_OPTIONS, current: desc.prefs_straight_wires },
 		PrefRow { label: "Wire connection check", options: &WIRE_CONNECTION_CHECK_OPTIONS, current: desc.prefs_can_complete_wire_connection },
 		PrefRow { label: "Sim status", options: &SIM_STATUS_OPTIONS, current: i32::from(desc.prefs_sim_paused) },
-		PrefRow { label: "Chip caching", options: &CACHING_OPTIONS, current: !i32::from(!desc.prefs_use_caching) },
+		PrefRow { label: "Chip caching", options: &CACHING_OPTIONS, current: i32::from(!desc.prefs_use_caching) },
 	];
 
 	let field_w = panel_w * 0.4;

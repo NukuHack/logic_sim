@@ -32,13 +32,11 @@ pub struct CachingState {
 	/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
 	/// Same interned-`Arc<str>` sharing as [`combinational_chip_cache`].
 	pub not_combinational_chip_cache: HashSet<Arc<str>>,
-	/// same as any preference would be, just moved here for nicer access
-	pub use_caching: bool,
 }
 
 impl Default for CachingState {
 	fn default() -> Self {
-		Self { combinational_chip_cache: HashMap::new(), not_combinational_chip_cache: HashSet::new(), use_caching: true }
+		Self { combinational_chip_cache: HashMap::new(), not_combinational_chip_cache: HashSet::new() }
 	}
 }
 
@@ -227,7 +225,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	}
 
 	let num_input_bits = calculate_num_input_bits(sim, chip);
-	let should_be_cached = sim.chip(chip).cache_kind.is_none();
+	let should_be_cached = !sim.chip(chip).cache_kind.is_off();
 	let within_budget = should_be_cached && num_input_bits <= MAX_NUM_INPUT_BITS_WHEN_USER_CACHING;
 
 	let is_custom = sim.chip(chip).chip_type == crate::description::ChipType::Custom;
