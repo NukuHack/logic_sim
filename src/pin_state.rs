@@ -33,17 +33,17 @@ impl LogicState {
 
 	#[inline]
 	pub const fn from_bool(high: bool) -> Self {
-		if high { LogicState::High } else { LogicState::Low }
+		if high { Self::High } else { Self::Low }
 	}
 
 	#[inline]
 	pub const fn is_high(self) -> bool {
-		matches!(self, LogicState::High)
+		matches!(self, Self::High)
 	}
 
 	#[inline]
 	pub const fn is_connected(self) -> bool {
-		!matches!(self, LogicState::Disconnected)
+		!matches!(self, Self::Disconnected)
 	}
 }
 

@@ -172,6 +172,8 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 /// Removes just wire `index` (`chip.wires[index]`'s tappers, if any, are
 /// detached rather than destroyed) -- backs the "Delete Part" context-menu
 /// action.
+/// # Panics
+/// idk
 pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipLibrary) -> usize {
 	if index >= chip.wires.len() {
 		return 0;
@@ -315,7 +317,7 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 				dep.connected_wire_segment_index = -1;
 				dep.cached_source_point = Vec2::ZERO;
 			}
-			for w in chip.wires.iter_mut() {
+			for w in &mut chip.wires {
 				if w.connection_type != WireConnectionType::ToPins && w.connected_wire_index as usize == d {
 					w.connected_wire_segment_index += prefix_len as i32;
 				}
@@ -345,7 +347,7 @@ fn detach_dependent(chip: &mut ChipDescription, d: usize, anchor: &WireDescripti
 /// fan-out tap excluded from `delete_wire_old`'s net-cascade), freezes that end at its last
 /// known attachment point and falls back to a plain pin-to-pin wire.
 fn shift_connected_indices_after_removal(chip: &mut ChipDescription, removed: &[usize]) {
-	for w in chip.wires.iter_mut() {
+	for w in &mut chip.wires {
 		if w.connection_type == WireConnectionType::ToPins {
 			continue;
 		}

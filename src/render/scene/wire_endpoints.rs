@@ -30,13 +30,13 @@ const MAX_WIRE_CONNECTION_DEPTH: u32 = 64;
 /// wire-tap's cached attachment point onto its target wire's segment.
 pub(crate) fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
 	let ab = Vec2::new(b.x - a.x, b.y - a.y);
-	let sqr_len = ab.x * ab.x + ab.y * ab.y;
+	let sqr_len = ab.y.mul_add(ab.y, ab.x * ab.x);
 	if sqr_len <= 1e-12 {
 		return a;
 	}
 	let ap = Vec2::new(p.x - a.x, p.y - a.y);
-	let t = ((ap.x * ab.x + ap.y * ab.y) / sqr_len).clamp(0.0, 1.0);
-	Vec2::new(a.x + ab.x * t, a.y + ab.y * t)
+	let t = (ap.y.mul_add(ab.y, ap.x * ab.x) / sqr_len).clamp(0.0, 1.0);
+	Vec2::new(ab.x.mul_add(t, a.x), ab.y.mul_add(t, a.y))
 }
 
 /// Bundles the chip-definition context the wire-endpoint resolvers need
@@ -51,7 +51,7 @@ pub(crate) struct WireCtx<'a> {
 	pub wires: &'a [WireDescription],
 }
 
-impl<'a> WireCtx<'a> {
+impl WireCtx<'_> {
 	/// Resolves world-space point index `point_index` along wire `wire_idx`'s
 	/// own polyline, i.e. `[source-endpoint, ...bends..., target-endpoint]`.
 	/// Interior indices are just that wire's saved bend points (already in
@@ -157,8 +157,8 @@ pub fn closest_wire_hit(chip: &ChipDescription, library: &ChipLibrary, world_pos
 
 		for (segment_index, seg) in centreline.windows(2).enumerate() {
 			let closest = closest_point_on_segment(world_pos, seg[0], seg[1]);
-			let dist = ((closest.x - world_pos.x).powi(2) + (closest.y - world_pos.y).powi(2)).sqrt();
-			if dist <= max_dist && best.as_ref().map(|(_, best_dist)| dist < *best_dist).unwrap_or(true) {
+			let dist = (closest.x - world_pos.x).hypot(closest.y - world_pos.y);
+			if dist <= max_dist && best.as_ref().is_none_or(|(_, best_dist)| dist < *best_dist) {
 				// Bit count always traces back to the wire's real originating pin
 				// (`source_pin_address`), regardless of `connection_type` -- a wire
 				// tapped off another wire still carries that wire's signal. Mirrors

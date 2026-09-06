@@ -45,7 +45,7 @@ pub fn point_in_rounded_rect(point: Vec2, centre: Vec2, size: Vec2, radius: f32,
 pub fn point_in_circle(point: Vec2, centre: Vec2, radius: f32) -> bool {
 	let dx = point.x - centre.x;
 	let dy = point.y - centre.y;
-	dx * dx + dy * dy <= radius * radius
+	dy.mul_add(dy, dx * dx) <= radius * radius
 }
 
 /// A plain axis-aligned rectangle hit-test -- for a subchip's body (which,

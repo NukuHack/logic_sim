@@ -24,6 +24,10 @@ fn grid_line_skip(screen_half_height: f32) -> i32 {
 /// Builds the background grid line geometry currently visible within `camera`'s view,
 /// mirroring `DevSceneDrawer.DrawGrid`.
 pub fn build_grid(camera: &Camera, colour: Rgba) -> SceneGeometry {
+	// Defensive cap: a degenerate camera (near-zero zoom, or a 0 viewport before the first resize
+	// event) can otherwise blow these bounds out to i32::MIN..i32::MAX, turning this into a
+	// multi-billion-iteration loop that hangs the app and exhausts memory. No real view needs more.
+	const MAX_GRID_LINES_PER_AXIS: i32 = 20_000;
 	let mut geo = SceneGeometry::default();
 
 	// World-space half-extents of the current view -- equivalent to the original's `orthographicSize`
@@ -57,10 +61,6 @@ pub fn build_grid(camera: &Camera, colour: Rgba) -> SceneGeometry {
 	let bottom_i = (bottom / layout::GRID_SIZE).round() as i32;
 	let top_i = (top / layout::GRID_SIZE).round() as i32;
 
-	// Defensive cap: a degenerate camera (near-zero zoom, or a 0 viewport before the first resize
-	// event) can otherwise blow these bounds out to i32::MIN..i32::MAX, turning this into a
-	// multi-billion-iteration loop that hangs the app and exhausts memory. No real view needs more.
-	const MAX_GRID_LINES_PER_AXIS: i32 = 20_000;
 	let left_i = left_i.max(right_i.saturating_sub(MAX_GRID_LINES_PER_AXIS));
 	let bottom_i = bottom_i.max(top_i.saturating_sub(MAX_GRID_LINES_PER_AXIS));
 

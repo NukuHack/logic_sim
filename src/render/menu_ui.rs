@@ -17,7 +17,7 @@ pub use crate::render::ui_kit::{UiRect, to_world};
 /// matches on this and calls the corresponding `MainMenu` method / does
 /// the corresponding app-level transition (e.g. actually opening a
 /// project into the viewer).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum UiAction {
 	NewProject,
 	OpenProjectScreen,
@@ -172,7 +172,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 	}
 
 	for (i, project) in menu.projects().iter().enumerate() {
-		let y = list_top + i as f32 * (row_h + 6.0);
+		let y = (i as f32).mul_add(row_h + 6.0, list_top);
 		let rect = UiRect::new(cx - row_w / 2.0, y, row_w, row_h);
 		let selected = menu.selected_project_index() == Some(i);
 		let compatible = crate::save_system::can_open_project(project).is_ok();
@@ -198,7 +198,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 	}
 
 	let selected_compatible = matches!(menu.selected_project_compatibility(), Some(Ok(())));
-	let toolbar_y = vh - BUTTON_H * 3.0;
+	let toolbar_y = BUTTON_H.mul_add(-3.0, vh);
 	let mut x = cx - BUTTON_W;
 	for (label, action, enabled) in [
 		("Open", UiAction::OpenSelected, selected_compatible),
@@ -211,7 +211,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		x += BUTTON_W / 2.0 + BUTTON_GAP / 2.0;
 	}
 
-	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - BUTTON_H * 1.2, BUTTON_W, BUTTON_H);
+	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, BUTTON_H.mul_add(-1.2, vh), BUTTON_W, BUTTON_H);
 	add_button(frame, ui, back_rect, "Back", UiAction::BackToMain, true);
 }
 
@@ -227,7 +227,7 @@ fn build_settings_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut MenuFram
 	let fs_rect = UiRect::new(cx - BUTTON_W / 2.0, 160.0 + BUTTON_H + BUTTON_GAP, BUTTON_W, BUTTON_H);
 	add_button(frame, ui, fs_rect, &format!("Fullscreen: {:?}", settings.fullscreen_mode), UiAction::CycleFullscreenMode, true);
 
-	let apply_rect = UiRect::new(cx - BUTTON_W / 2.0, 160.0 + 2.0 * (BUTTON_H + BUTTON_GAP), BUTTON_W, BUTTON_H);
+	let apply_rect = UiRect::new(cx - BUTTON_W / 2.0, 2.0f32.mul_add(BUTTON_H + BUTTON_GAP, 160.0), BUTTON_W, BUTTON_H);
 	add_button(frame, ui, apply_rect, "Apply", UiAction::ApplySettings, true);
 
 	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - 30.0, BUTTON_W, BUTTON_H);

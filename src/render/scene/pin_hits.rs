@@ -27,13 +27,13 @@ pub struct PinHit {
 
 impl PinHit {
 	/// Whether this pin can be a new wire's *source* end.
-	pub fn is_wire_source(&self) -> bool {
+	pub const fn is_wire_source(&self) -> bool {
 		self.is_input == self.is_boundary
 	}
 
 	/// Whether this pin can be a new wire's *target* end -- see
 	/// `is_wire_source`.
-	pub fn is_wire_target(&self) -> bool {
+	pub const fn is_wire_target(&self) -> bool {
 		!self.is_wire_source()
 	}
 }

@@ -5,6 +5,7 @@
 use crate::render::foundation::polyline::offset_polyline;
 use crate::render::theme::Rgba;
 use glam::Vec2;
+use std::f32::consts::PI;
 
 /// A single coloured vertex, position in world space. Kept separate from
 /// any wgpu `Vertex` type so this module has zero GPU dependencies; the
@@ -93,7 +94,7 @@ impl SceneGeometry {
 	/// the outline reads as a border of that thickness rather than being fully covered.
 	pub fn add_outlined_rect(&mut self, centre: Vec2, size: Vec2, border: f32, fill_colour: Rgba, outline_colour: Rgba) {
 		self.add_rect(centre, size, outline_colour);
-		let inner = Vec2::new((size.x - border * 2.0).max(0.0), (size.y - border * 2.0).max(0.0));
+		let inner = Vec2::new(border.mul_add(-2.0, size.x).max(0.0), border.mul_add(-2.0, size.y).max(0.0));
 		self.add_rect(centre, inner, fill_colour);
 	}
 
@@ -102,8 +103,8 @@ impl SceneGeometry {
 		for i in 0..segments {
 			let a0 = (i as f32 / segments as f32) * std::f32::consts::TAU;
 			let a1 = ((i + 1) as f32 / segments as f32) * std::f32::consts::TAU;
-			let p0 = Vec2::new(centre.x + a0.cos() * radius, centre.y + a0.sin() * radius);
-			let p1 = Vec2::new(centre.x + a1.cos() * radius, centre.y + a1.sin() * radius);
+			let p0 = Vec2::new(a0.cos().mul_add(radius, centre.x), a0.sin().mul_add(radius, centre.y));
+			let p1 = Vec2::new(a1.cos().mul_add(radius, centre.x), a1.sin().mul_add(radius, centre.y));
 			self.push_tri(SceneVertex { pos: centre, colour }, SceneVertex { pos: p0, colour }, SceneVertex { pos: p1, colour });
 		}
 	}
@@ -124,14 +125,6 @@ impl SceneGeometry {
 	/// uses -- valid here because a rounded rect (with radius capped to half the smaller
 	/// dimension) is always convex/star-shaped from its own centre.
 	pub fn add_rounded_rect(&mut self, centre: Vec2, size: Vec2, colour: Rgba, radius: f32, corners: RoundCorners, corner_segments: u32) {
-		let hw = size.x / 2.0;
-		let hh = size.y / 2.0;
-		if hw <= 0.0 || hh <= 0.0 {
-			return;
-		}
-		let r = radius.max(0.0).min(hw).min(hh);
-		let segs = corner_segments.max(1);
-
 		struct CornerSpec {
 			centre: Vec2,
 			arc_centre: Vec2,
@@ -143,15 +136,22 @@ impl SceneGeometry {
 			if spec.rounded && r > 1e-6 {
 				for i in 0..=segs {
 					let t = i as f32 / segs as f32;
-					let a = spec.start + t * (spec.end - spec.start);
-					points.push(Vec2::new(spec.arc_centre.x + a.cos() * r, spec.arc_centre.y + a.sin() * r));
+					let a = t.mul_add(spec.end - spec.start, spec.start);
+					points.push(Vec2::new(a.cos().mul_add(r, spec.arc_centre.x), a.sin().mul_add(r, spec.arc_centre.y)));
 				}
 			} else {
 				points.push(spec.centre);
 			}
 		}
 
-		use std::f32::consts::PI;
+		let hw = size.x / 2.0;
+		let hh = size.y / 2.0;
+		if hw <= 0.0 || hh <= 0.0 {
+			return;
+		}
+		let r = radius.max(0.0).min(hw).min(hh);
+		let segs = corner_segments.max(1);
+
 		let mut points: Vec<Vec2> = Vec::new();
 		// Bottom-right -> top-right -> top-left -> bottom-left (CCW).
 		push_corner(
@@ -215,7 +215,7 @@ impl SceneGeometry {
 	pub fn add_line(&mut self, a: Vec2, b: Vec2, thickness: f32, colour: Rgba) {
 		let dx = b.x - a.x;
 		let dy = b.y - a.y;
-		let len = (dx * dx + dy * dy).sqrt();
+		let len = dx.hypot(dy);
 		if len < 1e-6 {
 			return;
 		}

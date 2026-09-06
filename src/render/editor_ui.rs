@@ -1307,7 +1307,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0),
+				UiRect::new((w + 8.0).mul_add(2.0, panel_rect.x + 30.0), button_y, w, 36.0),
 				"Save",
 				EditorAction::SaveChipConfirm,
 				confirm_enabled,
@@ -1327,7 +1327,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button_coloured(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0),
+				UiRect::new((w + 8.0).mul_add(2.0, panel_rect.x + 30.0), button_y, w, 36.0),
 				"Replace",
 				EditorAction::SaveChipConfirm,
 				confirm_enabled,
@@ -1503,16 +1503,16 @@ pub fn build_led_colour_popup(colour_index: usize, vw: f32, vh: f32, mouse: Vec2
 	y += LED_COLOUR_SWATCH_H + ROW_GAP;
 
 	let swatch_x = cx - (panel_w - 60.0) / 2.0;
-	let swatch_w = ((panel_w - 60.0) - 8.0 * (theme::COLORS.len() - 1) as f32) / theme::COLORS.len() as f32;
+	let swatch_w = 8.0f32.mul_add(-((theme::COLORS.len() - 1) as f32), panel_w - 60.0) / theme::COLORS.len() as f32;
 	for (i, colour) in theme::COLORS.iter().enumerate() {
-		let rect = UiRect::new(swatch_x + i as f32 * (swatch_w + 8.0), y, swatch_w, LED_COLOUR_SWATCH_H);
+		let rect = UiRect::new((i as f32).mul_add(swatch_w + 8.0, swatch_x), y, swatch_w, LED_COLOUR_SWATCH_H);
 		add_button_coloured(&mut frame, ui, rect, "", EditorAction::LedColourSetColour(i), true, *colour);
 		if i == colour_index.min(theme::COLORS.len() - 1) {
 			frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
 		}
 	}
 
-	y += LED_COLOUR_SWATCH_H + ROW_GAP * 2.0;
+	y += ROW_GAP.mul_add(2.0, LED_COLOUR_SWATCH_H);
 	add_button(&mut frame, ui, UiRect::new(cx - 186.0, y, 180.0, 36.0).clamp_to(panel_rect), "Confirm", EditorAction::LedColourConfirm, true);
 	add_button(&mut frame, ui, UiRect::new(cx + 6.0, y, 180.0, 36.0).clamp_to(panel_rect), "Cancel", EditorAction::ClosePopup, true);
 
@@ -1612,7 +1612,7 @@ pub fn build_starred_bottom_bar(
 	for item in starred_list {
 		let is_open = item.is_collection && open_collection == Some(item.name.as_str());
 		let label = item.name.clone();
-		let w = (label.chars().count() as f32 * 8.5 + 24.0).clamp(60.0, 220.0);
+		let w = (label.chars().count() as f32).mul_add(8.5, 24.0).clamp(60.0, 220.0);
 		let rect = UiRect::new(x, y, w, h);
 		let (action, row_enabled) = if item.is_collection {
 			(EditorAction::ToggleStarredCollectionPopup(item.name.clone()), enabled)
@@ -1657,7 +1657,7 @@ pub fn build_starred_collection_popup(
 	let x = anchor_x.clamp(4.0, vw - w - 4.0);
 
 	let visible_rows = collection.chips.len().min(((bottom - 4.0) / row_h).floor().max(0.0) as usize);
-	let top = bottom - visible_rows as f32 * row_h;
+	let top = (visible_rows as f32).mul_add(-row_h, bottom);
 	let panel_rect = UiRect::new(x - 4.0, top, w + 8.0, bottom - top);
 	frame.panel = Some(panel_rect);
 	panel_bg(&mut frame, ui, panel_rect, [0.13, 0.13, 0.14, 0.98]);

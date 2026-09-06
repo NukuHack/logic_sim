@@ -61,7 +61,7 @@ pub const fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
 
 /// Whether `chip_type` can be placed as an embedded display on another
 /// chip (the customize menu lists exactly these subchips).
-pub fn is_display_type(chip_type: ChipType) -> bool {
+pub const fn is_display_type(chip_type: ChipType) -> bool {
 	display_base_size(chip_type).is_some()
 }
 
@@ -292,7 +292,7 @@ pub(crate) fn draw_seven_segment(geo: &mut SceneGeometry, clip: ClipRect, centre
 	let bounds_width = scale;
 	let bounds_height = bounds_width * TARGET_HEIGHT_ASPECT;
 	let segment_thickness = scale * SEGMENT_THICKNESS_FRAC;
-	let segment_width = bounds_width - segment_thickness - scale * DISPLAY_INSET_FRAC;
+	let segment_width = scale.mul_add(-DISPLAY_INSET_FRAC, bounds_width - segment_thickness);
 	let segment_region_height = scale.mul_add(-DISPLAY_INSET_FRAC, bounds_height - segment_thickness);
 	let segment_height = scale.mul_add(-SEGMENT_VERTICAL_SPACING_FRAC, segment_region_height / 2.0);
 

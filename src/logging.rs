@@ -7,11 +7,9 @@
 //!   `<save data>/Logs/`, so a crash or a bug report from a machine that was
 //!   never launched from a terminal still has a trail.
 //! - **What** gets through: our own code at debug, every third-party crate
-//!   (wgpu/wgpu_hal/naga, winit, zbus, cpal, ...) held down at warn. Their
-//!   info/debug output fires every frame and drowns out everything the app
-//!   itself says; [`DEFAULT_LOG_SPEC`] is the single place that decision
-//!   lives, and [`LOG_SPEC_ENV`] overrides it wholesale when hunting a
-//!   specific subsystem.
+//!   held down at warn. Their info/debug output fires every frame and drowns out
+//!   everything the app itself says; [`DEFAULT_LOG_SPEC`] is the single place that
+//!   decision lives, and [`LOG_SPEC_ENV`] overrides it wholesale when hunting a specific subsystem.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -44,13 +42,15 @@ pub fn log_dir(data_dir: &Path) -> PathBuf {
 	data_dir.join(LOG_DIR_NAME)
 }
 
+/// # Panics
+/// if the temp dor does not exist (should in all environment)
 pub fn test_logger(label: &str) -> LoggerHandle {
 	init(&scratch(label)).expect("the logger installs into a writable directory")
 }
 
 /// Fresh scratch directory under the OS temp dir, unique per run.
 pub fn scratch(label: &str) -> PathBuf {
-	let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+	let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
 	std::env::temp_dir().join(format!("dls_rust_test_{label}_{}_{nanos}", std::process::id()))
 }
 
@@ -124,7 +124,7 @@ fn resolve_spec() -> (LogSpecification, String) {
 }
 
 /// Line format for the log file: timestamp, level, thread, target and line,
-/// with no ANSI escapes (the terminal copy gets flexi_logger's coloured
+/// with no ANSI escapes (the terminal copy gets `flexi_logger`'s coloured
 /// built-in format instead). The thread is worth naming because the sim,
 /// audio and render threads all log into the same file.
 fn file_format(write: &mut dyn Write, now: &mut DeferredNow, record: &log::Record<'_>) -> std::io::Result<()> {

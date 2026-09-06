@@ -215,6 +215,8 @@ pub fn default_shared_state() -> SharedAudioState {
 /// Starts the real output stream driving `shared`. Fails gracefully
 /// (with a reason) where no audio device/config is available -- the app
 /// runs fine without sound rather than refusing to start.
+/// # Errors
+/// id fails
 pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 

@@ -47,22 +47,20 @@ impl ContextTarget {
 	/// string in the first place -- kept next to that so the two stay in
 	/// sync.
 	pub(crate) fn parse(target: &str) -> Option<Self> {
-		target.strip_prefix("component:").map_or_else(
-			|| {
-				if let Some(rest) = target.strip_prefix("wire:") {
-					rest.parse().ok().map(Self::Wire)
-				} else if let Some(rest) = target.strip_prefix("devpin:in:") {
-					rest.parse().ok().map(|id| Self::DevPin { is_input: true, id })
-				} else if let Some(rest) = target.strip_prefix("devpin:out:") {
-					rest.parse().ok().map(|id| Self::DevPin { is_input: false, id })
-				} else {
-					const PLAIN_TARGETS: [(&str, PlainTargetCtor); 3] =
-						[("libchip:", ContextTarget::LibChip), ("barchip:", ContextTarget::BarChip), ("flyoutchip:", ContextTarget::FlyoutChip)];
-					PLAIN_TARGETS.iter().find_map(|(prefix, wrap)| target.strip_prefix(prefix).map(|rest| wrap(rest.to_string())))
-				}
-			},
-			|rest| rest.parse().ok().map(Self::Component),
-		)
+		let parse_id = |s: &str| s.parse().ok();
+
+		match target {
+			t if t.starts_with("component:") => parse_id(&t["component:".len()..]).map(Self::Component),
+			t if t.starts_with("wire:") => parse_id(&t["wire:".len()..]).map(|a| Self::Wire(a as usize)),
+			t if t.starts_with("devpin:in:") => parse_id(&t["devpin:in:".len()..]).map(|id| Self::DevPin { is_input: true, id }),
+			t if t.starts_with("devpin:out:") => parse_id(&t["devpin:out:".len()..]).map(|id| Self::DevPin { is_input: false, id }),
+			t => {
+				const PLAIN_TARGETS: [(&str, PlainTargetCtor); 3] =
+					[("libchip:", ContextTarget::LibChip), ("barchip:", ContextTarget::BarChip), ("flyoutchip:", ContextTarget::FlyoutChip)];
+
+				PLAIN_TARGETS.iter().find_map(|(prefix, wrap)| t.strip_prefix(prefix).map(|rest| wrap(rest.to_string())))
+			}
+		}
 	}
 }
 

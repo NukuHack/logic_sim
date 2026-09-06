@@ -96,7 +96,7 @@ pub fn parse_to_unix_seconds(text: &str) -> i64 {
 			match rest.chars().next() {
 				Some('+') => (1, rest.chars().skip(1).filter(char::is_ascii_digit).collect()),
 				Some('-') => (-1, rest.chars().skip(1).filter(char::is_ascii_digit).collect()),
-				Some('Z') | _ => (1, String::new()),
+				_ => (1, String::new()),
 			}
 		};
 		if !digits.is_empty() && digits.len() >= 4 {

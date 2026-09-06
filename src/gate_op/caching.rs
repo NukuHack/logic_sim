@@ -397,22 +397,22 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 			)
 		}
 		n if n > 1 => {
-			if let Some(split) = flattened_native {
-				log::debug!(
-					"[cache] '{name}' has {n} output pins, recognized as a single pattern across their combined bits -- using NativeSplit instead of a {num_possible_inputs}-row Lut"
-				);
-				Box::new(split)
-			} else if let Some(natives) = multi_pin_natives {
-				log::debug!(
-					"[cache] '{name}' has {n} output pins, every one individually recognized as a known gate pattern -- using NativeMulti instead of a {num_possible_inputs}-row Lut"
-				);
-				Box::new(super::eval::NativeMulti::new(natives))
-			} else {
-				log::debug!(
-					"[cache] '{name}' has {n} output pins and matched neither a combined nor a per-pin gate pattern -- storing the {num_possible_inputs}-row Lut as-is"
-				);
-				Box::new(lut)
-			}
+flattened_native.map_or_else(|| multi_pin_natives.map_or_else(|| {
+    log::debug!(
+        "[cache] '{name}' has {n} output pins and matched neither a combined nor a per-pin gate pattern -- storing the {num_possible_inputs}-row Lut as-is"
+    );
+    Box::new(lut) as Box<dyn CachedGate>
+}, |natives| {
+    log::debug!(
+        "[cache] '{name}' has {n} output pins, every one individually recognized as a known gate pattern -- using NativeMulti instead of a {num_possible_inputs}-row Lut"
+    );
+    Box::new(super::eval::NativeMulti::new(natives)) as Box<dyn CachedGate>
+}), |split| {
+    log::debug!(
+        "[cache] '{name}' has {n} output pins, recognized as a single pattern across their combined bits -- using NativeSplit instead of a {num_possible_inputs}-row Lut"
+    );
+    Box::new(split) as Box<dyn CachedGate>
+})
 		}
 		_ => {
 			log::debug!("[cache] '{name}' has no output pins -- storing the (degenerate) {num_possible_inputs}-row Lut as-is");

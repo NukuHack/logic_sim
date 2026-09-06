@@ -294,11 +294,11 @@ impl App {
 	/// the dozens of `*status = Some(...)` sites scattered across the
 	/// viewer stay untouched while the timer still always restarts on a
 	/// genuinely new message.
-	pub(crate) fn note_status_maybe_changed(&mut self, before: Option<String>) {
+	pub(crate) fn note_status_maybe_changed(&mut self, before: Option<&String>) {
 		match &self.status {
 			// A changed message restarts the window unconditionally -- the
 			// previous entry's clock may be nearly expired already.
-			Some(now) if Some(now) != before.as_ref() => {
+			Some(now) if Some(now) != before => {
 				self.status_since = Some(std::time::Instant::now());
 			}
 			None => self.status_since = None,
@@ -404,7 +404,7 @@ mod status_toast_tests {
 		app.status = Some("hi".to_string());
 		app.note_status_maybe_changed(None);
 		app.status = None;
-		app.note_status_maybe_changed(Some("hi".to_string()));
+		app.note_status_maybe_changed(Some(&"hi".to_string()));
 		assert!(app.status_since.is_none(), "no lingering timer after the text goes away");
 
 		// Replacing one message with another restarts the window...
@@ -412,7 +412,7 @@ mod status_toast_tests {
 		app.note_status_maybe_changed(None);
 		age_toast(&mut app, 9);
 		app.status = Some("second".to_string());
-		app.note_status_maybe_changed(Some("first".to_string()));
+		app.note_status_maybe_changed(Some(&"first".to_string()));
 		app.expire_status_toast();
 		assert_eq!(app.status.as_deref(), Some("second"), "the new message's own 7s window applies, not the old one's");
 		assert!(app.status_since.expect("restamped").elapsed() < STATUS_TOAST_LINGER);

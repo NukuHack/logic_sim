@@ -125,7 +125,7 @@ pub(crate) fn apply_hex_input(v: &mut ViewerState) {
 // ---- interactions ------------------------------------------------------
 
 /// Corner-bracket press: begins resizing from that corner.
-pub(crate) fn start_resize(v: &mut ViewerState, corner: usize) {
+pub(crate) const fn start_resize(v: &mut ViewerState, corner: usize) {
 	if let Some(customize) = v.customize.as_mut()
 		&& !customize.interaction.is_active()
 	{

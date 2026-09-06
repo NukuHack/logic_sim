@@ -207,7 +207,7 @@ pub fn build_scene_with_spans_into(
 fn push_hover_label(geo: &mut SceneGeometry, pos: Vec2, name: String) {
 	let width = layout::estimate_text_width(&name, theme::FONT_SIZE_CHIP_NAME);
 	geo.labels.push(TextLabel {
-		pos: Vec2::new(pos.x, pos.y + layout::GRID_SIZE * 2.0),
+		pos: Vec2::new(pos.x, layout::GRID_SIZE.mul_add(2.0, pos.y)),
 		text: name,
 		colour: theme::HOVER_LABEL_COL,
 		font_size: theme::FONT_SIZE_CHIP_NAME,

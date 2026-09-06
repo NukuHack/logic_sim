@@ -34,7 +34,7 @@ pub enum PopupKind {
 /// straight into `Main.*` methods with side effects; this port separates
 /// "decide what happened" from "actually load a project / quit the app /
 /// apply settings", so the host stays in control of those side effects).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum MenuOutcome {
 	/// Nothing to do -- stay on the menu.
 	None,
@@ -63,7 +63,7 @@ pub struct MainMenu {
 }
 
 impl MainMenu {
-	pub fn new(paths: SavePaths) -> Self {
+	pub const fn new(paths: SavePaths) -> Self {
 		Self {
 			paths,
 			screen: MenuScreen::Main,

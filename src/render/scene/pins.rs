@@ -125,7 +125,7 @@ fn dev_pin_value_text(pin_state: &dyn PinStateLookup, pin_id: i32, bit_count: Pi
 			// Two's complement across exactly this pin's width: anything
 			// with the sign bit set wraps to its negative value.
 			let sign_bit = 1u32 << (bit_width - 1);
-			if raw >= sign_bit { format!("{}", raw as i64 - (1u32 << bit_width) as i64) } else { format!("{raw}") }
+			if raw >= sign_bit { format!("{}", i64::from(raw) - i64::from(1u32 << bit_width)) } else { format!("{raw}") }
 		}
 		ValueDisplayMode::Hex => format!("{raw:X}"),
 	}
@@ -144,16 +144,16 @@ fn draw_dev_pin_value_label(
 	pin_state: &dyn PinStateLookup,
 	pin_id: i32,
 ) {
+	// Mirrors DrawPinDecValue's placement: centred under the pin's own
+	// bounds (Bottom + half label height - offsetY == Bottom - 0.125).
+	const OFFSET_Y: f32 = 0.125;
 	let text = dev_pin_value_text(pin_state, pin_id, bit_count, mode);
 	if text.is_empty() {
 		return;
 	}
 	let grid_size = layout::input_dev_pin_body_size(bit_count);
-	// Mirrors DrawPinDecValue's placement: centred under the pin's own
-	// bounds (Bottom + half label height - offsetY == Bottom - 0.125).
-	const OFFSET_Y: f32 = 0.125;
 	let centre = Vec2::new(pos.x, pos.y - grid_size.y / 2.0 - OFFSET_Y);
-	let quad_w = grid_size.x.max(layout::estimate_text_width(&text, theme::FONT_SIZE_CHIP_NAME) + layout::GRID_SIZE * 2.0);
+	let quad_w = grid_size.x.max(layout::GRID_SIZE.mul_add(2.0, layout::estimate_text_width(&text, theme::FONT_SIZE_CHIP_NAME)));
 	geo.add_rect(centre, Vec2::new(quad_w, 0.2), [0.0, 0.0, 0.0, 0.17]);
 	geo.labels.push(TextLabel { pos: centre, text, colour: [1.0, 1.0, 1.0, 1.0], font_size: theme::FONT_SIZE_CHIP_NAME, width: grid_size.x });
 }

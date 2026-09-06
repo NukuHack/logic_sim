@@ -92,7 +92,7 @@ pub const HOVER_LABEL_COL: Rgba = rgb(0.95, 0.95, 0.95);
 /// Perceptual (Rec. 709) luminance of an RGBA colour, ignoring alpha.
 /// Mirrors `ColHelper.Luminance`.
 pub fn luminance(c: Rgba) -> f32 {
-	0.0722f32.mul_add(c[2], 0.2126 * c[0] + 0.7152 * c[1])
+	0.0722f32.mul_add(c[2], 0.7152f32.mul_add(c[1], 0.2126 * c[0]))
 }
 
 /// Black or white text colour that reads legibly against `bg`, mirroring

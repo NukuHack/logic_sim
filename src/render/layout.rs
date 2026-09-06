@@ -170,10 +170,10 @@ pub fn input_bit_cell_offsets(bit_count: PinBitCount) -> Vec<Vec2> {
 	let mut offsets = Vec::with_capacity((cols * rows) as usize);
 	for row in 0..rows {
 		for col in 0..cols {
-			let x = -total.x / 2.0 + INPUT_BIT_CELL_SIZE * (col as f32 + 0.5);
-			let y = total.y / 2.0 - INPUT_BIT_CELL_SIZE * (row as f32 + 0.5);
+			let x = INPUT_BIT_CELL_SIZE.mul_add(col as f32 + 0.5, -total.x / 2.0);
+			let y = INPUT_BIT_CELL_SIZE.mul_add(-(row as f32 + 0.5), total.y / 2.0);
 			// X, y = position, the offset of "PIN_RADIUS * 4" is to make it not instersect with the pin itself
-			let offset = Vec2::new(x - PIN_RADIUS * 4.0, y);
+			let offset = Vec2::new(PIN_RADIUS.mul_add(-4.0, x), y);
 			offsets.push(offset);
 		}
 	}
@@ -208,7 +208,7 @@ pub const DEV_PIN_SEGMENTS: u32 = (PIN_SEGMENTS as f32 * 1.5) as u32;
 pub fn pin_world_position(chip_centre: Vec2, chip_size: Vec2, pin_grid_y: f32, is_left_side: bool) -> Vec2 {
 	let half_w = chip_size.x / 2.0;
 	let x_offset = if is_left_side { -half_w - SUB_CHIP_PIN_INSET } else { half_w + SUB_CHIP_PIN_INSET };
-	Vec2::new(chip_centre.x + x_offset, chip_centre.y + pin_grid_y * GRID_SIZE)
+	Vec2::new(chip_centre.x + x_offset, pin_grid_y.mul_add(GRID_SIZE, chip_centre.y))
 }
 
 // ---- Grid snapping (GridHelper.cs) -----------------------------------------

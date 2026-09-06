@@ -12,17 +12,17 @@ use glam::Vec2;
 /// would otherwise meet.
 pub fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
 	const MITER_LIMIT: f32 = 4.0;
-	let n = points.len();
-	let mut out = Vec::with_capacity(n);
-
 	// Unit normal (rotate direction +90 degrees) of the segment from `a`
 	// to `b`, or `None` if the two points coincide (zero-length segment).
 	fn segment_normal(a: Vec2, b: Vec2) -> Option<Vec2> {
 		let dx = b.x - a.x;
 		let dy = b.y - a.y;
-		let len = (dx * dx + dy * dy).sqrt();
+		let len = dx.hypot(dy);
 		if len < 1e-6 { None } else { Some(Vec2::new(-dy / len, dx / len)) }
 	}
+
+	let n = points.len();
+	let mut out = Vec::with_capacity(n);
 
 	for i in 0..n {
 		let normal_in = if i > 0 { segment_normal(points[i - 1], points[i]) } else { None };
@@ -31,14 +31,14 @@ pub fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
 		let normal = match (normal_in, normal_out) {
 			(Some(a), Some(b)) => {
 				let sum = Vec2::new(a.x + b.x, a.y + b.y);
-				let sum_len = (sum.x * sum.x + sum.y * sum.y).sqrt();
+				let sum_len = sum.x.hypot(sum.y);
 				if sum_len < 1e-6 {
 					// Exact 180-degree reversal -- bisector is undefined;
 					// fall back to the incoming segment's own normal.
 					a
 				} else {
 					let bisector = Vec2::new(sum.x / sum_len, sum.y / sum_len);
-					let cos_half = (bisector.x * a.x + bisector.y * a.y).max(1.0 / MITER_LIMIT);
+					let cos_half = bisector.y.mul_add(a.y, bisector.x * a.x).max(1.0 / MITER_LIMIT);
 					Vec2::new(bisector.x / cos_half, bisector.y / cos_half)
 				}
 			}
@@ -47,7 +47,7 @@ pub fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
 			(None, None) => Vec2::ZERO, // single-point polyline; no direction to offset along.
 		};
 
-		out.push(Vec2::new(points[i].x + normal.x * distance, points[i].y + normal.y * distance));
+		out.push(Vec2::new(normal.x.mul_add(distance, points[i].x), normal.y.mul_add(distance, points[i].y)));
 	}
 
 	out

@@ -26,9 +26,9 @@ pub struct Vertex {
 impl Vertex {
 	pub const ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
 
-	pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+	pub const fn layout() -> wgpu::VertexBufferLayout<'static> {
 		wgpu::VertexBufferLayout {
-			array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
+			array_stride: size_of::<Self>() as wgpu::BufferAddress,
 			step_mode: wgpu::VertexStepMode::Vertex,
 			attributes: &Self::ATTRS,
 		}
@@ -37,7 +37,7 @@ impl Vertex {
 
 impl From<SceneVertex> for Vertex {
 	fn from(v: SceneVertex) -> Self {
-		Vertex { position: [v.pos.x, v.pos.y], colour: v.colour }
+		Self { position: [v.pos.x, v.pos.y], colour: v.colour }
 	}
 }
 
@@ -54,6 +54,7 @@ pub struct CameraUniform {
 /// Owns the GPU device/queue/surface and the pipeline used to draw the chip
 /// canvas. Construction requires a live `wgpu::Surface`, so it can only be
 /// built once a window exists (see `src/bin/viewer.rs`).
+#[allow(clippy::struct_field_names)] // falsly yells
 pub struct Renderer {
 	pub device: wgpu::Device,
 	pub queue: wgpu::Queue,
@@ -104,7 +105,9 @@ impl fmt::Debug for Renderer {
 impl Renderer {
 	/// Create a renderer targeting `surface`, sized `width`x`height`.
 	/// `background` is the clear colour (see `render::theme::BACKGROUND_COL`).
-	pub async fn new(instance: &wgpu::Instance, surface: wgpu::Surface<'static>, width: u32, height: u32) -> Renderer {
+	/// # Panics
+	/// if idk
+	pub async fn new(instance: &wgpu::Instance, surface: wgpu::Surface<'static>, width: u32, height: u32) -> Self {
 		let adapter = instance
 			.request_adapter(&wgpu::RequestAdapterOptions {
 				power_preference: wgpu::PowerPreference::HighPerformance,
@@ -131,7 +134,7 @@ impl Renderer {
 		log::debug!("wgpu: using adapter '{}' ({:?} backend, {:?})", info.name, info.backend, info.device_type);
 
 		let caps = surface.get_capabilities(&adapter);
-		let surface_format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
+		let surface_format = caps.formats.iter().copied().find(wgpu::TextureFormat::is_srgb).unwrap_or(caps.formats[0]);
 
 		let config = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -219,7 +222,7 @@ impl Renderer {
 		let mut text_atlas = TextAtlas::new(&device, &queue, &text_cache, surface_format);
 		let text_renderer = TextRenderer::new(&mut text_atlas, &device, wgpu::MultisampleState::default(), None);
 
-		Renderer {
+		Self {
 			device,
 			queue,
 			surface,
@@ -282,7 +285,7 @@ impl Renderer {
 			let mut buffer = TextBuffer::new(&mut self.font_system, Metrics::new(font_px, font_px * 1.2));
 			buffer.set_size(&mut self.font_system, Some(width_px), Some(font_px * 4.0));
 			buffer.set_text(&mut self.font_system, &label.text, family, Shaping::Advanced);
-			for line in buffer.lines.iter_mut() {
+			for line in &mut buffer.lines {
 				line.set_align(Some(glyphon::cosmic_text::Align::Center));
 			}
 			buffer.shape_until_scroll(&mut self.font_system, false);
@@ -338,6 +341,8 @@ impl Renderer {
 	/// *and* `submit()`s alike), so submitting layer *N* fully before even preparing layer
 	/// *N*+1's text guarantees layer *N*'s glyphs are already consumed by the time they'd
 	/// otherwise be overwritten.
+	/// # Errors
+	/// if fails
 	pub fn render(&mut self, layers: &[&SceneGeometry], camera: &Camera, clear_colour: [f32; 4]) -> Result<(), wgpu::SurfaceError> {
 		let camera_uniform = CameraUniform { view_proj: camera.view_proj_matrix() };
 		self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&camera_uniform));
@@ -394,10 +399,10 @@ impl Renderer {
 		{
 			let load = if clear {
 				wgpu::LoadOp::Clear(wgpu::Color {
-					r: clear_colour[0] as f64,
-					g: clear_colour[1] as f64,
-					b: clear_colour[2] as f64,
-					a: clear_colour[3] as f64,
+					r: f64::from(clear_colour[0]),
+					g: f64::from(clear_colour[1]),
+					b: f64::from(clear_colour[2]),
+					a: f64::from(clear_colour[3]),
 				})
 			} else {
 				wgpu::LoadOp::Load

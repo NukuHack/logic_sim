@@ -161,7 +161,9 @@ struct JsonChipDescription {
 }
 
 /// Parse a single chip's JSON text (the contents of e.g. `Chips/NOT.json`)
-/// into the simulation-ready ChipDescription.
+/// into the simulation-ready `ChipDescription`.
+/// # Errors
+/// id fails
 pub fn parse_chip_description(json: &str) -> serde_json::Result<ChipDescription> {
 	let raw: JsonChipDescription = serde_json::from_str(json)?;
 	Ok(to_chip_description(&raw))
@@ -173,7 +175,7 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 	desc.colour = [raw.colour.r, raw.colour.g, raw.colour.b, raw.colour.a];
 	desc.name_location = raw.name_location;
 	desc.size = raw.size;
-	desc.dls_version = raw.dls_version.clone();
+	desc.dls_version.clone_from(&raw.dls_version);
 	desc.cache_kind = raw.cache_kind;
 
 	desc.input_pins = raw
@@ -231,6 +233,8 @@ fn to_chip_description(raw: &JsonChipDescription) -> ChipDescription {
 }
 
 /// Serialize back to the on-disk JSON shape.
+/// # Errors
+/// id fails
 pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<String> {
 	serialize_chip_description_impl(desc, None)
 }
@@ -241,6 +245,8 @@ pub fn serialize_chip_description(desc: &ChipDescription) -> serde_json::Result<
 /// library description's default colour -- and bus subchips save `null`
 /// (their pin colours follow live wire state, so writing them would make
 /// Unity flag phantom unsaved changes on open).
+/// # Errors
+/// id fails
 pub fn serialize_chip_description_for_save(desc: &ChipDescription, library: &ChipLibrary) -> serde_json::Result<String> {
 	serialize_chip_description_impl(desc, Some(library))
 }
@@ -345,7 +351,7 @@ fn json_pin_colour_info(s: &SubChipDescription, library: Option<&ChipLibrary>) -
 			.output_pins
 			.iter()
 			.map(|pin| {
-				let colour = s.pin_colour_info.iter().find(|(id, _)| *id == pin.id).map(|(_, c)| *c).unwrap_or(pin.colour);
+				let colour = s.pin_colour_info.iter().find(|(id, _)| *id == pin.id).map_or(pin.colour, |(_, c)| *c);
 				JsonPinColourInfo { pin_colour: colour, pin_id: pin.id }
 			})
 			.collect(),
@@ -388,9 +394,11 @@ fn is_equivalent_token(a: &serde_json::Value, b: &serde_json::Value) -> bool {
 }
 
 /// Load every `*.json` chip file directly inside `chips_dir` into a
-/// ChipLibrary. Mirrors DLS.SaveSystem.Loader's project-chip loading step
+/// `ChipLibrary`. Mirrors DLS.SaveSystem.Loader's project-chip loading step
 /// (minus builtin chips, which aren't stored as files -- see
 /// `builtins::register_all` to add those to the library too).
+/// # Errors
+/// id fails
 pub fn load_chip_library_from_dir(chips_dir: &Path) -> std::io::Result<(ChipLibrary, Vec<String>)> {
 	let mut library = ChipLibrary::new();
 	let mut errors = Vec::new();
@@ -404,8 +412,8 @@ pub fn load_chip_library_from_dir(chips_dir: &Path) -> std::io::Result<(ChipLibr
 		Err(e) => return Err(e),
 	};
 
-	let mut entries: Vec<_> = dir_iter.filter_map(|e| e.ok()).filter(|e| e.path().extension().map(|ext| ext == "json").unwrap_or(false)).collect();
-	entries.sort_by_key(|e| e.path());
+	let mut entries: Vec<_> = dir_iter.filter_map(Result::ok).filter(|e| e.path().extension().is_some_and(|ext| ext == "json")).collect();
+	entries.sort_by_key(fs::DirEntry::path);
 
 	for entry in entries {
 		let path = entry.path();
@@ -460,7 +468,7 @@ impl ChipCollection {
 /// Serde default for a `bool` field that should default to `true` when
 /// absent from an on-disk file (plain `#[serde(default)]` would give
 /// `false`) -- used by `Prefs_UseCaching`.
-fn default_true() -> bool {
+const fn default_true() -> bool {
 	true
 }
 
@@ -545,22 +553,26 @@ impl ProjectDescription {
 	}
 }
 
+/// # Errors
+/// if fails
 pub fn parse_project_description(json: &str) -> serde_json::Result<ProjectDescription> {
 	serde_json::from_str(json)
 }
 
+/// # Errors
+/// if fails
 pub fn serialize_project_description(desc: &ProjectDescription) -> serde_json::Result<String> {
 	serde_json::to_string_pretty(desc)
 }
 
 /// Convenience: load `<project_dir>/ProjectDescription.json` plus every chip
 /// under `<project_dir>/Chips/`.
+/// # Errors
+/// if fails
 pub fn load_project(project_dir: &Path) -> std::io::Result<(ProjectDescription, ChipLibrary, Vec<String>)> {
 	let desc_path = project_dir.join("ProjectDescription.json");
-	let project = match fs::read_to_string(&desc_path) {
-		Ok(text) => parse_project_description(&text).unwrap_or_default(),
-		Err(_) => ProjectDescription::default(),
-	};
+	let project =
+		fs::read_to_string(&desc_path).map_or_else(|_| ProjectDescription::default(), |text| parse_project_description(&text).unwrap_or_default());
 
 	let (library, errors) = load_chip_library_from_dir(&project_dir.join("Chips"))?;
 	Ok((project, library, errors))
@@ -616,7 +628,7 @@ mod vec2_serde {
 		// Helper struct to serialize a reference to Vec2
 		struct Vec2RefWrapper<'a>(&'a Vec2);
 
-		impl<'a> Serialize for Vec2RefWrapper<'a> {
+		impl Serialize for Vec2RefWrapper<'_> {
 			fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
 			where
 				S: Serializer,

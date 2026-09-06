@@ -5,20 +5,29 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // #![forbid(unsafe_code)]
 //#![warn(missing_docs)]
-#![warn(clippy::pedantic)]
-#![warn(clippy::nursery)]
+#![warn(clippy::pedantic, clippy::nursery)]
 #![allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,        // signed to unsigned
-    clippy::cast_precision_loss,   // float precision loss
-	clippy::too_long_first_doc_paragraph,
-	clippy::must_use_candidate,
-	clippy::return_self_not_must_use,
+    clippy::cast_possible_truncation, // num as other num
+    clippy::cast_possible_wrap, // num as other num
+    clippy::cast_sign_loss, // signed to unsigned
+    clippy::cast_precision_loss, // float precision loss
+	clippy::too_long_first_doc_paragraph, // should be long ...
+	clippy::must_use_candidate, // will use if i care
+	clippy::return_self_not_must_use, // will use if i care
+	clippy::wildcard_imports, // should only be used in testing
+	clippy::format_push_string, // it's fine in this scale
+
+	clippy::trivially_copy_pass_by_ref, // should be removed
+	clippy::struct_excessive_bools, // should be removed
+	clippy::significant_drop_tightening, // should be removed, after i learn memory management in detail
+	clippy::implicit_hasher, // we will use hashset, nothing else
+
+	clippy::similar_names, // similar ...
+	clippy::too_many_lines, // will correct it when i correct file lengths
 )]
 #![warn(
-    missing_debug_implementations,
-	unused_qualifications,
+    missing_debug_implementations, // nice to debug all
+	unused_qualifications, // it's useless
     rust_2018_idioms,    // Still useful for backward compatibility patterns
     rust_2021_compatibility, // Warns about things that changed in 2021
     rust_2024_compatibility,  // Warns about things that changed in 2024 (when stable)

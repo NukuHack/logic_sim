@@ -91,7 +91,7 @@ impl LayerId {
 	/// owning a text field, and the context menu. Pointer-hover surfaces (bottom bar, flyout,
 	/// toast) are deliberately excluded -- hovering the bar must not steal the editor's
 	/// shortcuts.
-	pub fn captures_keyboard(self) -> bool {
+	pub const fn captures_keyboard(self) -> bool {
 		if self.is_overlay_panel() {
 			return true;
 		}
@@ -112,7 +112,7 @@ pub enum Capture {
 }
 
 impl Capture {
-	fn contains(&self, pos: Vec2) -> bool {
+	const fn contains(&self, pos: Vec2) -> bool {
 		match self {
 			Self::None => false,
 			Self::Rect(r) => r.contains(pos),

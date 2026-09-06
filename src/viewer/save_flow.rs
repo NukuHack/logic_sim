@@ -144,6 +144,7 @@ fn stamp_first_save_defaults(v: &mut ViewerState, name: &str) {
 /// `DescriptionCreator.RandomInitialChipColour`: random hue, saturation and
 /// value each lerped 0.2..1 (value/saturation only), so fresh chips are
 /// varied but never near-black/near-grey.
+#[allow(clippy::many_single_char_names)] // fine for this one small function
 fn random_initial_chip_colour() -> [f32; 4] {
 	fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 4] {
 		let i = (h * 6.0).floor() as i32;

@@ -91,10 +91,10 @@ fn type_layout(desc: &ChipDescription) -> (Vec2, Vec<f32>, Vec<f32>) {
 		// original via `CalculateMinChipSize` with real font metrics, more accurate than anything
 		// derivable here. Fall back to the pins+name-estimate heuristic only when nothing is saved
 		// (size == (0,0)).
-		let size = if desc.size != Vec2::ZERO {
-			Vec2::new(desc.size.x, desc.size.y)
-		} else {
+		let size = if desc.size == Vec2::ZERO {
 			layout::calculate_min_chip_size(&fingerprint.input_bits, &fingerprint.output_bits, desc, theme::FONT_SIZE_CHIP_NAME)
+		} else {
+			Vec2::new(desc.size.x, desc.size.y)
 		};
 		let (_, input_pin_y) = layout::calculate_default_pin_layout(&fingerprint.input_bits);
 		let (_, output_pin_y) = layout::calculate_default_pin_layout(&fingerprint.output_bits);
@@ -128,12 +128,12 @@ pub struct PlacedSubChip<'a> {
 	pub internal_data: &'a [u32],
 }
 
-impl<'a> PlacedSubChip<'a> {
+impl PlacedSubChip<'_> {
 	/// Effective palette index for this instance's output pin `pin_id`,
 	/// falling back to `default_colour` (the chip-level pin colour) if this
 	/// instance has no override for it.
 	pub fn output_pin_colour(&self, pin_id: i32, default_colour: Color) -> Color {
-		self.pin_colour_info.iter().find(|(id, _)| *id == pin_id).map(|(_, colour)| *colour).unwrap_or(default_colour)
+		self.pin_colour_info.iter().find(|(id, _)| *id == pin_id).map_or(default_colour, |(_, colour)| *colour)
 	}
 }
 
@@ -197,7 +197,7 @@ pub fn clear_type_layout_cache() {
 pub struct PlacedBuf(Vec<PlacedSubChip<'static>>);
 
 impl PlacedBuf {
-	pub fn new() -> Self {
+	pub const fn new() -> Self {
 		Self(Vec::new())
 	}
 

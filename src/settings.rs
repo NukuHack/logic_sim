@@ -106,11 +106,15 @@ impl From<JsonAppSettings> for AppSettings {
 	}
 }
 
+/// # Errors
+/// if failed
 pub fn parse_app_settings(json: &str) -> serde_json::Result<AppSettings> {
 	let raw: JsonAppSettings = serde_json::from_str(json)?;
 	Ok(raw.into())
 }
 
+/// # Errors
+/// if failed
 pub fn serialize_app_settings(settings: &AppSettings) -> serde_json::Result<String> {
 	let raw: JsonAppSettings = (*settings).into();
 	serde_json::to_string_pretty(&raw)

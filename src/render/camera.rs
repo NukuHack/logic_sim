@@ -30,7 +30,7 @@ impl Camera {
 	pub const MIN_ZOOM: f32 = 0.05;
 	pub const MAX_ZOOM: f32 = 4096.0;
 
-	pub fn new(viewport: Vec2) -> Self {
+	pub const fn new(viewport: Vec2) -> Self {
 		Self { position: Vec2::ZERO, zoom: 1.0, viewport: Self::sanitize_viewport(viewport) }
 	}
 
@@ -62,7 +62,7 @@ impl Camera {
 		self.position += correction;
 	}
 
-	pub fn resize_viewport(&mut self, width: f32, height: f32) {
+	pub const fn resize_viewport(&mut self, width: f32, height: f32) {
 		self.viewport = Self::sanitize_viewport(Vec2::new(width, height));
 	}
 
@@ -81,7 +81,7 @@ impl Camera {
 
 	/// Convert a screen-space pixel coordinate (origin top-left, +y down)
 	/// into world space.
-	pub fn screen_to_world(&self, screen: Vec2) -> Vec2 {
+	pub const fn screen_to_world(&self, screen: Vec2) -> Vec2 {
 		let ndc_x = (screen.x / self.viewport.x).mul_add(2.0, -1.0);
 		let ndc_y = (screen.y / self.viewport.y).mul_add(-2.0, 1.0);
 		let half_w = self.viewport.x / (2.0 * self.zoom);
@@ -89,7 +89,7 @@ impl Camera {
 		Vec2::new(self.position.x + ndc_x * half_w, self.position.y + ndc_y * half_h)
 	}
 
-	pub fn world_to_screen(&self, world: Vec2) -> Vec2 {
+	pub const fn world_to_screen(&self, world: Vec2) -> Vec2 {
 		let half_w = self.viewport.x / (2.0 * self.zoom);
 		let half_h = self.viewport.y / (2.0 * self.zoom);
 		let ndc_x = (world.x - self.position.x) / half_w;
@@ -102,7 +102,7 @@ impl Camera {
 	/// Column-major orthographic view-projection matrix mapping world space
 	/// to wgpu clip space (x,y in [-1, 1], origin at `self.position`).
 	/// Matches the layout expected by a `mat4x4<f32>` uniform in WGSL.
-	pub fn view_proj_matrix(&self) -> [[f32; 4]; 4] {
+	pub const fn view_proj_matrix(&self) -> [[f32; 4]; 4] {
 		let half_w = self.viewport.x / (2.0 * self.zoom);
 		let half_h = self.viewport.y / (2.0 * self.zoom);
 		let sx = 1.0 / half_w;

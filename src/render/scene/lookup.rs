@@ -63,7 +63,7 @@ pub struct SimulatorPinState<'a> {
 	pub scope: crate::sim::ChipIdx,
 }
 
-impl<'a> PinStateLookup for SimulatorPinState<'a> {
+impl PinStateLookup for SimulatorPinState<'_> {
 	fn is_high(&self, pin_owner_id: i32, pin_id: i32) -> Option<bool> {
 		let addr = crate::description::PinAddress::new(pin_owner_id, pin_id);
 		let pin_idx = self.sim.find_pin(self.scope, addr)?;

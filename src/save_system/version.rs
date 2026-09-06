@@ -34,6 +34,8 @@ impl Version {
 
 	/// Mirrors `Main.Version.Parse`. Accepts exactly three dot-separated
 	/// integer components, e.g. `"2.1.6"`.
+	/// # Errors
+	/// if failed
 	pub fn parse(s: &str) -> Result<Self, VersionParseError> {
 		let mut parts = s.split('.');
 		let major = parts.next().ok_or(VersionParseError)?.trim().parse().map_err(|_| VersionParseError)?;

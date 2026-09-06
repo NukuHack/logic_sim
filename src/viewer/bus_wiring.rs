@@ -81,6 +81,8 @@ pub fn bus_partner_id(chip: &ChipDescription, library: &ChipLibrary, owner_id: i
 /// has checked both owners are `is_bus_type`). Returns the `(source, target)` pin addresses
 /// the finished wire must use: the origin half's visible output pin and the terminus half's
 /// input pin, whichever physical owner each role landed on.
+/// # Errors
+/// if failed
 pub fn resolve_bus_pair_completion(
 	chip: &mut ChipDescription,
 	library: &ChipLibrary,
@@ -198,6 +200,8 @@ fn pin_of(chip: &ChipDescription, library: &ChipLibrary, owner_id: i32, output: 
 /// may only land on a bus wire (two outputs driving one normal wire would disagree on its
 /// state), an *input*-pin end may land on any wire, electrically the new wire connects to
 /// the tapped wire's resolved pins (bus-corrected on the target side).
+/// # Errors
+/// if failed
 pub fn resolve_completion_on_wire(
 	chip: &ChipDescription,
 	library: &ChipLibrary,
@@ -227,6 +231,6 @@ pub fn resolve_completion_on_wire(
 	}
 }
 
-fn start_pin_address(owner_id: i32, pin_id: i32) -> PinAddress {
+const fn start_pin_address(owner_id: i32, pin_id: i32) -> PinAddress {
 	PinAddress::new(owner_id, pin_id)
 }

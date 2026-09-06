@@ -130,7 +130,7 @@ impl ApplicationHandler for App {
 			_ => {}
 		}
 
-		self.note_status_maybe_changed(status_before);
+		self.note_status_maybe_changed(status_before.as_ref());
 	}
 }
 
@@ -230,7 +230,7 @@ impl App {
 						// matching the original's two chances to land.
 						let mut status_before = self.status.clone();
 						try_finish_pending_wire(v, world_pos, &mut status_before);
-						self.note_status_maybe_changed(status_before);
+						self.note_status_maybe_changed(status_before.as_ref());
 					}
 				}
 			},
