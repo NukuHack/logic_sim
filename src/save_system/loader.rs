@@ -19,10 +19,8 @@ impl Loader {
 	/// if it can't be parsed (matching the original's "start fresh rather
 	/// than crash on a corrupt settings file" behaviour).
 	pub fn load_app_settings(paths: &SavePaths) -> AppSettings {
-		match std::fs::read_to_string(paths.app_settings_path()) {
-			Ok(text) => parse_app_settings(&text).unwrap_or_default(),
-			Err(_) => AppSettings::default_settings(),
-		}
+		std::fs::read_to_string(paths.app_settings_path())
+			.map_or_else(|_| AppSettings::default_settings(), |text| parse_app_settings(&text).unwrap_or_default())
 	}
 
 	/// Mirrors `Loader.ProjectExists`.
@@ -32,6 +30,8 @@ impl Loader {
 
 	/// Mirrors `Loader.LoadProjectDescription`. Errors if no project
 	/// description file exists at the expected path.
+	/// # Errors
+	/// if could not be done
 	pub fn load_project_description(paths: &SavePaths, project_name: &str) -> io::Result<ProjectDescription> {
 		if !crate::save_system::util::valid_file_name(project_name) {
 			return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid project name"));
@@ -60,7 +60,7 @@ impl Loader {
 		};
 
 		for entry in entries.flatten() {
-			if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+			if !entry.file_type().is_ok_and(|t| t.is_dir()) {
 				continue;
 			}
 			let Some(project_name) = entry.file_name().to_str().map(str::to_owned) else { continue };
@@ -79,12 +79,16 @@ impl Loader {
 	/// Mirrors `Loader.LoadProject`: description + chip library (custom
 	/// chips from disk, plus every builtin chip not shadowed by a
 	/// same-named custom chip).
+	/// # Errors
+	/// if could not be done
 	pub fn load_project(paths: &SavePaths, project_name: &str) -> io::Result<Project> {
 		let description = Self::load_project_description(paths, project_name)?;
 		let chip_library = Self::load_chip_library(paths, &description)?;
 		Ok(Project::new(description, chip_library))
 	}
 
+	/// # Errors
+	/// if could not be done
 	fn load_chip_library(paths: &SavePaths, description: &ProjectDescription) -> io::Result<ChipLibrary> {
 		let chips_dir = paths.chips_path(&description.project_name);
 

@@ -70,20 +70,20 @@ impl LayerId {
 	/// Whether this layer is one of the full-screen editor panels opened "on" the viewer
 	/// (`ViewerState::overlay`, plus the search popup which stacks independently above any of
 	/// them). Used to keep the stack in sync with live state between redraws.
-	pub fn is_overlay_panel(self) -> bool {
+	pub const fn is_overlay_panel(self) -> bool {
 		matches!(
 			self,
-			LayerId::Library
-				| LayerId::Search
-				| LayerId::Preferences
-				| LayerId::Naming
-				| LayerId::KeySelect
-				| LayerId::RomEditor
-				| LayerId::SaveChip
-				| LayerId::PinEdit
-				| LayerId::LedColour
-				| LayerId::UnsavedChanges
-				| LayerId::CustomizePanel
+			Self::Library
+				| Self::Search
+				| Self::Preferences
+				| Self::Naming
+				| Self::KeySelect
+				| Self::RomEditor
+				| Self::SaveChip
+				| Self::PinEdit
+				| Self::LedColour
+				| Self::UnsavedChanges
+				| Self::CustomizePanel
 		)
 	}
 
@@ -95,7 +95,7 @@ impl LayerId {
 		if self.is_overlay_panel() {
 			return true;
 		}
-		matches!(self, LayerId::MenuScreen | LayerId::MenuPopup | LayerId::ContextMenu)
+		matches!(self, Self::MenuScreen | Self::MenuPopup | Self::ContextMenu)
 	}
 }
 
@@ -114,9 +114,9 @@ pub enum Capture {
 impl Capture {
 	fn contains(&self, pos: Vec2) -> bool {
 		match self {
-			Capture::None => false,
-			Capture::Rect(r) => r.contains(pos),
-			Capture::FullScreen => true,
+			Self::None => false,
+			Self::Rect(r) => r.contains(pos),
+			Self::FullScreen => true,
 		}
 	}
 }
@@ -189,7 +189,7 @@ pub struct Dispatch<'a, A> {
 }
 
 impl<A> Dispatch<'_, A> {
-	fn propagated() -> Self {
+	const fn propagated() -> Self {
 		Self { result: InputResult::Propagate, layer: None, button: None, scroll_regions: &[] }
 	}
 }

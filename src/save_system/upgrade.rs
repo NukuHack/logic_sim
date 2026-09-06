@@ -18,7 +18,7 @@ const LED_NAME: &str = "LED";
 /// saved by a version at or before 2.1.4 in place. Builtin chips are
 /// deliberately not passed in -- they're always constructed fresh by this
 /// build and can never carry old data.
-pub(crate) fn apply_version_changes(custom_chips: &mut [ChipDescription]) {
+pub fn apply_version_changes(custom_chips: &mut [ChipDescription]) {
 	for chip in custom_chips.iter_mut() {
 		let chip_version = chip.dls_version.as_deref().and_then(Version::try_parse).unwrap_or(DEFAULT_CHIP_VERSION);
 		if chip_version <= VERSION_PRE_2_1_5 {
@@ -37,7 +37,7 @@ fn update_chip_pre_2_1_5(chip: &mut ChipDescription) {
 
 	for sub in &mut chip.sub_chips {
 		// ---- Added LED colour option (requires instance data array size of 1 for led subchips) ----
-		if sub.name.eq_ignore_ascii_case(LED_NAME) && sub.internal_data.as_ref().is_none_or(|data| data.is_empty()) {
+		if sub.name.eq_ignore_ascii_case(LED_NAME) && sub.internal_data.as_ref().is_none_or(Vec::is_empty) {
 			sub.internal_data = Some(vec![0]);
 		}
 
@@ -49,7 +49,7 @@ fn update_chip_pre_2_1_5(chip: &mut ChipDescription) {
 }
 
 /// ---- Inserted ORANGE as colour option at index 1, so update old indices to correct values ----
-fn get_new_pin_colour(col_old: Color) -> Color {
+const fn get_new_pin_colour(col_old: Color) -> Color {
 	let colour_index = col_old.to_int();
 	Color::from_int(if colour_index > 0 { colour_index + 1 } else { colour_index })
 }

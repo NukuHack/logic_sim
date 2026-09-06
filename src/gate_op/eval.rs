@@ -60,7 +60,7 @@ impl fmt::Display for Lut {
 			(0, 0)
 		};
 
-		write!(f, "LUT [{} rows x {} cols] - {} total entries, range: {}..={}", rows, cols, total_elements, min, max)
+		write!(f, "LUT [{rows} rows x {cols} cols] - {total_elements} total entries, range: {min}..={max}")
 	}
 }
 
@@ -275,7 +275,7 @@ impl fmt::Display for NativeMulti {
 		let pin_count = self.entries.len();
 
 		// Show summary of what each pin does (if we can extract it)
-		write!(f, "NativeMulti [{} pins", pin_count)?;
+		write!(f, "NativeMulti [{pin_count} pins")?;
 
 		// Show first few pins with their input/output widths
 		let max_show = 3;
@@ -301,7 +301,7 @@ impl fmt::Display for NativeMulti {
 }
 
 impl NativeMulti {
-	pub fn new(entries: Vec<Native>) -> Self {
+	pub const fn new(entries: Vec<Native>) -> Self {
 		Self { entries }
 	}
 }
@@ -350,7 +350,7 @@ impl fmt::Display for NativeSplit {
 		let pin_count = self.out_layout.len();
 		let total_out_bits: u32 = self.out_layout.iter().map(|(_, width)| width).sum();
 
-		write!(f, "NativeSplit [{} pins, {}b total out", pin_count, total_out_bits)?;
+		write!(f, "NativeSplit [{pin_count} pins, {total_out_bits}b total out")?;
 
 		// Show the layout if not too many pins
 		if pin_count <= 4 {
@@ -368,7 +368,7 @@ impl fmt::Display for NativeSplit {
 				if i > 0 {
 					write!(f, ", ")?;
 				}
-				write!(f, "p{}: {}b@{}", i, width, offset)?;
+				write!(f, "p{i}: {width}b@{offset}")?;
 			}
 			if pin_count > 2 {
 				write!(f, ", … (+{} more)", pin_count - 2)?;
@@ -385,7 +385,7 @@ impl fmt::Display for NativeSplit {
 }
 
 impl NativeSplit {
-	pub fn new(native: Native, out_layout: Vec<(u32, u32)>) -> Self {
+	pub const fn new(native: Native, out_layout: Vec<(u32, u32)>) -> Self {
 		Self { native, out_layout }
 	}
 }

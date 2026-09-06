@@ -19,7 +19,7 @@ use crate::{gate_op::Bits, pin_state::LogicState};
 const WORD_BITS: u32 = Bits::BITS;
 
 /// Number of `Word`s needed to hold `bits` bits.
-pub fn words_for(bits: u32) -> usize {
+pub const fn words_for(bits: u32) -> usize {
 	if bits == 0 { 0 } else { ((bits - 1) / WORD_BITS + 1) as usize }
 }
 
@@ -27,7 +27,7 @@ pub fn words_for(bits: u32) -> usize {
 /// divides evenly) -- every masking/truncating helper below needs to know which word is the
 /// last significant one and how much of it counts, so this is computed once and shared rather
 /// than re-derived per helper.
-fn full_words_and_remainder(n: u32) -> (usize, u32) {
+const fn full_words_and_remainder(n: u32) -> (usize, u32) {
 	((n / WORD_BITS) as usize, n % WORD_BITS)
 }
 
@@ -159,7 +159,7 @@ fn field_word(a: &[Bits], start: u32, word_index: usize) -> Bits {
 /// Extracts the `n`-bit field starting at bit `start`, i.e. `(a >> start) & mask(n)` -- the
 /// building block every candidate below uses to split a packed word into named operands (`a`,
 /// `c`, `cin`, ...) regardless of how many words wide the whole gate is. Masks the partial top
-/// word inline rather than ANDing the whole result against a separately built mask `Vec`.
+/// word inline rather than AND-ing the whole result against a separately built mask `Vec`.
 pub fn field(a: &[Bits], start: u32, n: u32) -> Vec<Bits> {
 	if n == 0 {
 		return Vec::new();
@@ -199,7 +199,7 @@ pub fn add(a: &[Bits], b: &[Bits]) -> Vec<Bits> {
 	let mut out = Vec::with_capacity(len + 1);
 	let mut carry: u128 = 0;
 	for i in 0..len {
-		let sum = carry + a.get(i).copied().unwrap_or(0) as u128 + b.get(i).copied().unwrap_or(0) as u128;
+		let sum = carry + u128::from(a.get(i).copied().unwrap_or(0)) + u128::from(b.get(i).copied().unwrap_or(0));
 		out.push(sum as Bits);
 		carry = sum >> WORD_BITS;
 	}
@@ -210,7 +210,7 @@ pub fn add(a: &[Bits], b: &[Bits]) -> Vec<Bits> {
 }
 
 /// Masks `a` down to exactly `n` bits (drops any excess words, zeroes any excess high bits in
-/// the top remaining word). Masks the partial top word inline instead of ANDing against a
+/// the top remaining word). Masks the partial top word inline instead of AND-ing against a
 /// separately built mask `Vec`, same one-allocation shape as [`not`]/[`field`].
 pub fn truncate(a: &[Bits], n: u32) -> Vec<Bits> {
 	if n == 0 {
@@ -228,7 +228,7 @@ pub fn truncate(a: &[Bits], n: u32) -> Vec<Bits> {
 /// Wraps a single-bit boolean result as the one-word `Vec<Bits>` every 1-output-bit candidate
 /// (`AND_N`, `XOR_N`, ...) returns.
 pub fn bit_result(b: bool) -> Vec<Bits> {
-	vec![b as Bits]
+	vec![Bits::from(b)]
 }
 
 /// Shifts `a` left by `amount` bits, growing the output by as many words as needed -- the

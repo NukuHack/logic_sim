@@ -34,7 +34,7 @@ impl SavePaths {
 	/// - Linux: `~/.local/share/DigitalLogicSim`
 	/// - Falls back to `./DigitalLogicSimData` if no platform data directory can be determined.
 	pub fn default_data_dir() -> PathBuf {
-		dirs::data_dir().map(|d| d.join("DigitalLogicSim")).unwrap_or_else(|| PathBuf::from(".").join("DigitalLogicSimData"))
+		dirs::data_dir().map_or_else(|| PathBuf::from(".").join("DigitalLogicSimData"), |d| d.join("DigitalLogicSim"))
 	}
 
 	/// The exact save-data directory the original Unity build of Digital Logic Sim uses
@@ -66,13 +66,15 @@ impl SavePaths {
 			}
 		};
 
-		dirs::home_dir().map(|home| home.join(path)).unwrap_or_else(|| PathBuf::from("Digital-Logic-Sim"))
+		dirs::home_dir().map_or_else(|| PathBuf::from("Digital-Logic-Sim"), |home| home.join(path))
 	}
 
 	pub fn root(&self) -> &Path {
 		&self.root
 	}
 
+	/// # Errors
+	/// propagates from `create_dir_all`
 	pub fn ensure_directory_exists(path: &Path) -> io::Result<()> {
 		std::fs::create_dir_all(path)
 	}

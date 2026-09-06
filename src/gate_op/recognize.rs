@@ -31,13 +31,13 @@ pub struct Candidate {
 	formula: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>,
 }
 impl Candidate {
-	pub fn name(&self) -> &'static str {
+	pub const fn name(&self) -> &'static str {
 		self.name
 	}
-	pub fn config(&self) -> Bits {
+	pub const fn config(&self) -> Bits {
 		self.config
 	}
-	pub fn formula(&self) -> fn(&[Bits], u32, u32, Bits) -> Vec<Bits> {
+	pub const fn formula(&self) -> fn(&[Bits], u32, u32, Bits) -> Vec<Bits> {
 		self.formula
 	}
 }
@@ -203,7 +203,7 @@ const CFG_COUT_FIRST: Bits = 1 << 3;
 /// present). *Where* cin/cout sit doesn't change how many bits there are, so every variant --
 /// cin/cout absent, first, or last -- shares this one predicate instead of each hardcoding its
 /// own near-identical arithmetic.
-fn adder_applicable(in_bits: u32, out_bits: u32, config: Bits) -> bool {
+const fn adder_applicable(in_bits: u32, out_bits: u32, config: Bits) -> bool {
 	let has_cin = config & CFG_HAS_CIN != 0;
 	let has_cout = config & CFG_HAS_COUT != 0;
 	let operand_bits = if has_cin { in_bits.wrapping_sub(1) } else { in_bits };
@@ -228,7 +228,7 @@ fn adder_formula(w: &[Bits], in_bits: u32, out_bits: u32, config: Bits) -> Vec<B
 	let operand_bits = if has_cin { in_bits - 1 } else { in_bits };
 	let n = operand_bits / 2;
 	// Cin (if present and first) occupies bit 0, pushing both operand fields up by one bit.
-	let operand_start = if has_cin && cin_first { 1 } else { 0 };
+	let operand_start = u32::from(has_cin && cin_first);
 
 	let mut sum = bitvec::add(&bitvec::field(w, operand_start, n), &bitvec::field(w, operand_start + n, n));
 	if has_cin {
@@ -329,7 +329,7 @@ fn find_candidate(in_bits: u32, out_bits: u32, lut: &Lut) -> Option<&'static Can
 		return None; // table doesn't match the claimed width; nothing sane to compare against
 	}
 
-	let row_value = |row: usize| -> u64 { lut.row(row as u64).and_then(|r| r.first()).copied().unwrap_or(0) as u64 };
+	let row_value = |row: usize| -> u64 { u64::from(lut.row(row as u64).and_then(|r| r.first()).copied().unwrap_or(0)) };
 
 	// Anchor row checked before the full sweep: the all-ones input is cheap to compute and,
 	// in practice, is where most non-matching-but-`applicable` candidates (e.g. AND2 vs.

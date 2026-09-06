@@ -52,11 +52,11 @@ pub(crate) enum CustomizeInteraction {
 impl CustomizeInteraction {
 	/// Whether some grab/placement is in flight (preview clicks then
 	/// commit rather than starting something new).
-	pub(crate) fn is_active(self) -> bool {
-		self != Self::None
+	pub(crate) const fn is_active(self) -> bool {
+		!matches!(self, Self::None)
 	}
 	/// Whether a body resize drag is in progress.
-	pub(crate) fn is_resizing(self) -> bool {
+	pub(crate) const fn is_resizing(self) -> bool {
 		matches!(self, Self::Resizing { .. })
 	}
 }
@@ -110,7 +110,7 @@ pub(crate) fn display_entries(draft: &ChipDescription, library: &ChipLibrary) ->
 /// placed-component content footprint -- dropping a display lands it at
 /// exactly the size that chip renders at on the canvas, per the
 /// scale-1-parity rule.
-pub(crate) fn default_display_scale(_chip_type: ChipType) -> f32 {
+pub(crate) const fn default_display_scale(_chip_type: ChipType) -> f32 {
 	1.0
 }
 
@@ -186,8 +186,8 @@ pub(crate) fn build_chip_customizer(ctx: &CustomizeCtx<'_>, vw: f32, vh: f32, mo
 	let mut frame = EditorFrame::default();
 	ui_kit::fill_rect(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
 
-	let menu_rect = UiRect::new(PAD, PAD, MENU_W, vh - PAD * 2.0);
-	let preview_rect = UiRect::new(MENU_W + PAD * 2.0, PAD, (vw - MENU_W - PAD * 4.0).max(80.0), vh - PAD * 2.0);
+	let menu_rect = UiRect::new(PAD, PAD, MENU_W, PAD.mul_add(-2.0, vh));
+	let preview_rect = UiRect::new(PAD.mul_add(2.0, MENU_W), PAD, PAD.mul_add(-4.0, vw - MENU_W).max(80.0), PAD.mul_add(-2.0, vh));
 
 	build_preview(ctx, &mut frame, ui, preview_rect, mouse);
 	let list_rect = build_menu(ctx, &mut frame, ui, menu_rect);
@@ -215,6 +215,7 @@ fn fit_ppu(ctx: &CustomizeCtx<'_>, rect: UiRect) -> f32 {
 /// wheel, colour swatches + hex field, and the DISPLAYS list. Returns the
 /// list's scroll viewport rect (part of [`PreviewLayout`]).
 fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: UiRect) -> UiRect {
+	use CustomizeInteraction as Ci;
 	let inner_x = rect.x + 12.0;
 	let inner_w = rect.w - 24.0;
 	ui_kit::fill_rect(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
@@ -223,7 +224,6 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 	ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 12.0), inner_w, "Customize chip", [1.0; 4], 22.0);
 	y += 34.0;
 
-	use CustomizeInteraction as Ci;
 	let hint = match ctx.interaction {
 		Ci::None => ["Drag a corner bracket to resize.", "Pick a display below -- click a placed one to remove it."],
 		Ci::Resizing { .. } => ["Release to finish resizing", "(size snaps to the grid)."],
@@ -260,16 +260,16 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 	y += 4.0;
 
 	// Colour swatches (two rows of four) + hex field
-	let swatch_w = (inner_w - GAP * 3.0) / 4.0;
+	let swatch_w = GAP.mul_add(-3.0, inner_w) / 4.0;
 	for (i, colour) in theme::COLORS.iter().enumerate() {
-		let srect = UiRect::new(inner_x + (i % 4) as f32 * (swatch_w + GAP), y + (i / 4) as f32 * (26.0 + GAP), swatch_w, 26.0);
+		let srect = UiRect::new(((i % 4) as f32).mul_add(swatch_w + GAP, inner_x), ((i / 4) as f32).mul_add(26.0 + GAP, y), swatch_w, 26.0);
 		ui_kit::fill_rect(frame, ui, srect, *colour);
 		if same_rgb(effective_body_colour(ctx.draft), *colour) {
 			frame.geometry.add_rect(ui_kit::to_world(srect.centre(), ui.vw, ui.vh), Vec2::new(srect.w + 4.0, srect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
 		}
 		frame.buttons.push(EditorButton { rect: srect, action: EditorAction::CustomizePickColour(i), enabled: true });
 	}
-	y += 26.0 * 2.0 + GAP * 2.0;
+	y += GAP.mul_add(2.0, 26.0 * 2.0);
 
 	ui_kit::text_field_row(frame, ui, UiRect::new(inner_x, y, inner_w, BTN_H - 4.0), ctx.hex_text, "#RRGGBB", 15.0, 12.0);
 	y += BTN_H + GAP;
@@ -298,7 +298,7 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 		);
 	}
 	for (index, entry) in ctx.entries.iter().enumerate() {
-		let row_y = list_rect.y + index as f32 * (ROW_H + LIST_ROW_GAP) - scroll;
+		let row_y = (index as f32).mul_add(ROW_H + LIST_ROW_GAP, list_rect.y) - scroll;
 		if row_y + ROW_H <= list_rect.y || row_y >= list_rect.y + list_rect.h {
 			continue;
 		}
@@ -320,7 +320,7 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 		// Proportional scrollbar thumb on the viewport's right edge.
 		let track = list_rect.h - 4.0;
 		let thumb_h = (track * (list_rect.h / (list_rect.h + max))).clamp(18.0, track);
-		let thumb_y = list_rect.y + 2.0 + (scroll / max) * (track - thumb_h);
+		let thumb_y = (scroll / max).mul_add(track - thumb_h, list_rect.y + 2.0);
 		ui_kit::fill_rect(frame, ui, UiRect::new(list_rect.x + list_rect.w - 4.0, thumb_y, 3.0, thumb_h), [0.45, 0.45, 0.5, 1.0]);
 	}
 
@@ -399,7 +399,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 	let size = ctx.draft.size;
 	let px_per_unit = fit_ppu(ctx, rect);
 	let centre_px = rect.centre();
-	let map = |p: Vec2| Vec2::new(centre_px.x + p.x * px_per_unit, centre_px.y - p.y * px_per_unit);
+	let map = |p: Vec2| Vec2::new(p.x.mul_add(px_per_unit, centre_px.x), p.y.mul_add(-px_per_unit, centre_px.y));
 
 	let body_half_screen = Vec2::new(size.x * px_per_unit / 2.0, size.y * px_per_unit / 2.0);
 
@@ -531,19 +531,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 		Some((rect_from_corners(tl, br), UiRect::new(br.x - 11.0, br.y - 11.0, 11.0, 11.0)))
 	};
 
-	if !ctx.interaction.is_active() {
-		for (i, display) in ctx.draft.displays.iter().enumerate().rev() {
-			let Some(resolved) = ctx.draft.sub_chips.iter().find(|s| s.id == display.sub_chip_id).and_then(|s| ctx.library.try_get(&s.name)) else {
-				continue;
-			};
-			let Some((drect, scale_corner)) = placed_rect(display, resolved) else { continue };
-			if drect.contains(mouse) {
-				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 0.8, 0.25, 1.0]);
-			}
-			frame.buttons.push(EditorButton { rect: scale_corner, action: EditorAction::CustomizeGrabDisplayScale(i), enabled: true });
-			frame.buttons.push(EditorButton { rect: drect, action: EditorAction::CustomizeGrabDisplayMove(i), enabled: true });
-		}
-	} else {
+	if ctx.interaction.is_active() {
 		// Highlight whichever display is currently carried.
 		let carried = match ctx.interaction {
 			CustomizeInteraction::MovingDisplay { index, .. } | CustomizeInteraction::ScalingDisplay { index, .. } => Some(index),
@@ -556,6 +544,18 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 			{
 				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 1.0, 1.0, 1.0]);
 			}
+		}
+	} else {
+		for (i, display) in ctx.draft.displays.iter().enumerate().rev() {
+			let Some(resolved) = ctx.draft.sub_chips.iter().find(|s| s.id == display.sub_chip_id).and_then(|s| ctx.library.try_get(&s.name)) else {
+				continue;
+			};
+			let Some((drect, scale_corner)) = placed_rect(display, resolved) else { continue };
+			if drect.contains(mouse) {
+				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 0.8, 0.25, 1.0]);
+			}
+			frame.buttons.push(EditorButton { rect: scale_corner, action: EditorAction::CustomizeGrabDisplayScale(i), enabled: true });
+			frame.buttons.push(EditorButton { rect: drect, action: EditorAction::CustomizeGrabDisplayMove(i), enabled: true });
 		}
 	}
 }
@@ -578,7 +578,7 @@ fn rect_from_corners(a: Vec2, b: Vec2) -> UiRect {
 /// *again* to survive it: net effect, world +y ends up toward the top of the preview like
 /// everywhere else in the editor.
 fn append_world_to_frame(target: &mut SceneGeometry, world: &SceneGeometry, centre_px: Vec2, px_per_unit: f32, vh: f32) {
-	let map = |p: Vec2| Vec2::new(centre_px.x + p.x * px_per_unit, vh - centre_px.y + p.y * px_per_unit);
+	let map = |p: Vec2| Vec2::new(p.x.mul_add(px_per_unit, centre_px.x), p.y.mul_add(px_per_unit, vh - centre_px.y));
 	for v in &world.triangles {
 		target.triangles.push(crate::render::foundation::SceneVertex { pos: map(v.pos), colour: v.colour });
 	}
@@ -625,9 +625,24 @@ fn draw_edge_pins(world: &mut SceneGeometry, draft: &ChipDescription, size: Vec2
 /// Amber/white L-brackets around a placed display's screen rect.
 fn draw_display_brackets(target: &mut SceneGeometry, ui: UiCtx, r: UiRect, colour: Rgba) {
 	let len = 10.0_f32.min(r.w / 2.0).min(r.h / 2.0);
-	for (cx, cy, dx, dy) in [(r.x, r.y, 1.0, 1.0), (r.x + r.w, r.y, -1.0, 1.0), (r.x, r.y + r.h, 1.0, -1.0), (r.x + r.w, r.y + r.h, -1.0, -1.0)] {
-		target.add_line(ui_kit::to_world(Vec2::new(cx, cy), ui.vw, ui.vh), ui_kit::to_world(Vec2::new(cx + dx * len, cy), ui.vw, ui.vh), 2.0, colour);
-		target.add_line(ui_kit::to_world(Vec2::new(cx, cy), ui.vw, ui.vh), ui_kit::to_world(Vec2::new(cx, cy + dy * len), ui.vw, ui.vh), 2.0, colour);
+	for (cx, cy, dx, dy) in [
+		(r.x, r.y, 1.0_f32, 1.0_f32),
+		(r.x + r.w, r.y, -1.0_f32, 1.0_f32),
+		(r.x, r.y + r.h, 1.0_f32, -1.0_f32),
+		(r.x + r.w, r.y + r.h, -1.0_f32, -1.0_f32),
+	] {
+		target.add_line(
+			ui_kit::to_world(Vec2::new(cx, cy), ui.vw, ui.vh),
+			ui_kit::to_world(Vec2::new(dx.mul_add(len, cx), cy), ui.vw, ui.vh),
+			2.0,
+			colour,
+		);
+		target.add_line(
+			ui_kit::to_world(Vec2::new(cx, cy), ui.vw, ui.vh),
+			ui_kit::to_world(Vec2::new(cx, dy.mul_add(len, cy)), ui.vw, ui.vh),
+			2.0,
+			colour,
+		);
 	}
 }
 

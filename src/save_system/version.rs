@@ -28,7 +28,7 @@ impl Version {
 	/// (`<`, `>`, ...) don't need this -- the derived `Ord` already compares major/minor/patch
 	/// lexicographically, which is correct even in the (very unlikely) case a minor or patch
 	/// component reaches three digits, unlike this packed-integer form.
-	pub fn to_int(self) -> i64 {
+	pub const fn to_int(self) -> i64 {
 		self.major as i64 * 100_000 + self.minor as i64 * 1_000 + self.patch as i64
 	}
 

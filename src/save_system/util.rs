@@ -53,10 +53,7 @@ pub fn ensure_unique_file_name(original_path: &Path) -> PathBuf {
 	let mut duplicates = 0;
 	loop {
 		duplicates += 1;
-		let candidate_name = match &ext {
-			Some(ext) => format!("{stem}_{duplicates}.{ext}"),
-			None => format!("{stem}_{duplicates}"),
-		};
+		let candidate_name = ext.as_ref().map_or_else(|| format!("{stem}_{duplicates}"), |ext| format!("{stem}_{duplicates}.{ext}"));
 		let candidate = parent.join(candidate_name);
 		if !candidate.exists() {
 			return candidate;
@@ -91,6 +88,9 @@ fn append_to_file_name(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// Mirrors `SaveUtils.CopyDirectory`.
+/// # Errors
+/// basically anywhere
+/// dor not found, could not been created etc
 pub fn copy_directory(source_dir: &Path, destination_dir: &Path, recursive: bool) -> io::Result<()> {
 	if !source_dir.is_dir() {
 		return Err(io::Error::new(io::ErrorKind::NotFound, format!("Source directory not found: {}", source_dir.display())));

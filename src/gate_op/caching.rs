@@ -300,7 +300,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		// polluted values. `process_cached_chip` already mirrors this on the input side (see
 		// its `state.bit_states()` build of `input`), so this keeps row capture consistent
 		// with both how rows get compared and how they get replayed.
-		let outputs: Vec<u32> = output_pins.iter().map(|&p| sim.pin(p).state.bit_states() as u32).collect();
+		let outputs: Vec<u32> = output_pins.iter().map(|&p| u32::from(sim.pin(p).state.bit_states())).collect();
 		cache_rows.push(outputs);
 	}
 
@@ -344,7 +344,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 			.map(|row| {
 				let mut combined: u64 = 0;
 				for (i, &(offset, _)) in out_layout.iter().enumerate() {
-					combined |= (row[i] as u64) << offset;
+					combined |= u64::from(row[i]) << offset;
 				}
 				vec![combined as u32]
 			})
@@ -369,12 +369,11 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 			let out_bits = sim.pin(out_pin).state.len();
 			let sub_rows: Vec<Vec<u32>> = cache_rows.iter().map(|row| vec![row[pin_idx]]).collect();
 			let sub_lut = Lut::new(sub_rows);
-			match super::recognize::recognize_formula(num_input_bits, out_bits, &sub_lut) {
-				Some((config, formula)) => natives.push(super::eval::Native::new(num_input_bits, out_bits, config, formula)),
-				None => {
-					natives.clear();
-					break 'pins;
-				}
+			if let Some((config, formula)) = super::recognize::recognize_formula(num_input_bits, out_bits, &sub_lut) {
+				natives.push(super::eval::Native::new(num_input_bits, out_bits, config, formula));
+			} else {
+				natives.clear();
+				break 'pins;
 			}
 		}
 		if natives.len() == output_pins.len() { Some(natives) } else { None }
@@ -386,16 +385,16 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		1 => {
 			let out_pin = output_pins[0];
 			let out_bits = sim.pin(out_pin).state.len();
-			match super::recognize::recognize(num_input_bits, out_bits, &lut) {
-				Some(native) => {
-					log::debug!("[cache] '{name}' recognized as a known gate pattern -- using Native instead of a {num_possible_inputs}-row Lut");
-					native
-				}
-				None => {
+			super::recognize::recognize(num_input_bits, out_bits, &lut).map_or_else(
+				|| {
 					log::debug!("[cache] '{name}' matched no known gate pattern -- storing the {num_possible_inputs}-row Lut as-is");
-					Box::new(lut)
-				}
-			}
+					Box::new(lut) as Box<dyn CachedGate>
+				},
+				|native| {
+					log::debug!("[cache] '{name}' recognized as a known gate pattern -- using Native instead of a {num_possible_inputs}-row Lut");
+					native as Box<dyn CachedGate>
+				},
+			)
 		}
 		n if n > 1 => {
 			if let Some(split) = flattened_native {
@@ -421,7 +420,7 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		}
 	};
 
-	log::debug!("[cache] cached chip '{}': {} row(s), {} input bit(s) to {}", name.clone(), num_possible_inputs, num_input_bits, cached_gate);
+	log::debug!("[cache] cached chip '{name}': {num_possible_inputs} row(s), {num_input_bits} input bit(s) to {cached_gate}");
 	sim.caching.combinational_chip_cache.insert(name, cached_gate);
 
 	// Restore the real input state the sweep overwrote, so the caller sees no side effects.

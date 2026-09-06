@@ -42,7 +42,7 @@ pub struct SimPin {
 }
 
 impl SimPin {
-	fn new(id: i32, is_input: bool, parent_chip: ChipIdx, bit_count: PinBitCount) -> Self {
+	const fn new(id: i32, is_input: bool, parent_chip: ChipIdx, bit_count: PinBitCount) -> Self {
 		Self {
 			id,
 			parent_chip,
@@ -86,7 +86,7 @@ pub struct SimChip {
 }
 
 impl SimChip {
-	pub fn is_ready(&self) -> bool {
+	pub const fn is_ready(&self) -> bool {
 		self.num_inputs_ready == self.num_connected_inputs
 	}
 }
@@ -185,7 +185,7 @@ impl Simulator {
 		let mut interner: HashMap<String, Arc<str>> = HashMap::new();
 		let root = build_recursive(root_desc, library, -1, None, &mut pins, &mut chips, &mut interner);
 
-		Simulator {
+		Self {
 			pins,
 			chips,
 			root,
@@ -204,7 +204,7 @@ impl Simulator {
 		}
 	}
 
-	pub fn root(&self) -> ChipIdx {
+	pub const fn root(&self) -> ChipIdx {
 		self.root
 	}
 
@@ -421,7 +421,7 @@ impl Simulator {
 			if state.tristate_flags() != 0 {
 				return false;
 			}
-			input |= (state.bit_states() as u64) << shift;
+			input |= u64::from(state.bit_states()) << shift;
 			shift += state.len();
 		}
 
@@ -595,7 +595,7 @@ impl Simulator {
 
 	/// PCG-based pseudo-random bool, matching the original's algorithm so
 	/// race-condition resolution has the same statistical behaviour.
-	fn random_bool(&mut self) -> bool {
+	const fn random_bool(&mut self) -> bool {
 		self.pcg_rng_state = self.pcg_rng_state.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
 		let state = self.pcg_rng_state;
 		let mut result = ((state >> ((state >> 28).wrapping_add(4))) ^ state).wrapping_mul(277_803_737);
@@ -650,7 +650,7 @@ impl Simulator {
 			}
 			E::Clock => {
 				let spct = self.steps_per_clock_transition;
-				let high = spct != 0 && ((self.simulation_frame / spct as u64) & 1) == 0;
+				let high = spct != 0 && ((self.simulation_frame / u64::from(spct)) & 1) == 0;
 				set_out!(0, PinState::from_bool(high));
 			}
 			E::Pulse => {
@@ -679,7 +679,7 @@ impl Simulator {
 				}
 
 				set_out!(0, output_state);
-				self.chips[chip_idx.0].internal_state[INPUT_OLD] = pulse_input_high as u32;
+				self.chips[chip_idx.0].internal_state[INPUT_OLD] = u32::from(pulse_input_high);
 			}
 			E::Split4To1Bit => {
 				let in4 = in_state!(0);
@@ -746,8 +746,8 @@ impl Simulator {
 				set_out!(1, PinState::from_raw((data & BYTE_MASK) as u16));
 			}
 			E::Buzzer => {
-				let freq_index = in_state!(0).bit_states() as i32;
-				let volume_index = in_state!(1).bit_states() as u32;
+				let freq_index = i32::from(in_state!(0).bit_states());
+				let volume_index = u32::from(in_state!(1).bit_states());
 				audio.register_note(freq_index, volume_index);
 			}
 			_ => {
@@ -775,14 +775,14 @@ impl Simulator {
 		let last = internal.len() - 1;
 		let clock_high = clock_pin.first_bit_high();
 		let is_rising_edge = clock_high && internal[last] == 0;
-		internal[last] = clock_high as u32;
+		internal[last] = u32::from(clock_high);
 
 		if is_rising_edge {
 			if reset_pin.first_bit_high() {
 				internal.iter_mut().take(256).for_each(|x| *x = 0);
 			} else if write_enable_pin.first_bit_high() {
 				let addr = address_pin.bit_states() as usize;
-				internal[addr] = data_pin.bit_states() as u32;
+				internal[addr] = u32::from(data_pin.bit_states());
 			}
 		}
 
@@ -813,7 +813,7 @@ impl Simulator {
 		let last = internal.len() - 1;
 		let clock_high = clock_pin.first_bit_high();
 		let is_rising_edge = clock_high && internal[last] == 0;
-		internal[last] = clock_high as u32;
+		internal[last] = u32::from(clock_high);
 
 		if is_rising_edge {
 			if reset_pin.first_bit_high() {
@@ -822,7 +822,7 @@ impl Simulator {
 				}
 			} else if write_pin.first_bit_high() {
 				let addr = address_pin.bit_states() as usize + ADDRESS_SPACE;
-				let data = red_pin.bit_states() as u32 | ((green_pin.bit_states() as u32) << 4) | ((blue_pin.bit_states() as u32) << 8);
+				let data = u32::from(red_pin.bit_states()) | (u32::from(green_pin.bit_states()) << 4) | (u32::from(blue_pin.bit_states()) << 8);
 				internal[addr] = data;
 			}
 
@@ -863,7 +863,7 @@ impl Simulator {
 		let last = internal.len() - 1;
 		let clock_high = clock_pin.first_bit_high();
 		let is_rising_edge = clock_high && internal[last] == 0;
-		internal[last] = clock_high as u32;
+		internal[last] = u32::from(clock_high);
 
 		if is_rising_edge {
 			if reset_pin.first_bit_high() {
@@ -872,7 +872,7 @@ impl Simulator {
 				}
 			} else if write_pin.first_bit_high() {
 				let addr = address_pin.bit_states() as usize + ADDRESS_SPACE;
-				internal[addr] = pixel_input_pin.bit_states() as u32;
+				internal[addr] = u32::from(pixel_input_pin.bit_states());
 			}
 
 			if refresh_pin.first_bit_high() {
@@ -931,10 +931,10 @@ impl Simulator {
 		// countdowns, display buffers
 		let skip_leading = match chip_type {
 			// `[0]` is the bound key char (`E::Key` only ever reads it).
-			ChipType::Key => usize::MAX,
+			ChipType::Key |
 			// `[0]` is the palette index rendering reads each frame;
 			// nothing in `sim.rs` processes `DisplayLed` at all.
-			ChipType::DisplayLed => usize::MAX,
+			ChipType::DisplayLed |
 			// All 256 words are ROM contents -- `E::Rom256x16` only ever
 			// reads `internal_state`, it's never written back at runtime.
 			ChipType::Rom256x16 => usize::MAX,

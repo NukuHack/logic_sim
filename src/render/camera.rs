@@ -41,7 +41,7 @@ impl Camera {
 	/// dividing by it produces `Infinity`/`NaN` world-space geometry that gets sent straight to
 	/// the GPU, which some drivers handle very badly (up to and including a hard crash) rather
 	/// than just misrendering the one bad frame.
-	fn sanitize_viewport(viewport: Vec2) -> Vec2 {
+	const fn sanitize_viewport(viewport: Vec2) -> Vec2 {
 		let x = if viewport.x.is_finite() { viewport.x.max(1.0) } else { 1.0 };
 		let y = if viewport.y.is_finite() { viewport.y.max(1.0) } else { 1.0 };
 		Vec2::new(x, y)
@@ -71,9 +71,9 @@ impl Camera {
 	pub fn fit_to_bounds(&mut self, min: Vec2, max: Vec2, padding_fraction: f32) {
 		let width = (max.x - min.x).max(1e-4);
 		let height = (max.y - min.y).max(1e-4);
-		self.position = Vec2::new((min.x + max.x) / 2.0, (min.y + max.y) / 2.0);
+		self.position = min.midpoint(max);
 
-		let pad = 1.0 + padding_fraction.max(0.0) * 2.0;
+		let pad = padding_fraction.max(0.0).mul_add(2.0, 1.0);
 		let zoom_x = self.viewport.x / (width * pad);
 		let zoom_y = self.viewport.y / (height * pad);
 		self.zoom = zoom_x.min(zoom_y).clamp(Self::MIN_ZOOM, Self::MAX_ZOOM);
@@ -82,8 +82,8 @@ impl Camera {
 	/// Convert a screen-space pixel coordinate (origin top-left, +y down)
 	/// into world space.
 	pub fn screen_to_world(&self, screen: Vec2) -> Vec2 {
-		let ndc_x = (screen.x / self.viewport.x) * 2.0 - 1.0;
-		let ndc_y = 1.0 - (screen.y / self.viewport.y) * 2.0;
+		let ndc_x = (screen.x / self.viewport.x).mul_add(2.0, -1.0);
+		let ndc_y = (screen.y / self.viewport.y).mul_add(-2.0, 1.0);
 		let half_w = self.viewport.x / (2.0 * self.zoom);
 		let half_h = self.viewport.y / (2.0 * self.zoom);
 		Vec2::new(self.position.x + ndc_x * half_w, self.position.y + ndc_y * half_h)

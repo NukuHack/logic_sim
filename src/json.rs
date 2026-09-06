@@ -1,7 +1,7 @@
 //! JSON loading/saving that matches the on-disk save format used by the original Digital Logic Sim
 //! (see DLS.Description.Serialization.Serializer and the `*.json` files under a project's `Chips/` folder).
-//! This is a straight structural port: same field names (PascalCase, via serde rename), same
-//! enum-as-integer encoding for ChipType, same nested shape for pins/subchips/wires. Position/Colour/Points
+//! This is a straight structural port: same field names (`PascalCase`, via serde rename), same
+//! enum-as-integer encoding for `ChipType`, same nested shape for pins/subchips/wires. Position/Colour/Points
 //! are kept as plain structs so a chip file can be re-saved without losing editor layout data.
 
 use crate::description::{

@@ -130,7 +130,7 @@ impl ApplicationHandler for App {
 			_ => {}
 		}
 
-		self.note_status_maybe_changed(&status_before);
+		self.note_status_maybe_changed(status_before);
 	}
 }
 
@@ -145,7 +145,7 @@ impl App {
 				if btn_state == ElementState::Pressed {
 					let dispatch = self.menu_stack.dispatch_click(self.mouse_pos);
 					if let Some(action) = dispatch.button.map(|b| b.action.clone()) {
-						self.handle_menu_action(action, event_loop);
+						self.handle_menu_action(&action, event_loop);
 					}
 				}
 			}
@@ -230,7 +230,7 @@ impl App {
 						// matching the original's two chances to land.
 						let mut status_before = self.status.clone();
 						try_finish_pending_wire(v, world_pos, &mut status_before);
-						self.note_status_maybe_changed(&status_before);
+						self.note_status_maybe_changed(status_before);
 					}
 				}
 			},

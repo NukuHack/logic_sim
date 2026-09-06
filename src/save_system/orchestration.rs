@@ -21,22 +21,22 @@ const DISPLAY_MODE_ON_HOVER: i32 = 1;
 /// enough to open a project that declares `DLSVersion_EarliestCompatible`.
 /// `Ok(())` if it can be opened; `Err(message)` with a user-facing reason
 /// otherwise (including when the version string itself is unparseable).
+/// # Errors
+/// if could not be done
 pub fn can_open_project(description: &ProjectDescription) -> Result<(), String> {
-	match Version::parse(&description.dls_version_earliest_compatible) {
-		Ok(earliest_compatible) => {
-			if DLS_VERSION >= earliest_compatible {
-				Ok(())
-			} else {
-				Err(format!("This project requires version {earliest_compatible} or later."))
-			}
-		}
-		Err(_) => Err("Unrecognized project format".to_string()),
-	}
+	Version::parse(&description.dls_version_earliest_compatible).map_or_else(
+		|_| Err("Unrecognized project format".to_string()),
+		|earliest_compatible| {
+			if DLS_VERSION >= earliest_compatible { Ok(()) } else { Err(format!("This project requires version {earliest_compatible} or later.")) }
+		},
+	)
 }
 
 /// Mirrors `Main.CreateProject`: builds a fresh `ProjectDescription` with
 /// the same defaults as the original, saves it, then loads it back (so the
 /// returned `Project`'s chip library includes every builtin).
+/// # Errors
+/// if could not be done
 pub fn create_project(paths: &SavePaths, project_name: &str) -> io::Result<Project> {
 	let mut description = ProjectDescription {
 		project_name: project_name.to_string(),
@@ -66,6 +66,8 @@ pub fn create_project(paths: &SavePaths, project_name: &str) -> io::Result<Proje
 /// Mirrors `Main.CreateOrLoadProject` (minus the editor/simulation/UI side
 /// effects, which belong to whatever integrates this with a live app):
 /// loads the project if it already exists on disk, otherwise creates it.
+/// # Errors
+/// if one propagate from inner load / create functions
 pub fn create_or_load_project(paths: &SavePaths, project_name: &str) -> io::Result<Project> {
 	if Loader::project_exists(paths, project_name) { Loader::load_project(paths, project_name) } else { create_project(paths, project_name) }
 }

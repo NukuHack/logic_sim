@@ -3,9 +3,9 @@
 //! original C# codebase.
 use crate::render::theme::{COLORS, Rgba};
 use glam::Vec2;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use logic_sim_macros::ConstFromPrimitive;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum ChipType {
 	// ---- Basic Chips ----
@@ -63,48 +63,51 @@ pub enum ChipType {
 
 impl ChipType {
 	/// Convert to the integer representation used on disk.
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
+	}
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 
-	pub fn is_bus_origin_type(self) -> bool {
-		matches!(self, ChipType::Bus1Bit | ChipType::Bus4Bit | ChipType::Bus8Bit)
+	pub const fn is_bus_origin_type(self) -> bool {
+		matches!(self, Self::Bus1Bit | Self::Bus4Bit | Self::Bus8Bit)
 	}
 
-	pub fn is_bus_terminus_type(self) -> bool {
-		matches!(self, ChipType::BusTerminus1Bit | ChipType::BusTerminus4Bit | ChipType::BusTerminus8Bit)
+	pub const fn is_bus_terminus_type(self) -> bool {
+		matches!(self, Self::BusTerminus1Bit | Self::BusTerminus4Bit | Self::BusTerminus8Bit)
 	}
 
-	pub fn is_bus_type(self) -> bool {
+	pub const fn is_bus_type(self) -> bool {
 		self.is_bus_origin_type() || self.is_bus_terminus_type()
 	}
 
-	pub fn is_merge_type(self) -> bool {
-		use ChipType as CT;
-		matches!(self, CT::Merge1To4Bit | CT::Merge1To8Bit | CT::Merge4To8Bit | CT::Split4To1Bit | CT::Split8To4Bit | CT::Split8To1Bit)
+	pub const fn is_merge_type(self) -> bool {
+		matches!(self, Self::Merge1To4Bit | Self::Merge1To8Bit | Self::Merge4To8Bit | Self::Split4To1Bit | Self::Split8To4Bit | Self::Split8To1Bit)
 	}
 
-	pub fn is_io_type(self) -> bool {
-		use ChipType as CT;
-		matches!(self, CT::In1Bit | CT::In4Bit | CT::In8Bit | CT::Out1Bit | CT::Out4Bit | CT::Out8Bit)
+	pub const fn is_io_type(self) -> bool {
+		matches!(self, Self::In1Bit | Self::In4Bit | Self::In8Bit | Self::Out1Bit | Self::Out4Bit | Self::Out8Bit)
 	}
 
 	/// Dev-facing builtins (`dev.RAM-8` and the BUS-TERMINUS trio) that release builds keep out
 	/// of every player-facing list -- palette defaults, collection syncing/rows, the bottom bar,
 	/// and search (see `viewer::library::is_listed_in_current_build`).
-	pub fn is_dev_only(self) -> bool {
-		matches!(self, ChipType::DevRam8Bit | ChipType::BusTerminus1Bit | ChipType::BusTerminus4Bit | ChipType::BusTerminus8Bit)
+	pub const fn is_dev_only(self) -> bool {
+		matches!(self, Self::DevRam8Bit | Self::BusTerminus1Bit | Self::BusTerminus4Bit | Self::BusTerminus8Bit)
 	}
 
 	/// The bus-terminus chip type that pairs with this bus *origin* type --
 	/// `ChipTypeHelper.GetCorrespondingBusTerminusType`. `None` for anything
 	/// that isn't a bus origin (terminus types have no further pair of their
 	/// own).
-	pub fn corresponding_bus_terminus(self) -> Option<ChipType> {
+	pub const fn corresponding_bus_terminus(self) -> Option<Self> {
 		match self {
-			ChipType::Bus1Bit => Some(ChipType::BusTerminus1Bit),
-			ChipType::Bus4Bit => Some(ChipType::BusTerminus4Bit),
-			ChipType::Bus8Bit => Some(ChipType::BusTerminus8Bit),
+			Self::Bus1Bit => Some(Self::BusTerminus1Bit),
+			Self::Bus4Bit => Some(Self::BusTerminus4Bit),
+			Self::Bus8Bit => Some(Self::BusTerminus8Bit),
 			_ => None,
 		}
 	}
@@ -113,22 +116,17 @@ impl ChipType {
 	/// terminus type. `None` for anything that isn't a bus terminus
 	/// (origins pair the other way via
 	/// [`ChipType::corresponding_bus_terminus`]).
-	pub fn corresponding_bus_origin(self) -> Option<ChipType> {
+	pub const fn corresponding_bus_origin(self) -> Option<Self> {
 		match self {
-			ChipType::BusTerminus1Bit => Some(ChipType::Bus1Bit),
-			ChipType::BusTerminus4Bit => Some(ChipType::Bus4Bit),
-			ChipType::BusTerminus8Bit => Some(ChipType::Bus8Bit),
+			Self::BusTerminus1Bit => Some(Self::Bus1Bit),
+			Self::BusTerminus4Bit => Some(Self::Bus4Bit),
+			Self::BusTerminus8Bit => Some(Self::Bus8Bit),
 			_ => None,
 		}
 	}
-	/// Reconstruct from an integer, matching the original C# enum order.
-	/// Invalid values fall back to `Custom`.
-	pub fn from_int(v: i32) -> Self {
-		Self::try_from(v).unwrap_or_default()
-	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum ValueDisplayMode {
 	#[default]
@@ -143,29 +141,31 @@ impl ValueDisplayMode {
 	/// Display" option buttons list them (index == discriminant).
 	pub const ALL: [Self; 4] = [Self::None, Self::Decimal, Self::SignedDecimal, Self::Hex];
 
-	pub fn from_int(v: i32) -> Self {
-		Self::try_from(v).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
 	}
-
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 
 	/// Label shown on the pin-edit popup's "Decimal Display" option button
 	/// for this mode (mirrors `PinEditMenu.PinDecimalDisplayOptions`).
-	pub fn label(&self) -> &'static str {
+	pub const fn label(&self) -> &'static str {
 		match self {
-			ValueDisplayMode::None => "Off",
-			ValueDisplayMode::Decimal => "Unsigned",
-			ValueDisplayMode::SignedDecimal => "Signed",
-			ValueDisplayMode::Hex => "HEX",
+			Self::None => "Off",
+			Self::Decimal => "Unsigned",
+			Self::SignedDecimal => "Signed",
+			Self::Hex => "HEX",
 		}
 	}
 }
 
 /// Where (if anywhere) a chip's name label is drawn on its body. Mirrors
 /// `DLS.Description.NameDisplayLocation`, saved on disk as `NameLocation`
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum NameLocation {
 	#[default]
@@ -175,20 +175,20 @@ pub enum NameLocation {
 }
 
 impl NameLocation {
-	/// `NameDisplayLocation` as stored on disk: a plain integer matching the
-	/// original C# enum's declaration order
-	pub fn from_int(v: i32) -> Self {
-		Self::try_from(v).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
 	}
-
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 }
 
 /// Simplified, informational summary of what caching a chip ends up with once Save resolves
 /// `ChipDescription::should_be_cached` (`viewer::save_flow::resolve_should_cache`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum CacheKind {
 	/// Not cached: either the chip isn't combinational, or
@@ -208,25 +208,25 @@ pub enum CacheKind {
 }
 
 impl CacheKind {
-	/// `CacheKind` as stored on disk: a plain integer, same shape as
-	/// `NameLocation::from_int`/`to_int` above.
-	pub fn from_int(v: i32) -> Self {
-		Self::try_from(v).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
+	}
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
-	}
-
-	pub fn is_none(&self) -> bool {
+	pub const fn is_none(&self) -> bool {
 		matches!(self, Self::None)
 	}
 
-	pub fn is_off(&self) -> bool {
+	pub const fn is_off(&self) -> bool {
 		matches!(self, Self::Off)
 	}
 
-	pub fn toggle(&mut self) {
+	pub const fn toggle(&mut self) {
 		*self = match self {
 			Self::Off => Self::None,
 			_ => Self::Off,
@@ -243,12 +243,12 @@ pub struct PinAddress {
 }
 
 impl PinAddress {
-	pub fn new(pin_owner_id: i32, pin_id: i32) -> Self {
+	pub const fn new(pin_owner_id: i32, pin_id: i32) -> Self {
 		Self { pin_id, pin_owner_id }
 	}
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum PinBitCount {
 	#[default]
@@ -268,30 +268,32 @@ pub const PIN_HEIGHT_8BIT: f32 = PIN_HEIGHT_1BIT * 3.0;
 pub const PIN_RADIUS: f32 = PIN_HEIGHT_1BIT / 2.0;
 
 impl PinBitCount {
-	pub fn from_int(v: i32) -> Self {
-		Self::try_from(v).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
 	}
-
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 
 	/// Height (in world units) of this pin's connection stub. Mirrors
 	/// `SubChipHelper.PinHeightFromBitCount`.
-	pub fn pin_height(self) -> f32 {
+	pub const fn pin_height(self) -> f32 {
 		match self {
-			PinBitCount::Bit1 => PIN_HEIGHT_1BIT,
-			PinBitCount::Bit4 => PIN_HEIGHT_4BIT,
-			PinBitCount::Bit8 => PIN_HEIGHT_8BIT,
+			Self::Bit1 => PIN_HEIGHT_1BIT,
+			Self::Bit4 => PIN_HEIGHT_4BIT,
+			Self::Bit8 => PIN_HEIGHT_8BIT,
 		}
 	}
 
 	/// World-space radius to draw this pin's connection circle at
-	pub fn pin_radius(self) -> f32 {
+	pub const fn pin_radius(self) -> f32 {
 		match self {
-			PinBitCount::Bit1 => PIN_RADIUS,
-			PinBitCount::Bit4 => PIN_RADIUS * 1.7,
-			PinBitCount::Bit8 => PIN_RADIUS * 2.5,
+			Self::Bit1 => PIN_RADIUS,
+			Self::Bit4 => PIN_RADIUS * 1.7,
+			Self::Bit8 => PIN_RADIUS * 2.5,
 		}
 	}
 
@@ -300,12 +302,12 @@ impl PinBitCount {
 	/// `radius = size.y / 2.0` and both `round_left`/`round_right = true` to
 	/// get the actual pill shape (its rounded corners become true semicircle
 	/// caps exactly when the radius equals half the height).
-	pub fn pin_visual_shape_size(self) -> Vec2 {
+	pub const fn pin_visual_shape_size(self) -> Vec2 {
 		let r = self.pin_radius();
 		let body_width = match self {
-			PinBitCount::Bit1 => 0.0, // unused -- Bit1 draws a plain circle, not a pill.
-			PinBitCount::Bit4 => r * 0.6,
-			PinBitCount::Bit8 => r,
+			Self::Bit1 => 0.0, // unused -- Bit1 draws a plain circle, not a pill.
+			Self::Bit4 => r * 0.6,
+			Self::Bit8 => r,
 		};
 		Vec2::new(r, body_width + r)
 	}
@@ -313,11 +315,11 @@ impl PinBitCount {
 	/// Grid-height (in grid units) reserved for one pin along a chip's
 	/// edge. Mirrors the inline switch inside
 	/// `SubChipHelper.CalculateDefaultPinLayout`.
-	pub(crate) fn pin_grid_height(self) -> i32 {
+	pub(crate) const fn pin_grid_height(self) -> i32 {
 		match self {
-			PinBitCount::Bit1 => 2,
-			PinBitCount::Bit4 => 3,
-			PinBitCount::Bit8 => 4,
+			Self::Bit1 => 2,
+			Self::Bit4 => 3,
+			Self::Bit8 => 4,
 		}
 	}
 
@@ -326,16 +328,16 @@ impl PinBitCount {
 	/// a single 1-bit input is one circle (no grid, 1x1); 4 bits arrange
 	/// as a 2x2 grid; 8 bits as 2x4 (same 2-wide column count, twice as
 	/// tall). Mirrors the `1 = 1, 4 = 2x2, 8 = 2x4` layout.
-	pub fn input_bit_grid_dims(self) -> (i32, i32) {
+	pub const fn input_bit_grid_dims(self) -> (i32, i32) {
 		match self {
-			PinBitCount::Bit1 => (1, 1),
-			PinBitCount::Bit4 => (2, 2),
-			PinBitCount::Bit8 => (2, 4),
+			Self::Bit1 => (1, 1),
+			Self::Bit4 => (2, 2),
+			Self::Bit8 => (2, 4),
 		}
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum Color {
 	#[default]
@@ -350,12 +352,14 @@ pub enum Color {
 }
 
 impl Color {
-	pub fn from_int(a: i32) -> Self {
-		Self::try_from(a).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
 	}
-
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 
 	pub fn to_rgba(&self) -> Rgba {
@@ -388,7 +392,7 @@ impl PinDescription {
 	}
 
 	pub fn with_colour(name: impl Into<String>, id: i32, bit_count: PinBitCount, colour: Color) -> Self {
-		Self { name: name.into(), id, position: Vec2::default(), bit_count, colour, value_display_mode: ValueDisplayMode::None }
+		Self { name: name.into(), id, position: Vec2::ZERO, bit_count, colour, value_display_mode: ValueDisplayMode::None }
 	}
 
 	/// Full constructor mirroring every on-disk field, used when parsing a
@@ -432,7 +436,7 @@ impl SubChipDescription {
 	/// falling back to `default_colour` (the chip-level pin colour) if this
 	/// instance has no override for it.
 	pub fn output_pin_colour(&self, pin_id: i32, default_colour: Color) -> Color {
-		self.pin_colour_info.iter().find(|(id, _)| *id == pin_id).map(|(_, colour)| *colour).unwrap_or(default_colour)
+		self.pin_colour_info.iter().find(|(id, _)| *id == pin_id).map_or(default_colour, |(_, colour)| *colour)
 	}
 }
 
@@ -455,7 +459,7 @@ pub struct DisplayDescription {
 }
 
 impl DisplayDescription {
-	pub fn new(sub_chip_id: i32, position: Vec2, scale: f32) -> Self {
+	pub const fn new(sub_chip_id: i32, position: Vec2, scale: f32) -> Self {
 		Self { sub_chip_id, position, scale }
 	}
 }
@@ -466,7 +470,7 @@ impl DisplayDescription {
 /// originating pin (needed for colour/bit-count/simulation-state lookups), but that end's
 /// *position* must be resolved along the referenced wire's segment instead of at the pin
 /// itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum WireConnectionType {
 	#[default]
@@ -476,12 +480,14 @@ pub enum WireConnectionType {
 }
 
 impl WireConnectionType {
-	pub fn from_int(a: i32) -> Self {
-		Self::try_from(a).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
 	}
-
-	pub fn to_int(&self) -> i32 {
-		(*self).into()
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 }
 
@@ -646,11 +652,15 @@ impl ChipLibrary {
 		self.by_name.insert(desc.name.to_ascii_lowercase(), std::sync::Arc::new(desc));
 	}
 
+	/// # Panics
+	/// if `try_get` woud return None
 	pub fn get(&self, name: &str) -> &ChipDescription {
-		self.by_name.get(&name.to_ascii_lowercase()).map(std::sync::Arc::as_ref).unwrap_or_else(|| panic!("Chip not found in library: {name}"))
+		self.by_name.get(&name.to_ascii_lowercase()).map_or_else(|| panic!("Chip not found in library: {name}"), std::sync::Arc::as_ref)
 	}
 
 	/// Cheap-clone counterpart to `get`
+	/// # Panics
+	/// if `try_get` woud return None
 	pub fn get_arc(&self, name: &str) -> std::sync::Arc<ChipDescription> {
 		self.by_name.get(&name.to_ascii_lowercase()).cloned().unwrap_or_else(|| panic!("Chip not found in library: {name}"))
 	}
@@ -661,6 +671,8 @@ impl ChipLibrary {
 	/// still deep-clones if the entry's `Arc` is shared (e.g. someone is
 	/// mid-`get_arc`), same as it always has -- that's `Arc::make_mut`'s
 	/// normal copy-on-write behaviour, not a regression.
+	/// # Panics
+	/// if `try_get` woud return None
 	pub fn get_mut(&mut self, name: &str) -> &mut ChipDescription {
 		let entry = self.by_name.get_mut(&name.to_ascii_lowercase()).unwrap_or_else(|| panic!("Chip not found in library: {name}"));
 		std::sync::Arc::make_mut(entry)

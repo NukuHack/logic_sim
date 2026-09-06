@@ -18,7 +18,7 @@ pub use crate::render::ui_kit::to_world;
 /// Something a click on one of these overlays should cause the host app
 /// to do. Mirrors a UI-level view of the corresponding menu's behaviour,
 /// analogous to `menu_ui::UiAction` but for the editor-side overlays.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum EditorAction {
 	ClosePopup,
 	/// Preferences: cycle the wheel field at this index (0-based, in the
@@ -339,8 +339,8 @@ pub fn build_preferences_panel(state: &PrefsPanelState<'_>, vw: f32, vh: f32, mo
 		PrefRow { label: "Snap to grid", options: &SNAPPING_OPTIONS, current: desc.prefs_snapping },
 		PrefRow { label: "Straight wires", options: &STRAIGHT_WIRE_OPTIONS, current: desc.prefs_straight_wires },
 		PrefRow { label: "Wire connection check", options: &WIRE_CONNECTION_CHECK_OPTIONS, current: desc.prefs_can_complete_wire_connection },
-		PrefRow { label: "Sim status", options: &SIM_STATUS_OPTIONS, current: desc.prefs_sim_paused as i32 },
-		PrefRow { label: "Chip caching", options: &CACHING_OPTIONS, current: !desc.prefs_use_caching as i32 },
+		PrefRow { label: "Sim status", options: &SIM_STATUS_OPTIONS, current: i32::from(desc.prefs_sim_paused) },
+		PrefRow { label: "Chip caching", options: &CACHING_OPTIONS, current: !i32::from(!desc.prefs_use_caching) },
 	];
 
 	let field_w = panel_w * 0.4;
@@ -562,7 +562,7 @@ pub fn build_chip_library_panel(state: &ChipLibraryState<'_>, vw: f32, vh: f32, 
 
 	let pad = 24.0;
 	let top = 20.0;
-	let total_w = vw - pad * 2.0 - LIBRARY_PANEL_GAP * 2.0;
+	let total_w = LIBRARY_PANEL_GAP.mul_add(-2.0, vw - pad * 2.0);
 	let panel_h = vh - top - 20.0;
 	let starred_w = total_w * LIBRARY_STARRED_WIDTH_T;
 	let collections_w = total_w * LIBRARY_COLLECTIONS_WIDTH_T;
@@ -646,7 +646,7 @@ fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 
 		if collection.is_toggled_open {
 			for (chi, chip_name) in collection.chips.iter().enumerate() {
-				if y + ROW_H * 0.85 > bottom {
+				if ROW_H.mul_add(0.85, y) > bottom {
 					break 'collections;
 				}
 				let row_rect = UiRect::new(rect.x + 20.0, y, row_w - 12.0, ROW_H * 0.85);
@@ -661,7 +661,7 @@ fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 				panel_bg(frame, ui, row_rect, bg);
 				add_label(frame, ui, row_rect.centre(), row_rect.w - 12.0, chip_name, theme::text_colour_for_background(bg), FONT_SIZE * 0.8);
 				frame.buttons.push(EditorButton { rect: row_rect, action: EditorAction::SelectChipRow { collection: ci, chip: chi }, enabled: true });
-				y += ROW_H * 0.85 + 3.0;
+				y += ROW_H.mul_add(0.85, 3.0);
 			}
 		}
 		y += 6.0;
@@ -1142,8 +1142,8 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 
-	let grid_w = ROM_GRID_COLS as f32 * (ROM_CELL_W + ROM_CELL_GAP) - ROM_CELL_GAP;
-	let grid_h = ROM_GRID_ROWS as f32 * (ROM_CELL_H + ROM_CELL_GAP) - ROM_CELL_GAP;
+	let grid_w = (ROM_GRID_COLS as f32).mul_add(ROM_CELL_W + ROM_CELL_GAP, -ROM_CELL_GAP);
+	let grid_h = (ROM_GRID_ROWS as f32).mul_add(ROM_CELL_H + ROM_CELL_GAP, -ROM_CELL_GAP);
 	let panel_w = grid_w + 40.0;
 	let header_h = 132.0;
 	let footer_h = 100.0;
@@ -1180,8 +1180,8 @@ pub fn build_rom_editor_popup(data: &[u32], selected: usize, edit_text: &str, vw
 		for col in 0..ROM_GRID_COLS {
 			let idx = row * ROM_GRID_COLS + col;
 			let cell_rect = UiRect::new(
-				grid_origin.x + col as f32 * (ROM_CELL_W + ROM_CELL_GAP),
-				grid_origin.y + row as f32 * (ROM_CELL_H + ROM_CELL_GAP),
+				(col as f32).mul_add(ROM_CELL_W + ROM_CELL_GAP, grid_origin.x),
+				(row as f32).mul_add(ROM_CELL_H + ROM_CELL_GAP, grid_origin.y),
 				ROM_CELL_W,
 				ROM_CELL_H,
 			);
@@ -1347,7 +1347,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0), button_y, w, 36.0).clamp_to(panel_rect),
+				UiRect::new((w + 8.0).mul_add(3.0, panel_rect.x + 30.0), button_y, w, 36.0).clamp_to(panel_rect),
 				"Customize",
 				EditorAction::OpenChipCustomize,
 				true,
@@ -1355,7 +1355,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 2.0, button_y, w, 36.0).clamp_to(panel_rect),
+				UiRect::new((w + 8.0).mul_add(3.0, panel_rect.x + 30.0) * 2.0, button_y, w, 36.0).clamp_to(panel_rect),
 				"Save As",
 				EditorAction::SaveChipSaveAs,
 				confirm_enabled,
@@ -1363,7 +1363,7 @@ pub fn build_save_chip_popup(current_name: &str, text: &str, mode: SaveChipMode,
 			add_button(
 				&mut frame,
 				ui,
-				UiRect::new(panel_rect.x + 30.0 + (w + 8.0) * 3.0, button_y, w, 36.0).clamp_to(panel_rect),
+				UiRect::new((w + 8.0).mul_add(3.0, panel_rect.x + 30.0) * 3.0, button_y, w, 36.0).clamp_to(panel_rect),
 				"Rename",
 				EditorAction::SaveChipRename,
 				confirm_enabled,
@@ -1410,10 +1410,10 @@ pub fn build_pin_edit_popup(
 	vh: f32,
 	mouse: Vec2,
 ) -> EditorFrame {
+	const SWATCH_H: f32 = 26.0;
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	let panel_w = 420.0;
-	const SWATCH_H: f32 = 26.0;
 	// Name field + Colour label/swatches (+ Decimal Display label/options)
 	// + Confirm/Cancel, plus a bottom margin.
 	let panel_h = if show_display_options { 296.0 } else { 216.0 };
@@ -1432,9 +1432,9 @@ pub fn build_pin_edit_popup(
 	add_label(&mut frame, ui, Vec2::new(cx, y + SWATCH_H / 2.0), panel_w - 40.0, "Colour", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
 	y += SWATCH_H + ROW_GAP;
 	let swatch_x = cx - (panel_w - 60.0) / 2.0;
-	let swatch_w = ((panel_w - 60.0) - 8.0 * (theme::COLORS.len() - 1) as f32) / theme::COLORS.len() as f32;
+	let swatch_w = 8.0f32.mul_add(-((theme::COLORS.len() - 1) as f32), panel_w - 60.0) / theme::COLORS.len() as f32;
 	for (i, colour) in theme::COLORS.iter().enumerate() {
-		let rect = UiRect::new(swatch_x + i as f32 * (swatch_w + 8.0), y, swatch_w, SWATCH_H);
+		let rect = UiRect::new((i as f32).mul_add(swatch_w + 8.0, swatch_x), y, swatch_w, SWATCH_H);
 		add_button_coloured(&mut frame, ui, rect, "", EditorAction::PinEditSetColour(i), true, *colour);
 		if i == colour_index.min(theme::COLORS.len() - 1) {
 			// Same translucent-white "picked" wash the customize workspace
@@ -1448,9 +1448,9 @@ pub fn build_pin_edit_popup(
 		add_label(&mut frame, ui, Vec2::new(cx, y + ROW_H / 2.0), panel_w - 40.0, "Decimal Display", [0.9, 0.9, 0.9, 1.0], FONT_SIZE * 0.9);
 		y += ROW_H + ROW_GAP;
 		let options_x = cx - (panel_w - 60.0) / 2.0;
-		let option_w = ((panel_w - 60.0) - 8.0 * (ValueDisplayMode::ALL.len() - 1) as f32) / ValueDisplayMode::ALL.len() as f32;
+		let option_w = 8.0f32.mul_add(-((ValueDisplayMode::ALL.len() - 1) as f32), panel_w - 60.0) / ValueDisplayMode::ALL.len() as f32;
 		for (i, option) in ValueDisplayMode::ALL.iter().enumerate() {
-			let rect = UiRect::new(options_x + i as f32 * (option_w + 8.0), y, option_w, ROW_H);
+			let rect = UiRect::new((i as f32).mul_add(option_w + 8.0, options_x), y, option_w, ROW_H);
 			if i == display_mode_index.min(ValueDisplayMode::ALL.len() - 1) {
 				add_button_coloured(&mut frame, ui, rect, option.label(), EditorAction::PinEditSetDisplayMode(i), true, [0.3, 0.42, 0.58, 1.0]);
 			} else {

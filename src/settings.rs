@@ -4,14 +4,14 @@
 //! it's just the persisted data plus its on-disk shape. Whatever sets up the window is expected to
 //! translate `AppSettings` into whatever its windowing library needs.
 
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use logic_sim_macros::ConstFromPrimitive;
 use serde::{Deserialize, Serialize};
 
 /// Mirrors `UnityEngine.FullScreenMode`. The on-disk integer values are
 /// Unity's own enum values (there's a deliberate "hole" at 2 -- that's not a
 /// typo, it matches upstream so that AppSettings.json files written by the
 /// original C# game round-trip correctly through this port).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, ConstFromPrimitive)]
 #[repr(i32)]
 pub enum FullScreenMode {
 	ExclusiveFullScreen = 0,
@@ -22,20 +22,19 @@ pub enum FullScreenMode {
 }
 
 impl FullScreenMode {
-	pub fn to_int(self) -> i32 {
-		self.into()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> i32 {
+		*self as i32
 	}
-
-	/// Any value not matching a known variant (including the deliberately
-	/// unused `2`) falls back to `FullScreenWindow`, matching the original's
-	/// default full-screen behaviour.
-	pub fn from_int(v: i32) -> Self {
-		Self::try_from(v).unwrap_or_default()
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: i32) -> Self {
+		Self::from_primitive(v)
 	}
 }
 
 /// Mirrors `DLS.Description.AppSettings`.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AppSettings {
 	pub resolution_x: i32,
 	pub resolution_y: i32,
@@ -45,7 +44,7 @@ pub struct AppSettings {
 
 impl AppSettings {
 	/// Mirrors `AppSettings.Default()`.
-	pub fn default_settings() -> Self {
+	pub const fn default_settings() -> Self {
 		Self { resolution_x: 1920, resolution_y: 1080, fullscreen_mode: FullScreenMode::FullScreenWindow, vsync_enabled: true }
 	}
 }
@@ -72,16 +71,16 @@ struct JsonAppSettings {
 	vsync_enabled: bool,
 }
 
-fn default_resolution_x() -> i32 {
+const fn default_resolution_x() -> i32 {
 	1920
 }
-fn default_resolution_y() -> i32 {
+const fn default_resolution_y() -> i32 {
 	1080
 }
-fn default_fullscreen_mode() -> i32 {
+const fn default_fullscreen_mode() -> i32 {
 	FullScreenMode::FullScreenWindow.to_int()
 }
-fn default_vsync() -> bool {
+const fn default_vsync() -> bool {
 	true
 }
 

@@ -47,19 +47,22 @@ impl ContextTarget {
 	/// string in the first place -- kept next to that so the two stay in
 	/// sync.
 	pub(crate) fn parse(target: &str) -> Option<Self> {
-		if let Some(rest) = target.strip_prefix("component:") {
-			rest.parse().ok().map(Self::Component)
-		} else if let Some(rest) = target.strip_prefix("wire:") {
-			rest.parse().ok().map(Self::Wire)
-		} else if let Some(rest) = target.strip_prefix("devpin:in:") {
-			rest.parse().ok().map(|id| Self::DevPin { is_input: true, id })
-		} else if let Some(rest) = target.strip_prefix("devpin:out:") {
-			rest.parse().ok().map(|id| Self::DevPin { is_input: false, id })
-		} else {
-			const PLAIN_TARGETS: [(&str, PlainTargetCtor); 3] =
-				[("libchip:", ContextTarget::LibChip), ("barchip:", ContextTarget::BarChip), ("flyoutchip:", ContextTarget::FlyoutChip)];
-			PLAIN_TARGETS.iter().find_map(|(prefix, wrap)| target.strip_prefix(prefix).map(|rest| wrap(rest.to_string())))
-		}
+		target.strip_prefix("component:").map_or_else(
+			|| {
+				if let Some(rest) = target.strip_prefix("wire:") {
+					rest.parse().ok().map(Self::Wire)
+				} else if let Some(rest) = target.strip_prefix("devpin:in:") {
+					rest.parse().ok().map(|id| Self::DevPin { is_input: true, id })
+				} else if let Some(rest) = target.strip_prefix("devpin:out:") {
+					rest.parse().ok().map(|id| Self::DevPin { is_input: false, id })
+				} else {
+					const PLAIN_TARGETS: [(&str, PlainTargetCtor); 3] =
+						[("libchip:", ContextTarget::LibChip), ("barchip:", ContextTarget::BarChip), ("flyoutchip:", ContextTarget::FlyoutChip)];
+					PLAIN_TARGETS.iter().find_map(|(prefix, wrap)| target.strip_prefix(prefix).map(|rest| wrap(rest.to_string())))
+				}
+			},
+			|rest| rest.parse().ok().map(Self::Component),
+		)
 	}
 }
 
@@ -214,7 +217,7 @@ pub(crate) fn apply_context_menu_action(
 		}
 
 		(ContextMenuAction::Delete, ContextTarget::DevPin { id, .. } | ContextTarget::Component(id)) => {
-			crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id))
+			crate::viewer::undo::delete_components_with_undo(v, std::iter::once(id));
 		}
 
 		_ => {}

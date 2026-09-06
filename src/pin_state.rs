@@ -5,13 +5,13 @@
 //! bus" don't need to hand-roll masks/shifts.
 
 use crate::description::PinBitCount;
-use num_enum::{IntoPrimitive, TryFromPrimitive};
+use logic_sim_macros::ConstFromPrimitive;
 
 /// Tri-state logic level for a single bit, used by the renderer to pick a
 /// colour: `High`/`Low` map to the lit/dim variant of a pin's palette
 /// colour, `Disconnected` always renders flat black regardless of palette
 /// (mirrors `LOGIC_DISCONNECTED` / `DrawSettings.StateDisconnectedCol`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ConstFromPrimitive)]
 #[repr(u8)]
 pub enum LogicState {
 	Low = 0,  // 00
@@ -21,28 +21,27 @@ pub enum LogicState {
 }
 
 impl LogicState {
-	/// Builds a `LogicState` from the raw tristated bit value (0/1/2, as packed by `PinState::bit`).
-	#[inline(always)]
-	pub fn from_int(a: u8) -> Self {
-		Self::try_from(a).unwrap_or_default()
+	/// Convert to the integer representation used on disk.
+	pub const fn to_int(&self) -> u8 {
+		*self as u8
+	}
+	/// Reconstruct from an integer, matching the original C# enum order.
+	/// Invalid values fall back to `Custom`.
+	pub const fn from_int(v: u8) -> Self {
+		Self::from_primitive(v)
 	}
 
-	#[inline(always)]
-	pub const fn to_int(self) -> u8 {
-		self as u8
-	}
-
-	#[inline(always)]
+	#[inline]
 	pub const fn from_bool(high: bool) -> Self {
 		if high { LogicState::High } else { LogicState::Low }
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn is_high(self) -> bool {
 		matches!(self, LogicState::High)
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn is_connected(self) -> bool {
 		!matches!(self, LogicState::Disconnected)
 	}
@@ -66,21 +65,21 @@ pub enum PinState {
 
 impl PinState {
 	/// A single connected LOW bit at index 0 -- the all-zero state.
-	pub const LOW: PinState = PinState::from_raw_with_width(LOGIC_LOW as u16, PinBitCount::Bit1);
+	pub const LOW: Self = Self::from_raw_with_width(LOGIC_LOW as u16, PinBitCount::Bit1);
 	/// A single connected HIGH bit at index 0.
-	pub const HIGH: PinState = PinState::from_raw_with_width(LOGIC_HIGH as u16, PinBitCount::Bit1);
+	pub const HIGH: Self = Self::from_raw_with_width(LOGIC_HIGH as u16, PinBitCount::Bit1);
 	/// A single Disconnected bit at index 0 (its tristate flag set).
-	pub const OFF: PinState = PinState::from_raw_with_width((LOGIC_DISCONNECTED as u16) << 7, PinBitCount::Bit1);
+	pub const OFF: Self = Self::from_raw_with_width((LOGIC_DISCONNECTED as u16) << 7, PinBitCount::Bit1);
 	/// Every wire of an 8-wide word disconnected. Only correct for a pin that's actually
 	/// 8-wide -- a narrower pin tagged with this reports itself as 8-wide until it's next
 	/// written, which throws off anything reading `width`/`len` in the meantime (mask
 	/// sizing, cached-LUT row counts, drawn pin shape, ...). Prefer
 	/// `disconnected_with_width` wherever the pin's real width is known.
-	pub const DISCONNECTED: PinState = PinState::from_raw((u8::MAX as u16) << 8);
+	pub const DISCONNECTED: Self = Self::from_raw((u8::MAX as u16) << 8);
 
 	/// Every wire of a `width`-wide word disconnected -- the correct default state for a
 	/// freshly-created pin of that width (e.g. a pin nothing has ever driven).
-	#[inline(always)]
+	#[inline]
 	pub const fn disconnected_with_width(width: PinBitCount) -> Self {
 		Self::from_parts_with_width(0, u8::MAX, width)
 	}
@@ -90,31 +89,31 @@ impl PinState {
 	/// The real number of tristate wires this value carries: 1, 4, or 8.
 	/// This is the whole point of `PinState` being an enum rather than a
 	/// bare packed integer -- a value can report its own width.
-	#[inline(always)]
+	#[inline]
 	#[allow(clippy::len_without_is_empty)]
 	pub const fn len(self) -> u32 {
 		match self {
-			PinState::Bit1(_) => 1,
-			PinState::Bit4(_) => 4,
-			PinState::Bit8(_) => 8,
+			Self::Bit1(_) => 1,
+			Self::Bit4(_) => 4,
+			Self::Bit8(_) => 8,
 		}
 	}
 
 	/// Same information as `len`, as the `PinBitCount` type used elsewhere
 	/// (e.g. `PinDescription::bit_count`) for describing pin widths.
-	#[inline(always)]
+	#[inline]
 	pub const fn width(self) -> PinBitCount {
 		match self {
-			PinState::Bit1(_) => PinBitCount::Bit1,
-			PinState::Bit4(_) => PinBitCount::Bit4,
-			PinState::Bit8(_) => PinBitCount::Bit8,
+			Self::Bit1(_) => PinBitCount::Bit1,
+			Self::Bit4(_) => PinBitCount::Bit4,
+			Self::Bit8(_) => PinBitCount::Bit8,
 		}
 	}
 
 	/// Re-tags this value to a different width, keeping the same packed
 	/// bits as-is (bits outside the new width are neither cleared nor
 	/// validated -- callers that care should `extract` first).
-	#[inline(always)]
+	#[inline]
 	pub const fn retagged(self, width: PinBitCount) -> Self {
 		Self::tagged(width, self.raw())
 	}
@@ -123,12 +122,12 @@ impl PinState {
 	/// `from_raw_for_width` (which rounds an arbitrary wire count up to the
 	/// nearest supported width), this maps `PinBitCount` directly -- no
 	/// `to_int`/rounding involved, so it stays usable from `const fn`s.
-	#[inline(always)]
+	#[inline]
 	const fn tagged(width: PinBitCount, raw: u16) -> Self {
 		match width {
-			PinBitCount::Bit1 => PinState::Bit1(raw),
-			PinBitCount::Bit4 => PinState::Bit4(raw),
-			PinBitCount::Bit8 => PinState::Bit8(raw),
+			PinBitCount::Bit1 => Self::Bit1(raw),
+			PinBitCount::Bit4 => Self::Bit4(raw),
+			PinBitCount::Bit8 => Self::Bit8(raw),
 		}
 	}
 
@@ -136,28 +135,28 @@ impl PinState {
 	/// wires, and tags `raw` with it. Used internally wherever an operation
 	/// (`extract`, `combine`, `from_bit`, ...) is given/implies a concrete
 	/// wire count and needs to produce a correctly-tagged result.
-	#[inline(always)]
+	#[inline]
 	const fn from_raw_for_width(width: u32, raw: u16) -> Self {
 		if width <= 1 {
-			PinState::Bit1(raw)
+			Self::Bit1(raw)
 		} else if width <= 4 {
-			PinState::Bit4(raw)
+			Self::Bit4(raw)
 		} else {
-			PinState::Bit8(raw)
+			Self::Bit8(raw)
 		}
 	}
 
 	/// Rebuilds `self` with a new packed payload, keeping the same width tag.
-	#[inline(always)]
+	#[inline]
 	const fn with_raw(self, raw: u16) -> Self {
 		match self {
-			PinState::Bit1(_) => PinState::Bit1(raw),
-			PinState::Bit4(_) => PinState::Bit4(raw),
-			PinState::Bit8(_) => PinState::Bit8(raw),
+			Self::Bit1(_) => Self::Bit1(raw),
+			Self::Bit4(_) => Self::Bit4(raw),
+			Self::Bit8(_) => Self::Bit8(raw),
 		}
 	}
 
-	#[inline(always)]
+	#[inline]
 	const fn pack(bit_states: u8, tristate_flags: u8) -> u16 {
 		(bit_states as u16) | ((tristate_flags as u16) << 8)
 	}
@@ -166,35 +165,35 @@ impl PinState {
 
 	/// Builds an 8-wide `PinState` from a raw packed word. Prefer
 	/// `from_raw_with_width` when the real wire count is known.
-	#[inline(always)]
+	#[inline]
 	pub const fn from_raw(raw: u16) -> Self {
-		PinState::Bit8(raw)
+		Self::Bit8(raw)
 	}
 
 	/// Builds a `PinState` of the given width from a raw packed word.
-	#[inline(always)]
+	#[inline]
 	pub const fn from_raw_with_width(raw: u16, width: PinBitCount) -> Self {
 		Self::tagged(width, raw)
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn raw(self) -> u16 {
 		match self {
-			PinState::Bit1(v) | PinState::Bit4(v) | PinState::Bit8(v) => v,
+			Self::Bit1(v) | Self::Bit4(v) | Self::Bit8(v) => v,
 		}
 	}
 
 	/// Builds an 8-wide `PinState` directly from a bit-states byte and a
 	/// tristate-flags byte (each bit `i` describes wire `i`). Prefer
 	/// `from_parts_with_width` when the real wire count is known.
-	#[inline(always)]
+	#[inline]
 	pub const fn from_parts(bit_states: u8, tristate_flags: u8) -> Self {
-		PinState::Bit8(Self::pack(bit_states, tristate_flags))
+		Self::Bit8(Self::pack(bit_states, tristate_flags))
 	}
 
 	/// Builds a `PinState` of the given width from a bit-states byte and a
 	/// tristate-flags byte (each bit `i` describes wire `i`).
-	#[inline(always)]
+	#[inline]
 	pub const fn from_parts_with_width(bit_states: u8, tristate_flags: u8, width: PinBitCount) -> Self {
 		Self::tagged(width, Self::pack(bit_states, tristate_flags))
 	}
@@ -202,21 +201,21 @@ impl PinState {
 	// --- constructors for common cases -----------------------------------------
 
 	/// A single-wire state (bit index 0), e.g. the output of a gate.
-	#[inline(always)]
-	pub fn single(state: LogicState) -> Self {
+	#[inline]
+	pub const fn single(state: LogicState) -> Self {
 		Self::from_bit(0, state)
 	}
 
-	#[inline(always)]
-	pub fn from_bool(single: bool) -> Self {
+	#[inline]
+	pub const fn from_bool(single: bool) -> Self {
 		Self::single(LogicState::from_bool(single))
 	}
 
 	/// A single wire at `index` set to `state`, all other wires (up to
 	/// `index`) low/connected. Tags the result with the narrowest width
 	/// that can hold `index`.
-	#[inline(always)]
-	pub fn from_bit(index: u32, state: LogicState) -> Self {
+	#[inline]
+	pub const fn from_bit(index: u32, state: LogicState) -> Self {
 		let mut s = Self::from_raw_for_width(index + 1, Self::pack(0, u8::MAX));
 		s.set_bit(index, state);
 		s
@@ -224,39 +223,39 @@ impl PinState {
 
 	// --- whole-word access -------------------------------------------------
 
-	#[inline(always)]
+	#[inline]
 	pub const fn bit_states(self) -> u8 {
 		self.raw() as u8
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn tristate_flags(self) -> u8 {
 		(self.raw() >> 8) as u8
 	}
 
-	#[inline(always)]
-	pub fn set(&mut self, bit_states: u8, tristate_flags: u8) {
+	#[inline]
+	pub const fn set(&mut self, bit_states: u8, tristate_flags: u8) {
 		*self = self.with_raw(Self::pack(bit_states, tristate_flags));
 	}
 
-	#[inline(always)]
-	pub fn set_raw(&mut self, other: u16) {
+	#[inline]
+	pub const fn set_raw(&mut self, other: u16) {
 		*self = self.with_raw(other);
 	}
 
-	#[inline(always)]
-	pub fn set_all_disconnected(&mut self) {
+	#[inline]
+	pub const fn set_all_disconnected(&mut self) {
 		self.set(0, u8::MAX);
 	}
 
-	pub fn set_all_low(&mut self) {
+	pub const fn set_all_low(&mut self) {
 		self.set(0, 0);
 	}
 
 	// --- single-bit access (the "no manual bitshift" API) ----------------------
 
 	/// Reads the tristated value of wire `index` directly, e.g. `bus.bit(3)`.
-	#[inline(always)]
+	#[inline]
 	pub const fn bit(self, index: u32) -> LogicState {
 		let bit = (self.bit_states() >> index) & 1;
 		let tri = (self.tristate_flags() >> index) & 1;
@@ -269,8 +268,8 @@ impl PinState {
 		}
 	}
 
-	#[inline(always)]
-	pub fn set_bit(&mut self, index: u32, state: LogicState) {
+	#[inline]
+	pub const fn set_bit(&mut self, index: u32, state: LogicState) {
 		// Edits the packed word in place -- clear/set exactly this wire's
 		// value bit and tri-state flag, leaving the other seven untouched.
 		let bit = 1u16 << index;
@@ -291,15 +290,15 @@ impl PinState {
 	}
 
 	/// Builder-style variant of `set_bit`.
-	#[inline(always)]
-	pub fn with_bit(mut self, index: u32, state: LogicState) -> Self {
+	#[inline]
+	pub const fn with_bit(mut self, index: u32, state: LogicState) -> Self {
 		self.set_bit(index, state);
 		self
 	}
 
 	/// Whether wire 0 reads as `High` (ignores tri-state -- historically used for
 	/// "is this control line asserted" checks).
-	#[inline(always)]
+	#[inline]
 	pub const fn first_bit_high(self) -> bool {
 		matches!(self.bit(0), LogicState::High)
 	}
@@ -312,7 +311,7 @@ impl PinState {
 	/// `set_8bit_from_16bit_source` / manual `(x >> offset) & MASK` patterns:
 	/// `byte.extract(4, 4)` is "the upper nibble", `byte.extract(3, 1)` is
 	/// "just bit 3", etc.
-	pub const fn extract(self, offset: u32, width: u32) -> PinState {
+	pub const fn extract(self, offset: u32, width: u32) -> Self {
 		let mask = width_mask(width);
 		let bits = (self.bit_states() >> offset) & mask;
 		let tris = (self.tristate_flags() >> offset) & mask;
@@ -324,7 +323,7 @@ impl PinState {
 	/// `set_16bit_from_8bit_sources` / `set_8bit_from_1bit_sources`-style helpers.
 	/// e.g. an 8-bit bus from two nibbles: `PinState::combine(&[(low_nibble, 0, 4), (high_nibble, 4, 4)])`.
 	/// The result is tagged with the widest span any `(dest_offset, width)` reaches.
-	pub fn combine(parts: &[(PinState, u32, u32)]) -> PinState {
+	pub fn combine(parts: &[(Self, u32, u32)]) -> Self {
 		let mut bits = 0u8;
 		let mut tris = 0u8;
 		let mut span = 1u32;
@@ -341,8 +340,8 @@ impl PinState {
 
 	/// Flips wire `index`, clearing tri-state (can't be disconnected when toggling,
 	/// as only input dev-pins are ever toggled directly).
-	#[inline(always)]
-	pub fn toggle_bit(&mut self, index: u32) {
+	#[inline]
+	pub const fn toggle_bit(&mut self, index: u32) {
 		let raw = (self.raw() ^ (1u16 << index)) & 0x00FF;
 		*self = self.with_raw(raw);
 	}
@@ -356,7 +355,7 @@ impl PinState {
 	/// doesn't get a vote) - neither side driven -> stays disconnected The result keeps `self`'s
 	/// width tag (both sides are expected to carry the same width in practice, since they're
 	/// driving the same pin).
-	#[inline(always)]
+	#[inline]
 	const fn merge_driven(self, other: Self, combined: u8) -> Self {
 		let val_a = self.bit_states();
 		let val_b = other.bit_states();
@@ -375,19 +374,19 @@ impl PinState {
 		self.with_raw(Self::pack(value, tri))
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn or(self, other: Self) -> Self {
 		let combined = self.bit_states() | other.bit_states();
 		self.merge_driven(other, combined)
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn and(self, other: Self) -> Self {
 		let combined = self.bit_states() & other.bit_states();
 		self.merge_driven(other, combined)
 	}
 
-	#[inline(always)]
+	#[inline]
 	pub const fn nand(self, other: Self) -> Self {
 		let combined = !(self.bit_states() & other.bit_states());
 		self.merge_driven(other, combined)
@@ -396,13 +395,13 @@ impl PinState {
 	/// Unary NOT: flips every driven bit, disconnected bits stay disconnected.
 	/// (Value bits under a disconnected flag are never read by `bit()`, so we
 	/// don't need to mask them off here -- just flip the whole value byte.)
-	#[inline(always)]
+	#[inline]
 	pub const fn not(self) -> Self {
 		self.with_raw(Self::pack(!self.bit_states(), self.tristate_flags()))
 	}
 }
 
-#[inline(always)]
+#[inline]
 const fn width_mask(width: u32) -> u8 {
 	if width >= 8 { u8::MAX } else { ((1u16 << width) - 1) as u8 }
 }

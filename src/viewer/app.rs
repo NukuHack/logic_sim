@@ -195,7 +195,7 @@ impl App {
 		self.text_input = prefill.to_string();
 	}
 
-	pub(crate) fn handle_menu_action(&mut self, action: UiAction, event_loop: &winit::event_loop::ActiveEventLoop) {
+	pub(crate) fn handle_menu_action(&mut self, action: &UiAction, event_loop: &winit::event_loop::ActiveEventLoop) {
 		use UiAction as UA;
 		match action {
 			UA::NewProject => {
@@ -208,7 +208,7 @@ impl App {
 			UA::Quit => event_loop.exit(),
 			UA::BackToMain => self.menu.back_to_main(),
 
-			UA::SelectProject(i) => self.menu.select_project(i),
+			UA::SelectProject(i) => self.menu.select_project(*i),
 			UA::OpenSelected => {
 				if let Some(MenuOutcome::OpenProject { name }) = self.menu.open_selected() {
 					self.open_project(&name);
@@ -283,7 +283,7 @@ impl App {
 
 	// ---- Text input for name popups ----
 
-	pub(crate) fn is_text_popup_open(&self) -> bool {
+	pub(crate) const fn is_text_popup_open(&self) -> bool {
 		matches!(self.menu.popup(), PopupKind::NewProject | PopupKind::RenameProject | PopupKind::DuplicateProject)
 	}
 
@@ -294,7 +294,7 @@ impl App {
 	/// the dozens of `*status = Some(...)` sites scattered across the
 	/// viewer stay untouched while the timer still always restarts on a
 	/// genuinely new message.
-	pub(crate) fn note_status_maybe_changed(&mut self, before: &Option<String>) {
+	pub(crate) fn note_status_maybe_changed(&mut self, before: Option<String>) {
 		match &self.status {
 			// A changed message restarts the window unconditionally -- the
 			// previous entry's clock may be nearly expired already.
@@ -373,13 +373,13 @@ mod status_toast_tests {
 		let mut app = app();
 
 		assert!(app.status_since.is_none());
-		app.note_status_maybe_changed(&None);
+		app.note_status_maybe_changed(None);
 		assert_eq!(app.status, None);
 		assert!(app.status_since.is_none(), "nothing to time while no toast is up");
 
 		// A message appears: the clock starts.
 		app.status = Some("Saved 'X'".to_string());
-		app.note_status_maybe_changed(&None);
+		app.note_status_maybe_changed(None);
 		let stamped = app.status_since.expect("a fresh message starts the linger window");
 		assert!(stamped.elapsed() < STATUS_TOAST_LINGER);
 
@@ -391,7 +391,7 @@ mod status_toast_tests {
 
 		// ...and expiry before the window does nothing.
 		app.status = Some("Failed: boom".to_string());
-		app.note_status_maybe_changed(&None);
+		app.note_status_maybe_changed(None);
 		app.expire_status_toast();
 		assert_eq!(app.status.as_deref(), Some("Failed: boom"), "a fresh toast outlives the redraw that showed it");
 	}
@@ -402,17 +402,17 @@ mod status_toast_tests {
 
 		// Clearing the toast clears the clock.
 		app.status = Some("hi".to_string());
-		app.note_status_maybe_changed(&None);
+		app.note_status_maybe_changed(None);
 		app.status = None;
-		app.note_status_maybe_changed(&Some("hi".to_string()));
+		app.note_status_maybe_changed(Some("hi".to_string()));
 		assert!(app.status_since.is_none(), "no lingering timer after the text goes away");
 
 		// Replacing one message with another restarts the window...
 		app.status = Some("first".to_string());
-		app.note_status_maybe_changed(&None);
+		app.note_status_maybe_changed(None);
 		age_toast(&mut app, 9);
 		app.status = Some("second".to_string());
-		app.note_status_maybe_changed(&Some("first".to_string()));
+		app.note_status_maybe_changed(Some("first".to_string()));
 		app.expire_status_toast();
 		assert_eq!(app.status.as_deref(), Some("second"), "the new message's own 7s window applies, not the old one's");
 		assert!(app.status_since.expect("restamped").elapsed() < STATUS_TOAST_LINGER);

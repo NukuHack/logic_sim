@@ -76,19 +76,19 @@ impl SimAudio {
 		}
 	}
 
-	pub fn freqs_all(&self) -> &[f32; FREQ_COUNT] {
+	pub const fn freqs_all(&self) -> &[f32; FREQ_COUNT] {
 		&self.freqs_all
 	}
 
 	/// Current smoothed amplitude per frequency slot (what [`AudioState::sample`]
 	/// mixes); exposed for tests/visualization.
-	pub fn amplitudes(&self) -> &[f64; FREQ_COUNT] {
+	pub const fn amplitudes(&self) -> &[f64; FREQ_COUNT] {
 		&self.target_amplitudes_per_freq
 	}
 
 	/// This step's unsmoothed note targets -- what [`Self::register_note`]
 	/// accumulates into and [`Self::init_frame`] clears.
-	pub fn step_targets(&self) -> &[f64; FREQ_COUNT] {
+	pub const fn step_targets(&self) -> &[f64; FREQ_COUNT] {
 		&self.target_amplitudes_per_freq_temp
 	}
 
@@ -116,18 +116,18 @@ impl SimAudio {
 
 		self.has_input_since_last_init = true;
 		let amplitude_t = (volume as f32 / 15.0).min(1.0);
-		self.target_amplitudes_per_freq_temp[index] += (amplitude_t * self.perceptual_gain_correction[index]) as f64;
+		self.target_amplitudes_per_freq_temp[index] += f64::from(amplitude_t * self.perceptual_gain_correction[index]);
 	}
 
 	/// Advances every amplitude toward its target for this step, using the
 	/// real-time delta since the previous step so the fade speed stays
 	/// constant regardless of tick rate (`NotifyAllNotesRegistered`).
 	pub fn notify_all_notes_registered(&mut self, delta_time: f64) {
+		const SMOOTH_SPEED: f64 = 30.0;
 		if !self.has_input_since_last_init && !self.is_smoothing {
 			return;
 		}
 
-		const SMOOTH_SPEED: f64 = 30.0;
 		let step = (delta_time * SMOOTH_SPEED).min(1.0);
 		self.is_smoothing = false;
 
@@ -135,7 +135,7 @@ impl SimAudio {
 			// Crude smoothing to avoid jarring frequency jumps
 			let curr = self.target_amplitudes_per_freq[i];
 			let target = self.target_amplitudes_per_freq_temp[i];
-			let val_new = curr + (target - curr) * step;
+			let val_new = (target - curr).mul_add(step, curr);
 			self.target_amplitudes_per_freq[i] = if (val_new - target).abs() <= 0.0001 { target } else { val_new };
 
 			self.is_smoothing |= val_new > 0.0;
@@ -185,7 +185,7 @@ fn mix_sample(freqs_all: &[f32; FREQ_COUNT], amplitudes: &[f64; FREQ_COUNT], tim
 		if amplitude < 0.001 {
 			continue;
 		}
-		let phase = time * 2.0 * std::f64::consts::PI * freqs_all[i] as f64;
+		let phase = time * 2.0 * std::f64::consts::PI * f64::from(freqs_all[i]);
 		sum += square_wave(phase) * amplitude;
 	}
 	sum
@@ -222,7 +222,7 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	let Some(device) = host.default_output_device() else { return Err("no default audio output device".to_string()) };
 	let config = device.default_output_config().map_err(|e| format!("no default audio config: {e}"))?;
 
-	let sample_rate = config.sample_rate() as f64;
+	let sample_rate = f64::from(config.sample_rate());
 	let channels = config.channels() as usize;
 	let mut config: cpal::StreamConfig = config.into();
 	// Pin a generous period instead of accepting the device default: cpal's ALSA backend pairs
@@ -244,7 +244,7 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 				// Poison recovery, not just a failed lock: an audio panic on either side must degrade to
 				// silence, never to repeating whatever stale bytes were last left in the buffer.
 				let (freqs, amplitudes) = {
-					let state = shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+					let state = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
 					(*state.sim_audio.freqs_all(), *state.sim_audio.amplitudes())
 				};
 				for frame in data.chunks_mut(channels) {
@@ -265,8 +265,8 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	Ok(AudioPlayer { _stream: stream })
 }
 
-/// Asks rtkit to promote cpal's ALSA worker thread to SCHED_FIFO. The worker is plain
-/// SCHED_OTHER otherwise, and long system/process stalls (render-path hitches, CPU
+/// Asks rtkit to promote cpal's ALSA worker thread to `SCHED_FIFO`. The worker is plain
+/// `SCHED_OTHER` otherwise, and long system/process stalls (render-path hitches, CPU
 /// saturation) then leave it unable to feed the device in time -- reported as
 /// `BufferUnderrun` errors even in total silence. Fire-and-forget on a helper thread (dbus
 /// setup must not delay startup), degrading silently wherever rtkit isn't running or refuses
@@ -288,7 +288,7 @@ fn promote_worker_to_realtime() {
 		let service = "org.freedesktop.RealtimeKit1";
 		let path = "/org/freedesktop/RealtimeKit1";
 		let interface = "org.freedesktop.RealtimeKit1";
-		let pid = std::process::id() as u64;
+		let pid = u64::from(std::process::id());
 		// rtkit's allowed ceiling varies by distro config; walk down until one sticks.
 		for priority in [20u32, 15, 10, 5] {
 			let call: Result<(), _> =
@@ -334,7 +334,8 @@ fn square_wave(t: f64) -> f32 {
 	let mut sum = 0.0f64;
 	for i in 1..=WAVE_ITERATIONS {
 		let harmonic = 2 * i - 1;
-		sum += (harmonic as f64 * t).sin() / harmonic as f64;
+		let har_f = f64::from(harmonic);
+		sum += (har_f * t).sin() / har_f;
 	}
 	(sum * 4.0 / std::f64::consts::PI) as f32
 }
@@ -346,11 +347,11 @@ pub fn calculate_frequency(num_above_a0: f64) -> f32 {
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
-	a * (1.0 - t) + b * t
+	b.mul_add(t, a * (1.0 - t))
 }
 
 /// `Maths.EaseQuadInOut`: 3t^2 - 2t^3 clamped to 0..=1 (smoothstep).
 fn ease_quad_in_out(t: f32) -> f32 {
 	let t = t.clamp(0.0, 1.0);
-	3.0 * t * t - 2.0 * t * t * t
+	(2.0 * t * t).mul_add(-t, 3.0 * t * t)
 }

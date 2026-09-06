@@ -15,7 +15,7 @@ pub struct Project {
 }
 
 impl Project {
-	pub fn new(description: ProjectDescription, chip_library: ChipLibrary) -> Self {
+	pub const fn new(description: ProjectDescription, chip_library: ChipLibrary) -> Self {
 		Self { description, chip_library }
 	}
 

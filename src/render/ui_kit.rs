@@ -54,7 +54,7 @@ pub struct UiCtx {
 }
 
 impl UiCtx {
-	pub fn new(vw: f32, vh: f32, mouse: Vec2) -> Self {
+	pub const fn new(vw: f32, vh: f32, mouse: Vec2) -> Self {
 		Self { vw, vh, mouse }
 	}
 }
@@ -69,21 +69,21 @@ pub struct UiRect {
 }
 
 impl UiRect {
-	pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
+	pub const fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
 		Self { x, y, w, h }
 	}
 
-	pub fn contains(&self, p: Vec2) -> bool {
+	pub const fn contains(&self, p: Vec2) -> bool {
 		p.x >= self.x && p.x <= self.x + self.w && p.y >= self.y && p.y <= self.y + self.h
 	}
 
-	pub fn centre(&self) -> Vec2 {
+	pub const fn centre(&self) -> Vec2 {
 		Vec2::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
 	}
 
 	/// Clamps this rect to lie fully within `container`, shrinking the
 	/// position (not the size) so nothing sticks out.
-	pub fn clamp_to(self, container: UiRect) -> Self {
+	pub const fn clamp_to(self, container: Self) -> Self {
 		let x = self.x.clamp(container.x, (container.x + container.w - self.w).max(container.x));
 		let y = self.y.clamp(container.y, (container.y + container.h - self.h).max(container.y));
 		Self { x, y, w: self.w, h: self.h }
@@ -136,19 +136,18 @@ pub fn add_label<A>(frame: &mut Frame<A>, ui: UiCtx, centre: Vec2, width: f32, t
 
 /// Draws one button at [`FONT_SIZE`] and appends its hit-box to `frame.buttons`. `base_colour`
 /// overrides the ordinary grey-when-enabled/brighten-on-hover palette -- pass `None` for that
-/// default look, or `Some(colour)` for a differently-tinted button (e.g. editor_ui's destructive
-/// "Replace" button, drawn red so it reads as backing up and overwriting a *different* chip).
+/// default look, or `Some(colour)` for a differently-tinted button
 pub fn add_button<A: Clone>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, label: &str, action: A, enabled: bool, base_colour: Option<theme::Rgba>) {
 	let hovered = enabled && rect.contains(ui.mouse);
-	let bg = if !enabled {
-		theme::PIN_INVALID_COL
-	} else {
+	let bg = if enabled {
 		match base_colour {
 			Some(base) if hovered => [(base[0] + 0.12).min(1.0), (base[1] + 0.12).min(1.0), (base[2] + 0.12).min(1.0), base[3]],
 			Some(base) => base,
 			None if hovered => [0.45, 0.45, 0.5, 1.0],
 			None => theme::CHIP_BODY_COL,
 		}
+	} else {
+		theme::PIN_INVALID_COL
 	};
 	fill_rect(frame, ui, rect, bg);
 	add_label(frame, ui, rect.centre(), rect.w - 12.0, label, theme::text_colour_for_background(bg), FONT_SIZE);

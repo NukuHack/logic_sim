@@ -103,7 +103,7 @@ impl MainMenu {
 		self.selected_project().map(can_open_project)
 	}
 
-	pub fn edited_settings(&self) -> AppSettings {
+	pub const fn edited_settings(&self) -> AppSettings {
 		self.edited_settings
 	}
 
@@ -202,14 +202,14 @@ impl MainMenu {
 	}
 
 	/// Mirrors pressing "Back" (or the cancel shortcut with no popup open).
-	pub fn back_to_main(&mut self) {
+	pub const fn back_to_main(&mut self) {
 		self.screen = MenuScreen::Main;
 		self.popup = PopupKind::None;
 	}
 
 	// ---- Popups ----
 
-	pub fn cancel_popup(&mut self) {
+	pub const fn cancel_popup(&mut self) {
 		self.popup = PopupKind::None;
 	}
 

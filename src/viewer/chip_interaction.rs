@@ -827,7 +827,7 @@ pub(crate) fn duplicate_selection(v: &mut ViewerState) -> bool {
 
 		if copy.connection_type != WireConnectionType::ToPins {
 			if let Some(&new_idx) = wire_index_map.get(&(copy.connected_wire_index.max(0) as usize)) {
-				copy.connected_wire_index = new_idx as i32
+				copy.connected_wire_index = new_idx as i32;
 			} else {
 				copy.connection_type = WireConnectionType::ToPins;
 				copy.connected_wire_index = 0;

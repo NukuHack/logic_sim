@@ -94,10 +94,9 @@ pub fn parse_to_unix_seconds(text: &str) -> i64 {
 		let (sign, digits): (i64, String) = {
 			let rest = &tail[sign_at..];
 			match rest.chars().next() {
-				Some('Z') => (1, String::new()),
-				Some('+') => (1, rest.chars().skip(1).filter(|c| c.is_ascii_digit()).collect()),
-				Some('-') => (-1, rest.chars().skip(1).filter(|c| c.is_ascii_digit()).collect()),
-				_ => (1, String::new()),
+				Some('+') => (1, rest.chars().skip(1).filter(char::is_ascii_digit).collect()),
+				Some('-') => (-1, rest.chars().skip(1).filter(char::is_ascii_digit).collect()),
+				Some('Z') | _ => (1, String::new()),
 			}
 		};
 		if !digits.is_empty() && digits.len() >= 4 {
@@ -111,8 +110,8 @@ pub fn parse_to_unix_seconds(text: &str) -> i64 {
 
 /// Howard Hinnant's `civil_from_days` algorithm: converts a day count
 /// (days since 1970-01-01) into a proleptic-Gregorian (year, month, day).
-/// Public-domain algorithm, see http://howardhinnant.github.io/date_algorithms.html
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
+/// Public-domain algorithm, see <http://howardhinnant.github.io/date_algorithms.html>
+const fn civil_from_days(z: i64) -> (i64, u32, u32) {
 	let z = z + 719_468;
 	let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
 	let doe = (z - era * 146_097) as u64; // [0, 146096]

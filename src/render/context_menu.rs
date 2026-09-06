@@ -130,14 +130,14 @@ pub fn build_context_menu(state: &ContextMenuState, vw: f32, vh: f32, mouse: Vec
 	// wider than the panel on every side so the fill lands exactly on `panel_rect`.
 	frame.geometry.add_outlined_rect(
 		to_world(centre(&panel_rect), vw, vh),
-		Vec2::new(panel_rect.w + BORDER * 2.0, panel_rect.h + BORDER * 2.0),
+		Vec2::new(BORDER.mul_add(2.0, panel_rect.w), BORDER.mul_add(2.0, panel_rect.h)),
 		BORDER,
 		[0.17, 0.17, 0.19, 1.0],
 		[0.05, 0.05, 0.06, 1.0],
 	);
 
 	for (i, item) in state.items.iter().enumerate() {
-		let row_rect = UiRect::new(panel_rect.x, panel_rect.y + i as f32 * ROW_H, panel_rect.w, ROW_H);
+		let row_rect = UiRect::new(panel_rect.x, (i as f32).mul_add(ROW_H, panel_rect.y), panel_rect.w, ROW_H);
 		let hovered = item.enabled && row_rect.contains(mouse);
 		if hovered {
 			frame.geometry.add_rect(to_world(centre(&row_rect), vw, vh), Vec2::new(row_rect.w, row_rect.h), [0.32, 0.32, 0.4, 1.0]);

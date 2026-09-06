@@ -14,6 +14,7 @@
     clippy::cast_precision_loss,   // float precision loss
 	clippy::too_long_first_doc_paragraph,
 	clippy::must_use_candidate,
+	clippy::return_self_not_must_use,
 )]
 #![warn(
     missing_debug_implementations,

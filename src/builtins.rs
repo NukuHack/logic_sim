@@ -150,10 +150,7 @@ fn create_bit_conversion_chip(
 }
 
 fn get_pin_name(pin_index: i32, pin_count: i32, is_input: bool) -> String {
-	let mut letter = format!(" {}", (b'A' + (pin_count - pin_index - 1) as u8) as char);
-	if pin_count == 1 {
-		letter = String::new();
-	}
+	let letter = if pin_count == 1 { String::new() } else { format!(" {}", (b'A' + (pin_count - pin_index - 1) as u8) as char) };
 	format!("{}{}", if is_input { "IN" } else { "OUT" }, letter)
 }
 
@@ -221,7 +218,7 @@ pub fn io_pin_template(chip_type: ChipType) -> Option<(bool, PinDescription)> {
 	Some((is_input, pin(name, 0, num_bits)))
 }
 
-fn is_input_or_output_pin(chip_type: ChipType) -> (bool, bool, PinBitCount) {
+const fn is_input_or_output_pin(chip_type: ChipType) -> (bool, bool, PinBitCount) {
 	use ChipType as E;
 	match chip_type {
 		E::In1Bit => (true, false, PinBitCount::Bit1),
@@ -303,9 +300,7 @@ fn validate_all_pin_ids(chips: &[ChipDescription]) {
 	for chip in chips {
 		let mut ids = HashSet::new();
 		for p in chip.input_pins.iter().chain(chip.output_pins.iter()) {
-			if !ids.insert(p.id) {
-				panic!("Pin has duplicate ID ({}) in builtin chip: {}", p.id, chip.name);
-			}
+			assert!(ids.insert(p.id), "Pin has duplicate ID ({}) in builtin chip: {}", p.id, chip.name);
 		}
 	}
 }

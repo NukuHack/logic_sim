@@ -7,17 +7,6 @@ use crate::render::scene::lookup::{AllLow, PinStateLookup};
 use crate::render::theme::{self, Rgba};
 use glam::Vec2;
 
-/// Component-wise minimum/maximum -- deliberately local helpers rather
-/// than `Vec2::max`, whose second component reads `self.x` (kept as-is
-/// elsewhere for compatibility; new code shouldn't inherit that).
-fn vec_min(a: Vec2, b: Vec2) -> Vec2 {
-	Vec2::new(a.x.min(b.x), a.y.min(b.y))
-}
-
-fn vec_max(a: Vec2, b: Vec2) -> Vec2 {
-	Vec2::new(a.x.max(b.x), a.y.max(b.y))
-}
-
 /// Translucent red of the original's out-of-bounds overlay (`new(1, 0, 0, 0.24)`).
 const OUT_OF_BOUNDS_COL: Rgba = [1.0, 0.0, 0.0, 0.24];
 
@@ -41,8 +30,8 @@ impl ClipRect {
 	fn add_rect(&self, geo: &mut SceneGeometry, centre: Vec2, size: Vec2, colour: Rgba) {
 		let half = size * 0.5;
 		let (lo, hi) = (centre - half, centre + half);
-		let min = vec_max(lo, self.min);
-		let max = vec_min(hi, self.max);
+		let min = lo.max(self.min);
+		let max = hi.min(self.max);
 		if max.x > min.x && max.y > min.y {
 			geo.add_rect((min + max) * 0.5, max - min, colour);
 		}
@@ -60,7 +49,7 @@ impl ClipRect {
 /// width -- 7-segment `1.0` (body `GridSize*10` minus insets), dot `1.5` (pin-stack height
 /// `1.75` minus `GridSize*2`), RGB `2.375` (`GridSize*21` body), LED `0.1875` (`0.25` body
 /// minus `GridSize*0.5`).
-pub fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
+pub const fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
 	match chip_type {
 		ChipType::SevenSegmentDisplay => Some(Vec2::new(1.0, 1.75)),
 		ChipType::DisplayRgb => Some(Vec2::splat(2.375)),
@@ -120,8 +109,8 @@ fn cascade_bounds(desc: &ChipDescription, scale: f32, library: &ChipLibrary, dep
 			continue;
 		};
 		let centre = child.position * scale + offset;
-		min = vec_min(min, centre - size * 0.5);
-		max = vec_max(max, centre + size * 0.5);
+		min = min.min(centre - size * 0.5);
+		max = max.max(centre + size * 0.5);
 	}
 	(min.x <= max.x).then(|| ((min + max) * 0.5, max - min))
 }
@@ -297,15 +286,15 @@ pub(crate) fn draw_seven_segment(geo: &mut SceneGeometry, clip: ClipRect, centre
 	let col_offset = if pin_state.is_high(owner_id, 7) == Some(true) { 3 } else { 0 };
 	let seg_col = |pin_id: i32| {
 		let on = pin_state.is_high(owner_id, pin_id) == Some(true);
-		theme::SEVEN_SEG_COLS[(if on { 1 } else { 0 }) + col_offset]
+		theme::SEVEN_SEG_COLS[usize::from(on) + col_offset]
 	};
 
 	let bounds_width = scale;
 	let bounds_height = bounds_width * TARGET_HEIGHT_ASPECT;
 	let segment_thickness = scale * SEGMENT_THICKNESS_FRAC;
 	let segment_width = bounds_width - segment_thickness - scale * DISPLAY_INSET_FRAC;
-	let segment_region_height = bounds_height - segment_thickness - scale * DISPLAY_INSET_FRAC;
-	let segment_height = segment_region_height / 2.0 - scale * SEGMENT_VERTICAL_SPACING_FRAC;
+	let segment_region_height = scale.mul_add(-DISPLAY_INSET_FRAC, bounds_height - segment_thickness);
+	let segment_height = scale.mul_add(-SEGMENT_VERTICAL_SPACING_FRAC, segment_region_height / 2.0);
 
 	clip.add_rect(geo, centre, Vec2::new(bounds_width, bounds_height), theme::STATE_DISCONNECTED_COL);
 
@@ -336,6 +325,10 @@ pub(crate) fn draw_pixel_grid(
 	pin_state: &dyn PinStateLookup,
 	is_rgb: bool,
 ) {
+	const fn unpack_4bit_channel(raw: u32) -> f32 {
+		(raw & 0b1111) as f32 / 15.0
+	}
+
 	const PIXELS_PER_ROW: usize = 16;
 	const BORDER_FRAC: f32 = 0.95;
 	const PIXEL_SIZE_FRAC: f32 = 0.925;
@@ -350,10 +343,6 @@ pub(crate) fn draw_pixel_grid(
 
 	let internal_state = pin_state.internal_state(owner_id);
 
-	fn unpack_4bit_channel(raw: u32) -> f32 {
-		(raw & 0b1111) as f32 / 15.0
-	}
-
 	for y in 0..PIXELS_PER_ROW {
 		for x in 0..PIXELS_PER_ROW {
 			let col = match internal_state.and_then(|s| s.get(y * PIXELS_PER_ROW + x)) {
@@ -361,7 +350,7 @@ pub(crate) fn draw_pixel_grid(
 					if is_rgb {
 						[unpack_4bit_channel(pixel_state), unpack_4bit_channel(pixel_state >> 4), unpack_4bit_channel(pixel_state >> 8), 1.0]
 					} else {
-						let v = (pixel_state != 0) as u32 as f32;
+						let v = u32::from(pixel_state != 0) as f32;
 						[v, v, v, 1.0]
 					}
 				}
