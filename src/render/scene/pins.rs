@@ -166,7 +166,7 @@ fn draw_dev_pin_value_label(
 pub(crate) fn draw_pins(
 	geo: &mut SceneGeometry,
 	chip: &crate::description::ChipDescription,
-	placed: &[PlacedSubChip],
+	placed: &[PlacedSubChip<'_>],
 	pin_state: &dyn PinStateLookup,
 	hover_world_pos: Option<Vec2>,
 ) -> Option<(Vec2, String)> {

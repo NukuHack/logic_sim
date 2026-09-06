@@ -181,7 +181,7 @@ fn effective_body_colour(draft: &ChipDescription) -> Rgba {
 
 /// Builds the whole customize workspace for one frame: dark backdrop,
 /// option column on the left, live chip preview filling the rest.
-pub(crate) fn build_chip_customizer(ctx: &CustomizeCtx, vw: f32, vh: f32, mouse: Vec2) -> CustomizeFrameOut {
+pub(crate) fn build_chip_customizer(ctx: &CustomizeCtx<'_>, vw: f32, vh: f32, mouse: Vec2) -> CustomizeFrameOut {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	ui_kit::fill_rect(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
@@ -204,7 +204,7 @@ pub(crate) fn build_chip_customizer(ctx: &CustomizeCtx, vw: f32, vh: f32, mouse:
 }
 
 /// Pixels-per-world-unit the preview draws at for the current zoom.
-fn fit_ppu(ctx: &CustomizeCtx, rect: UiRect) -> f32 {
+fn fit_ppu(ctx: &CustomizeCtx<'_>, rect: UiRect) -> f32 {
 	let size = ctx.draft.size;
 	let margin = 2.0_f32.max(layout::GRID_SIZE * 10.0);
 	let fit = (rect.w / (size.x + margin)).min(rect.h / (size.y + margin));
@@ -214,7 +214,7 @@ fn fit_ppu(ctx: &CustomizeCtx, rect: UiRect) -> f32 {
 /// The option column: title, contextual hint, confirm row, name-position
 /// wheel, colour swatches + hex field, and the DISPLAYS list. Returns the
 /// list's scroll viewport rect (part of [`PreviewLayout`]).
-fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRect) -> UiRect {
+fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: UiRect) -> UiRect {
 	let inner_x = rect.x + 12.0;
 	let inner_w = rect.w - 24.0;
 	ui_kit::fill_rect(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
@@ -246,7 +246,7 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 		"Cancel",
 		EditorAction::CustomizeCancel,
 		true,
-		Some(crate::render::theme::DANGEROUS_ACTION_COL),
+		Some(theme::DANGEROUS_ACTION_COL),
 	);
 	ui_kit::add_button(frame, ui, UiRect::new(inner_x + half_w + GAP, y, half_w, BTN_H), "Confirm", EditorAction::CustomizeConfirm, true, None);
 	y += BTN_H + GAP;
@@ -329,7 +329,7 @@ fn build_menu(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRe
 
 /// "Caching" checkbox row -- a small tick box plus label, mirroring
 /// `ChipCustomizationMenu`'s caching checkbox.
-fn build_force_cache_row(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, inner_x: f32, inner_w: f32, y: f32) -> f32 {
+fn build_force_cache_row(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, inner_x: f32, inner_w: f32, y: f32) -> f32 {
 	use crate::gate_op::{MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING};
 
 	let box_size: f32 = 18.0;
@@ -393,7 +393,7 @@ fn same_rgb(a: Rgba, b: Rgba) -> bool {
 /// embedded displays drawn in world units then transformed to screen
 /// pixels, corner resize brackets, display grab/scale hotspots and the
 /// placement ghost.
-fn build_preview(ctx: &CustomizeCtx, frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, mouse: Vec2) {
+fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, mouse: Vec2) {
 	ui_kit::fill_rect(frame, ui, rect, [0.09, 0.09, 0.105, 1.0]);
 
 	let size = ctx.draft.size;
@@ -821,7 +821,7 @@ mod tests {
 	#[test]
 	fn placed_display_hotspots_sit_on_their_own_displays_not_the_body_centre() {
 		let mut led = ChipDescription::new("LED", ChipType::DisplayLed);
-		led.input_pins.push(crate::PinDescription::new("IN", 0, PinBitCount::Bit1));
+		led.input_pins.push(PinDescription::new("IN", 0, PinBitCount::Bit1));
 		let mut panel = ChipDescription::new("PANEL", ChipType::Custom);
 		panel.sub_chips.push(crate::SubChipDescription {
 			name: "LED".into(),

@@ -8,6 +8,7 @@ use crate::ChipLibrary;
 use crate::description::ChipDescription;
 use crate::json::ProjectDescription;
 
+#[derive(Debug)]
 pub struct Project {
 	pub description: ProjectDescription,
 	pub chip_library: ChipLibrary,

@@ -370,7 +370,7 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
@@ -594,7 +594,7 @@ mod tests {
 
 	fn placed_body(v: &ViewerState, id: i32) -> (Vec2, Vec2) {
 		let root_desc = v.library.get("ROOT");
-		let sub = crate::render::scene::place_sub_chips(root_desc, &v.library).into_iter().find(|p| p.id == id).expect("placed");
+		let sub = scene::place_sub_chips(root_desc, &v.library).into_iter().find(|p| p.id == id).expect("placed");
 		(sub.centre, sub.size)
 	}
 
@@ -857,7 +857,7 @@ mod duplicate_tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
@@ -919,7 +919,7 @@ mod duplicate_tests {
 
 		let wires = &v.pending_place[0].1.attached_wires;
 		assert_eq!(wires.len(), 2, "both the base wire and its tap come along");
-		let tap = wires.iter().find(|w| w.connection_type != crate::WireConnectionType::ToPins).expect("the tap survives duplication");
+		let tap = wires.iter().find(|w| w.connection_type != WireConnectionType::ToPins).expect("the tap survives duplication");
 		assert_eq!(tap.connected_wire_index, 0, "tap resolves to a LOCAL index within the carried batch, matching the ghost's own wires list");
 
 		// Drop onto a chip that already has its own 2 wires, so the real
@@ -929,7 +929,7 @@ mod duplicate_tests {
 		let chip = v.library.get("ROOT");
 		assert_eq!(chip.wires.len(), 4, "original 2 plus duplicated base wire and its tap");
 		let placed_tap = &chip.wires[3];
-		assert_ne!(placed_tap.connection_type, crate::WireConnectionType::ToPins);
+		assert_ne!(placed_tap.connection_type, WireConnectionType::ToPins);
 		assert_eq!(placed_tap.connected_wire_index, 2, "re-offset to the duplicated base wire's real position (index 2) in the full list");
 	}
 

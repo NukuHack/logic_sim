@@ -2,16 +2,18 @@
 //! (simulation + camera + every overlay's draft state), plus the overlay
 //! bookkeeping that opens/closes panels on the live UI stack.
 
+use crate::render::ContextMenuState;
 use crate::render::camera::Camera;
-use crate::render::context_menu::{ContextMenuAction, ContextMenuState};
+use crate::render::context_menu::ContextMenuAction;
 use crate::render::editor_ui::{self, LibrarySelection, PrefValueField};
 use crate::render::scene::{PlacedBuf, SceneGeometry};
 use crate::render::ui_stack::{LayerId, UiStack};
 use crate::sim::key_mods_bits;
 use crate::sim::{ChipIdx, Simulator};
-use crate::viewer::chip_interaction;
+use crate::viewer::chip_interaction::{self, CanvasInteraction, PendingComponent};
 use crate::viewer::customize::CustomizeState;
 use crate::viewer::sim_thread::SimHandle;
+use crate::viewer::undo::UndoController;
 use crate::viewer::wire_draft::PendingWire;
 use crate::{ChipLibrary, ProjectDescription};
 use glam::Vec2;
@@ -44,13 +46,13 @@ impl LibraryMode {
 	/// Whether a name-entry field is open (new/rename collection) -- these two share every bit
 	/// of input-routing behaviour (typing, Backspace, Enter-to-confirm) and only differ in what
 	/// `EditorAction::ConfirmCollectionName` does with the typed text.
-	pub(crate) fn is_naming(&self) -> bool {
-		matches!(self, LibraryMode::CreatingCollection | LibraryMode::RenamingCollection)
+	pub(crate) const fn is_naming(&self) -> bool {
+		matches!(self, Self::CreatingCollection | Self::RenamingCollection)
 	}
 
 	/// Whether either delete confirmation is open.
-	pub(crate) fn is_confirming_delete(&self) -> bool {
-		matches!(self, LibraryMode::ConfirmingChipDelete { .. } | LibraryMode::ConfirmingCollectionDelete { .. })
+	pub(crate) const fn is_confirming_delete(&self) -> bool {
+		matches!(self, Self::ConfirmingChipDelete { .. } | Self::ConfirmingCollectionDelete { .. })
 	}
 }
 
@@ -73,19 +75,19 @@ pub(crate) enum Overlay {
 }
 
 impl Overlay {
-	pub(crate) fn layer_id(&self) -> LayerId {
+	pub(crate) const fn layer_id(&self) -> LayerId {
 		match self {
-			Overlay::Library => LayerId::Library,
-			Overlay::Search => LayerId::Search,
-			Overlay::Preferences => LayerId::Preferences,
-			Overlay::Naming(_) => LayerId::Naming,
-			Overlay::KeySelect(_) => LayerId::KeySelect,
-			Overlay::RomEditor(_) => LayerId::RomEditor,
-			Overlay::SaveChip => LayerId::SaveChip,
-			Overlay::CustomizeChip => LayerId::CustomizePanel,
-			Overlay::PinEdit(_) => LayerId::PinEdit,
-			Overlay::LedColour(_) => LayerId::LedColour,
-			Overlay::UnsavedChanges => LayerId::UnsavedChanges,
+			Self::Library => LayerId::Library,
+			Self::Search => LayerId::Search,
+			Self::Preferences => LayerId::Preferences,
+			Self::Naming(_) => LayerId::Naming,
+			Self::KeySelect(_) => LayerId::KeySelect,
+			Self::RomEditor(_) => LayerId::RomEditor,
+			Self::SaveChip => LayerId::SaveChip,
+			Self::CustomizeChip => LayerId::CustomizePanel,
+			Self::PinEdit(_) => LayerId::PinEdit,
+			Self::LedColour(_) => LayerId::LedColour,
+			Self::UnsavedChanges => LayerId::UnsavedChanges,
 		}
 	}
 }
@@ -103,7 +105,7 @@ pub(crate) enum ViewerAction {
 
 /// Mapping function handed to `StackLayer::convert_frame` for every layer built from an
 /// `EditorFrame`.
-pub(crate) fn editor_action(action: editor_ui::EditorAction) -> ViewerAction {
+pub(crate) const fn editor_action(action: editor_ui::EditorAction) -> ViewerAction {
 	ViewerAction::Editor(action)
 }
 
@@ -404,7 +406,7 @@ pub(crate) struct ViewerState {
 	/// place)`, drawn as translucent previews following the cursor (`build_pending_place_scene`)
 	/// and dropped as real descriptions on the next canvas click that lands on free space
 	/// (`try_place_pending_components`).
-	pub(crate) pending_place: Vec<(Vec2, chip_interaction::PendingComponent)>,
+	pub(crate) pending_place: Vec<(Vec2, PendingComponent)>,
 
 	/// Ids of the currently selected placed components (subchips of the
 	/// current root chip; dev-pins deliberately don't take part -- see
@@ -416,7 +418,7 @@ pub(crate) struct ViewerState {
 	/// What the current left-press drag over the canvas is doing (carrying
 	/// the selection around, or drawing a rubber band) -- see
 	/// [`chip_interaction::CanvasInteraction`].
-	pub(crate) canvas_interaction: chip_interaction::CanvasInteraction,
+	pub(crate) canvas_interaction: CanvasInteraction,
 
 	/// Wire currently being edited in wire edit mode (bends draggable),
 	/// if any -- see [`viewer::wire_edit`] and [`WireEditState`]. Cleared
@@ -431,7 +433,7 @@ pub(crate) struct ViewerState {
 
 	/// Undo/redo history for the edited chip (`DevChipInstance`'s
 	/// `UndoController`). Cleared wherever the edited root changes.
-	pub(crate) undo: crate::viewer::undo::UndoController,
+	pub(crate) undo: UndoController,
 }
 
 macro_rules! overlay_mapping {
@@ -464,13 +466,13 @@ impl ViewerState {
 		library: ChipLibrary,
 		root_chip_name: String,
 		viewport: Vec2,
-		audio: crate::audio::SharedAudioState,
+		audio: &crate::audio::SharedAudioState,
 	) -> Self {
 		let root_desc = library.get_arc(&root_chip_name);
 		let sim = Simulator::build(&root_desc, &library);
-		let mut v = Self {
+		let v = Self {
 			library,
-			sim: SimHandle::new(sim, std::sync::Arc::clone(&audio)),
+			sim: SimHandle::new(sim, std::sync::Arc::clone(audio)),
 			root_chip_name,
 			camera: Camera::new(viewport),
 			dragging: false,
@@ -506,10 +508,10 @@ impl ViewerState {
 			pending_wire: None,
 			pending_place: Vec::new(),
 			selected_ids: Vec::new(),
-			canvas_interaction: Default::default(),
+			canvas_interaction: CanvasInteraction::default(),
 			wire_edit: None,
 			view_stack: Vec::new(),
-			undo: Default::default(),
+			undo: UndoController::default(),
 		};
 		v.sync_sim_clock_pref();
 		v
@@ -554,7 +556,7 @@ impl ViewerState {
 	/// Rebuilds `self.sim` from `self.library`'s current copy of `self.root_chip_name` -- called
 	/// after any edit that changes the simulated structure (deleting a component/wire, re-
 	/// configuring a Pulse/Key/ROM, etc).
-	pub(crate) fn rebuild_sim(&mut self) {
+	pub(crate) fn rebuild_sim(&self) {
 		let root_desc = self.library.get_arc(&self.root_chip_name);
 		// Carry the player-driven transient input state across the swap so
 		// an in-place edit doesn't drop held keys / modifiers / toggled
@@ -586,7 +588,7 @@ impl ViewerState {
 	/// switching flows use this: a fresh run (or a different circuit)
 	/// shouldn't inherit whatever the previous circuit's RAM happened to
 	/// hold.
-	pub(crate) fn restart_sim_fresh(&mut self) {
+	pub(crate) fn restart_sim_fresh(&self) {
 		let root_desc = self.library.get_arc(&self.root_chip_name);
 		let (held_keys, key_modifiers, driven_inputs) = self.sim.take_transient_input_state();
 		let mut sim = Simulator::build(&root_desc, &self.library);
@@ -600,7 +602,7 @@ impl ViewerState {
 	// ---- Prefs-derived queries (`Project.ShowGrid` / `.ShouldSnapToGrid` /
 	// `.ForceStraightWires` / `.targetTicksPerSecond`) ----
 
-	pub(crate) fn show_grid(&self) -> bool {
+	pub(crate) const fn show_grid(&self) -> bool {
 		self.prefs.prefs_grid_display_mode == 1
 	}
 
@@ -628,24 +630,24 @@ impl ViewerState {
 
 	/// Pushes the clock-speed pref into the live simulator (`SimThread.Run`
 	/// assigning `Simulator.stepsPerClockTransition` every tick).
-	pub(crate) fn sync_sim_clock_pref(&mut self) {
+	pub(crate) fn sync_sim_clock_pref(&self) {
 		self.sim.set_steps_per_clock_transition(self.prefs.prefs_sim_steps_per_clock_tick.max(0) as u32);
 	}
 
 	// ---- Shortcut-driven pref mutations (`PreferencesMenu.HandleKeyboardShortcuts`) ----
 
 	/// Mirrors `Project.ToggleGridDisplay`.
-	pub(crate) fn toggle_grid_display(&mut self) {
+	pub(crate) const fn toggle_grid_display(&mut self) {
 		self.prefs.prefs_grid_display_mode = 1 - self.prefs.prefs_grid_display_mode;
 	}
 
 	/// Mirrors the sim-pause toggle shortcut's description mutation.
-	pub(crate) fn toggle_sim_paused(&mut self) {
+	pub(crate) const fn toggle_sim_paused(&mut self) {
 		self.prefs.prefs_sim_paused = !self.prefs.prefs_sim_paused;
 	}
 
 	/// Mirrors the single-step shortcut: only does anything while paused.
-	pub(crate) fn request_single_sim_step(&mut self) {
+	pub(crate) fn request_single_sim_step(&self) {
 		if self.prefs.prefs_sim_paused {
 			self.sim.request_single_step();
 		}
@@ -656,7 +658,7 @@ impl ViewerState {
 	/// Whether the chip currently on screen may be edited: only the bottom
 	/// of the view stack can (`Project.CanEditViewedChip`). While any
 	/// view-only chip sits on top, canvas interaction is read-only.
-	pub(crate) fn can_edit_viewed_chip(&self) -> bool {
+	pub(crate) const fn can_edit_viewed_chip(&self) -> bool {
 		self.view_stack.is_empty()
 	}
 
@@ -718,6 +720,7 @@ impl ViewerState {
 			let Some(next) = sim.find_sub_chip(scope, *id) else { return SceneTarget::EditRoot };
 			scope = next;
 		}
+		drop(sim);
 		SceneTarget::Viewed { name: top.name.clone(), scope }
 	}
 
@@ -748,7 +751,7 @@ impl ViewerState {
 		self.overlays.push(overlay);
 	}
 
-	pub(crate) fn close_overlay(&mut self, overlay: Overlay) {
+	pub(crate) fn close_overlay(&mut self, overlay: &Overlay) {
 		let id = overlay.layer_id();
 		self.overlays.retain(|o| o.layer_id() != id);
 	}
@@ -760,22 +763,13 @@ impl ViewerState {
 		let Some(top) = self.overlays.pop() else { return };
 		match top {
 			Overlay::Library => crate::viewer::library::reset_library_popup_state(self),
-			Overlay::Naming(_) => {}
-			// The chosen key/purpose die with the popup, same as `RomEditor`'s.
-			Overlay::KeySelect(_) => {}
-			// The ROM draft dies with the popup -- it lived inside `top`, already popped above.
-			Overlay::RomEditor(_) => {}
+			// These die with the popup -- it lived inside `top`, already popped above.
+			Overlay::Naming(_) | Overlay::KeySelect(_) | Overlay::RomEditor(_) | Overlay::PinEdit(_) | Overlay::LedColour(_) => {}
 			Overlay::Search => {
 				self.search_query.clear();
 				self.search_selected = None;
 				self.search_delete_confirm = None;
 			}
-			// The pin-edit draft dies with the popup, success or not (the confirm path reads its
-			// values -- see `confirm_pin_edit_popup` -- and writes them onto the pin *before*
-			// closing); it lived inside `top`, already popped above, same as `RomEditor`'s.
-			Overlay::PinEdit(_) => {}
-			// Same pattern for the LED colour picker.
-			Overlay::LedColour(_) => {}
 			// Cancel: the pending action is dropped with the prompt --
 			// mirroring `UnsavedChangesPopup` never firing its callback
 			// with anything on a cancel.
@@ -835,7 +829,7 @@ pub(crate) fn sync_stack_with_state(v: &mut ViewerState) {
 		v.stack.pop_if_top(|id| id == LayerId::CustomizePanel);
 	}
 	if v.overlays.is_empty() {
-		v.stack.pop_while_top(|id| id.is_overlay_panel());
+		v.stack.pop_while_top(LayerId::is_overlay_panel);
 	}
 }
 
@@ -880,6 +874,7 @@ mod view_stack_tests {
 	use super::*;
 	use crate::ChipType;
 	use crate::description::{ChipDescription, SubChipDescription};
+	use crate::render::context_menu::ContextMenuAction;
 
 	fn viewer_with_viewable_component() -> (ViewerState, i32) {
 		let mut library = ChipLibrary::new();
@@ -888,7 +883,7 @@ mod view_stack_tests {
 		// Viewing is custom-only, so the viewable thing on the canvas is a
 		// player-authored chip instance, not a builtin gate.
 		library.add(ChipDescription::new("SUB", ChipType::Custom));
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		chip_interaction::start_placing(&mut v, "SUB");
 		crate::viewer::canvas::try_place_pending_components(&mut v, Vec2::ZERO, &mut None);
 		let id = v.library.get("ROOT").sub_chips[0].id;
@@ -930,7 +925,7 @@ mod view_stack_tests {
 
 		// ...and the popup offers no usable View row for one either.
 		let items = crate::viewer::context_menu::context_menu_items_for_component(&v.library, "NAND");
-		let view_row = items.iter().find(|i| matches!(i.id, crate::render::context_menu::ContextMenuAction::View)).expect("row exists");
+		let view_row = items.iter().find(|i| matches!(i.id, ContextMenuAction::View)).expect("row exists");
 		assert!(!view_row.enabled, "the View row is greyed out for builtins");
 	}
 

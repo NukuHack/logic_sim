@@ -20,7 +20,7 @@ use glam::Vec2;
 /// components while they're being dragged.
 pub(crate) fn draw_component(
 	geo: &mut SceneGeometry,
-	sub: &PlacedSubChip,
+	sub: &PlacedSubChip<'_>,
 	pin_state: &dyn PinStateLookup,
 	hover_world_pos: Option<Vec2>,
 	pin_already_hovered: bool,
@@ -78,13 +78,13 @@ pub(crate) fn draw_component(
 /// delegating to the shared embedded-display painter
 /// (`scene::displays`) at a scale derived from this body's own size --
 /// see that module's docs for the exact segment layout/colour rules.
-fn draw_display_seven_segment(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup) {
+fn draw_display_seven_segment(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, pin_state: &dyn PinStateLookup) {
 	const TARGET_HEIGHT_ASPECT: f32 = 1.75;
 	let scale = sub.size.x.min(sub.size.y / TARGET_HEIGHT_ASPECT);
 	displays::draw_seven_segment(geo, ClipRect::OPEN, sub.centre, scale, sub.id, pin_state);
 }
 
-fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip, body_colour: [f32; 4]) {
+fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, body_colour: [f32; 4]) {
 	// Draw this subchip's name label, unless explicitly hidden (e.g. display/bus/pin chips, whose
 	// body is the visualisation) -- except the Key chip, which forces its label to show regardless:
 	// the bound key's letter (from saved `InternalData[0]`, capitalised ASCII) is its only visualisation.
@@ -100,7 +100,7 @@ fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip, body_colour:
 	geo.add_rect(sub.centre, sub.size, body_colour);
 }
 
-fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, _body_colour: [f32; 4]) {
+fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, pin_state: &dyn PinStateLookup, _body_colour: [f32; 4]) {
 	// An LED's body is its indicator; the shared painter draws the black
 	// backing plus the tinted inner square in all three wire states
 	// (lit/dim/disconnected by the input pin, coloured by
@@ -111,7 +111,7 @@ fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dy
 /// Draws a `DisplayRgb`/`DisplayDot` subchip's live 16x16 pixel buffer by
 /// delegating to the shared embedded-display painter -- see
 /// `scene::displays::draw_pixel_grid` for the buffer layout/decode rules.
-fn draw_display_pixel_grid(geo: &mut SceneGeometry, sub: &PlacedSubChip, pin_state: &dyn PinStateLookup, is_rgb: bool) {
+fn draw_display_pixel_grid(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, pin_state: &dyn PinStateLookup, is_rgb: bool) {
 	displays::draw_pixel_grid(geo, ClipRect::OPEN, sub.centre, sub.size.x.min(sub.size.y), sub.id, pin_state, is_rgb);
 }
 

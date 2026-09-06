@@ -149,7 +149,7 @@ impl App {
 				let root_chip_name = unique_new_chip_name(&library);
 				library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
 
-				let mut v = ViewerState::new(name, library, root_chip_name.clone(), self.viewport, std::sync::Arc::clone(&self.audio));
+				let mut v = ViewerState::new(name, library, root_chip_name.clone(), self.viewport, &std::sync::Arc::clone(&self.audio));
 				// That opening chip is a Ctrl+N-style draft too: it stays out of the
 				// library sidebar and off disk until it's actually saved (Ctrl+S).
 				v.mark_unsaved_draft(&root_chip_name);

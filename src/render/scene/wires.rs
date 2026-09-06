@@ -44,7 +44,7 @@ fn draw_wire_strands(
 pub(crate) fn draw_wires(
 	geo: &mut SceneGeometry,
 	chip: &ChipDescription,
-	placed: &[PlacedSubChip],
+	placed: &[PlacedSubChip<'_>],
 	owner_to_placed: &HashMap<i32, usize>,
 	pin_state: &dyn PinStateLookup,
 ) -> super::WireSpans {

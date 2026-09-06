@@ -23,6 +23,7 @@ use super::eval::{Bits, CachedGate, Lut, Native};
 /// plain `fn` pointers instead of hand-writing a near-duplicate candidate per combination --
 /// see `adder_variants` below. Still just an integer + two function-pointer calls per row, so
 /// there's no closure/`Box<dyn Fn>` overhead versus a hardcoded variant.
+#[derive(Debug)]
 pub struct Candidate {
 	name: &'static str,
 	config: Bits,

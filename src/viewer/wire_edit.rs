@@ -30,7 +30,7 @@ pub(crate) fn edited_wire_vertices(v: &ViewerState) -> Option<(usize, Vec<Vec2>)
 }
 
 /// World-space vertex list of wire `index` within `chip` (see above).
-pub(crate) fn wire_vertices(chip: &ChipDescription, _library: &crate::ChipLibrary, placed: &[PlacedSubChip], index: usize) -> Vec<Vec2> {
+pub(crate) fn wire_vertices(chip: &ChipDescription, _library: &crate::ChipLibrary, placed: &[PlacedSubChip<'_>], index: usize) -> Vec<Vec2> {
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();
 	let mut cache: WirePointCache = HashMap::new();
 	let ctx = WireCtx { chip, placed, owner_to_placed: &owner_to_placed, wires: &chip.wires };
@@ -45,7 +45,7 @@ pub(crate) fn wire_vertices(chip: &ChipDescription, _library: &crate::ChipLibrar
 
 /// Enters edit mode on `wire_index` -- or leaves when it's already being
 /// edited (`EnterWireEditMode`'s toggle).
-pub(crate) fn enter(v: &mut ViewerState, wire_index: usize) {
+pub(crate) const fn enter(v: &mut ViewerState, wire_index: usize) {
 	let already = matches!(v.wire_edit, Some(state) if state.wire_index == wire_index);
 	v.wire_edit = if already { None } else { Some(WireEditState { wire_index, selected_bend: None }) };
 }
@@ -88,7 +88,7 @@ pub(crate) fn find_wire_network(chip: &ChipDescription, root_wire: usize) -> Vec
 	result
 }
 
-pub(crate) fn exit(v: &mut ViewerState) {
+pub(crate) const fn exit(v: &mut ViewerState) {
 	v.wire_edit = None;
 }
 
@@ -142,7 +142,7 @@ pub(crate) fn insert_point_at_click(v: &mut ViewerState, world_pos: Vec2) -> Opt
 	crate::viewer::undo::record_wire_list_snapshot_pair_before(v, |v| {
 		let chip = v.library.get_mut(&v.root_chip_name.clone());
 		chip.wires[state.wire_index].points.insert(bend_index, best.2);
-		for dep in chip.wires.iter_mut() {
+		for dep in &mut chip.wires {
 			if dep.connection_type == WireConnectionType::ToPins || dep.connected_wire_index != state.wire_index as i32 {
 				continue;
 			}
@@ -156,7 +156,7 @@ pub(crate) fn insert_point_at_click(v: &mut ViewerState, world_pos: Vec2) -> Opt
 }
 
 /// Begins carrying the selected bend (click on a handle starts its drag).
-pub(crate) fn begin_drag(v: &mut ViewerState, bend_index: usize) {
+pub(crate) const fn begin_drag(v: &mut ViewerState, bend_index: usize) {
 	if let Some(state) = v.wire_edit.as_mut() {
 		state.selected_bend = Some(bend_index);
 	}
@@ -205,7 +205,7 @@ fn wire_end_neighbours(v: &ViewerState, wire_index: usize) -> (Vec2, Vec2) {
 /// halves -- a plain click on a handle -- record nothing.
 pub(crate) fn commit_drag(v: &mut ViewerState, wire_index: usize, bend_index: usize, original: Vec2) {
 	let after = crate::viewer::undo::capture_wire_list(v);
-	let mut before_wires = after.wires.clone();
+	let mut before_wires = after.wires;
 	if let Some((wire, _)) = before_wires.get_mut(wire_index)
 		&& let Some(point) = wire.points.get_mut(bend_index)
 	{
@@ -219,9 +219,9 @@ pub(crate) fn commit_drag(v: &mut ViewerState, wire_index: usize, bend_index: us
 /// dependents' attachment indices shifted like
 /// `NotifyParentWirePointWillBeDeleted`). Returns whether anything happened.
 pub(crate) fn delete_selected_bend(v: &mut ViewerState) -> bool {
-	let (wire_index, bend) = match v.wire_edit {
-		Some(WireEditState { wire_index, selected_bend: Some(bend) }) => (wire_index, bend),
-		_ => return false,
+	let (wire_index, bend) = {
+		let Some(WireEditState { wire_index, selected_bend: Some(bend) }) = v.wire_edit else { return false };
+		(wire_index, bend)
 	};
 	{
 		let chip = v.library.get(&v.root_chip_name);
@@ -236,7 +236,7 @@ pub(crate) fn delete_selected_bend(v: &mut ViewerState) -> bool {
 		let chip = v.library.get_mut(&root_chip_name);
 		chip.wires[wire_index].points.remove(bend);
 		// Dependent taps attached at/after the removed vertex shift back.
-		for dep in chip.wires.iter_mut() {
+		for dep in &mut chip.wires {
 			if dep.connection_type == WireConnectionType::ToPins || dep.connected_wire_index != wire_index as i32 {
 				continue;
 			}
@@ -263,7 +263,7 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		let chip = v.library.get_mut("ROOT");
 		let mut wire = WireDescription::new(PinAddress::new(1, 2), PinAddress::new(2, 1));
 		wire.points = vec![Vec2::new(-4.0, 4.0)];
@@ -274,13 +274,13 @@ mod tests {
 	#[test]
 	fn enter_toggles_and_exit_clears() {
 		let mut v = viewer_with_wire();
-		crate::viewer::wire_edit::enter(&mut v, 0);
+		enter(&mut v, 0);
 		assert_eq!(v.wire_edit, Some(WireEditState { wire_index: 0, selected_bend: None }));
 		// Entering on the same wire again leaves (`EnterWireEditMode`'s toggle).
-		crate::viewer::wire_edit::enter(&mut v, 0);
+		enter(&mut v, 0);
 		assert_eq!(v.wire_edit, None);
-		crate::viewer::wire_edit::enter(&mut v, 0);
-		crate::viewer::wire_edit::exit(&mut v);
+		enter(&mut v, 0);
+		exit(&mut v);
 		assert_eq!(v.wire_edit, None);
 	}
 
@@ -290,10 +290,10 @@ mod tests {
 	fn clicking_the_line_inserts_a_selected_bend() {
 		let mut v = viewer_with_wire();
 
-		crate::viewer::wire_edit::enter(&mut v, 0);
+		enter(&mut v, 0);
 		// The wire runs (-6,-2) -> (-4,4) -> (6,2) roughly through y≈0 mid;
 		// click right on its middle.
-		let inserted = crate::viewer::wire_edit::insert_point_at_click(&mut v, Vec2::new(0.0, 0.5));
+		let inserted = insert_point_at_click(&mut v, Vec2::new(0.0, 0.5));
 		assert!(inserted.is_some(), "a click near the line inserts");
 		assert_eq!(v.wire_edit.and_then(|e| e.selected_bend), inserted);
 
@@ -304,8 +304,8 @@ mod tests {
 		assert_eq!(v.library.get("ROOT").wires[0].points.len(), 1, "the insert undoes");
 
 		// Far from the line: nothing inserts.
-		crate::viewer::wire_edit::enter(&mut v, 0);
-		assert_eq!(crate::viewer::wire_edit::insert_point_at_click(&mut v, Vec2::new(0.0, 500.0)), None);
+		enter(&mut v, 0);
+		assert_eq!(insert_point_at_click(&mut v, Vec2::new(0.0, 500.0)), None);
 	}
 
 	/// Delete removes the selected bend and shifts dependents' attachment
@@ -322,9 +322,9 @@ mod tests {
 			chip.wires.push(tap);
 		}
 
-		crate::viewer::wire_edit::enter(&mut v, 0);
+		enter(&mut v, 0);
 		v.wire_edit = Some(WireEditState { wire_index: 0, selected_bend: Some(0) });
-		assert!(crate::viewer::wire_edit::delete_selected_bend(&mut v));
+		assert!(delete_selected_bend(&mut v));
 
 		let chip = v.library.get("ROOT");
 		assert_eq!(chip.wires[0].points.len(), 1);
@@ -342,10 +342,10 @@ mod tests {
 	fn committed_drags_undo_but_plain_grabs_do_not() {
 		let mut v = viewer_with_wire();
 
-		crate::viewer::wire_edit::enter(&mut v, 0);
-		crate::viewer::wire_edit::begin_drag(&mut v, 0);
-		crate::viewer::wire_edit::update_drag(&mut v, Vec2::new(-8.0, 12.0));
-		crate::viewer::wire_edit::commit_drag(&mut v, 0, 0, Vec2::new(-4.0, 4.0));
+		enter(&mut v, 0);
+		begin_drag(&mut v, 0);
+		update_drag(&mut v, Vec2::new(-8.0, 12.0));
+		commit_drag(&mut v, 0, 0, Vec2::new(-4.0, 4.0));
 		assert_eq!(v.undo.history_len(), 1, "a moved drag records one entry");
 		assert_eq!(v.library.get("ROOT").wires[0].points[0], Vec2::new(-8.0, 12.0));
 
@@ -354,7 +354,7 @@ mod tests {
 		assert_eq!(v.library.get("ROOT").wires[0].points[0], Vec2::new(-4.0, 4.0), "undo restores the grab-time point");
 
 		// Grab without moving: no history entry.
-		crate::viewer::wire_edit::commit_drag(&mut v, 0, 0, grab_point);
+		commit_drag(&mut v, 0, 0, grab_point);
 		assert_eq!(v.undo.history_len(), 1, "an unmoved commit is a no-op");
 	}
 }

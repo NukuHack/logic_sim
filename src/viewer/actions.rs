@@ -35,7 +35,7 @@ pub(crate) fn apply_editor_action(v: &mut ViewerState, paths: &SavePaths, status
 				Ok(()) => v.prefs = desc,
 				Err(e) => *status = Some(format!("Failed to save preferences: {e}")),
 			}
-			v.close_overlay(Overlay::Preferences);
+			v.close_overlay(&Overlay::Preferences);
 			reset_preferences_draft(v);
 		}
 		EA::SelectCollection(i) => {

@@ -34,17 +34,17 @@ pub(crate) enum PendingWireEnd {
 }
 
 impl PendingWireEnd {
-	pub(crate) fn is_source(&self) -> bool {
+	pub(crate) const fn is_source(&self) -> bool {
 		match self {
-			PendingWireEnd::Pin { is_source, .. } => *is_source,
-			PendingWireEnd::WireTap { .. } => true,
+			Self::Pin { is_source, .. } => *is_source,
+			Self::WireTap { .. } => true,
 		}
 	}
 
-	pub(crate) fn position(&self) -> Vec2 {
+	pub(crate) const fn position(&self) -> Vec2 {
 		match self {
-			PendingWireEnd::Pin { position, .. } => *position,
-			PendingWireEnd::WireTap { point, .. } => *point,
+			Self::Pin { position, .. } => *position,
+			Self::WireTap { point, .. } => *point,
 		}
 	}
 }

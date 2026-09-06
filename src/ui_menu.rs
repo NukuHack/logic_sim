@@ -52,6 +52,7 @@ pub const MAX_PROJECT_NAME_LENGTH: usize = 20;
 /// Headless state machine for the startup screen. Mirrors the *behaviour*
 /// of `DLS.Graphics.MainMenu`'s static state, made instantiable (so tests,
 /// or a multi-window host, don't have to fight a global).
+#[derive(Debug)]
 pub struct MainMenu {
 	paths: SavePaths,
 	screen: MenuScreen,

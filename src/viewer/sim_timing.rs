@@ -23,7 +23,7 @@ pub const MAX_STEPS_PER_FRAME: u64 = 100_000;
 /// subtracted by the caller).
 pub fn accumulate_tick_debt(debt_ticks: f64, elapsed: f64, ticks_per_second: f64) -> f64 {
 	let max_debt = MAX_CATCHUP_SECS * ticks_per_second.max(1.0);
-	(debt_ticks + elapsed * ticks_per_second).clamp(0.0, max_debt)
+	elapsed.mul_add(ticks_per_second, debt_ticks).clamp(0.0, max_debt)
 }
 
 /// How many whole ticks are due, and what remains of the debt after taking
@@ -50,7 +50,7 @@ pub fn restore_unfinished_ticks(debt_ticks: f64, unrun_ticks: u64, ticks_per_sec
 /// per tick; this records one `(time, count)` entry per frame batch, which
 /// yields exactly the same ratio while keeping the queue tiny even at very
 /// high tick rates.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PerfWindow {
 	entries: VecDeque<(Instant, u64)>,
 	total: u64,

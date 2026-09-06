@@ -193,7 +193,7 @@ pub fn clear_type_layout_cache() {
 /// `'a` in scope) can name the real lifetime. That's sound *only* because the vec is always
 /// emptied at the start of every [`Self::fill`] call before anything is reinterpreted -- see
 /// the safety comment there.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct PlacedBuf(Vec<PlacedSubChip<'static>>);
 
 impl PlacedBuf {

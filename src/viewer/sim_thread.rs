@@ -65,7 +65,7 @@ struct SimControls {
 }
 
 impl SimControls {
-	fn new() -> Self {
+	const fn new() -> Self {
 		Self {
 			stop: AtomicBool::new(false),
 			paused: AtomicBool::new(false),
@@ -79,13 +79,13 @@ impl SimControls {
 }
 
 fn lock_sim(sim: &Mutex<Simulator>) -> MutexGuard<'_, Simulator> {
-	sim.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+	sim.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Locks the shared buzzer-audio state for the simulation side, recovering
 /// from a poisoned lock (an audio panic must not take the editor down).
-fn lock_audio(audio: &crate::audio::SharedAudioState) -> std::sync::MutexGuard<'_, crate::audio::AudioState> {
-	audio.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock_audio(audio: &crate::audio::SharedAudioState) -> MutexGuard<'_, crate::audio::AudioState> {
+	audio.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Main-thread handle over the simulated world: owns the shared
@@ -239,7 +239,7 @@ impl Drop for SimHandle {
 fn spawn_worker(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) -> std::thread::JoinHandle<()> {
 	std::thread::Builder::new()
 		.name("DLS_SimThread".to_string())
-		.spawn(move || worker_loop(sim, controls, audio))
+		.spawn(move || worker_loop(&sim, &controls, &audio))
 		.expect("failed to spawn sim thread")
 }
 
@@ -262,7 +262,7 @@ fn run_steps_batch(sim: &Mutex<Simulator>, audio: &crate::audio::SharedAudioStat
 	done
 }
 
-fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) {
+fn worker_loop(sim: &Arc<Mutex<Simulator>>, controls: &Arc<SimControls>, audio: &crate::audio::SharedAudioState) {
 	#[derive(Default)]
 	struct WorkerPacing {
 		last_tick: Option<Instant>,
@@ -285,8 +285,8 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 			// rather than hanging. Same lock order as every other
 			// two-lock scope here (arena before audio).
 			{
-				let mut sim_guard = lock_sim(&sim);
-				let mut audio_guard = lock_audio(&audio);
+				let mut sim_guard = lock_sim(sim);
+				let mut audio_guard = lock_audio(audio);
 				sim_guard.update_in_paused_state(&mut audio_guard.sim_audio);
 			}
 			pacing.last_tick = Some(now);
@@ -306,11 +306,11 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 			// A requested single step runs exactly one tick regardless of
 			// pacing (`Project.advanceSingleSimStep`) and mustn't disturb
 			// the paused timing hold below.
-			run_steps_batch(&sim, &audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), 1);
+			run_steps_batch(sim, audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), 1);
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
 			pacing.window.record(now, 1);
-			store_avg(&controls, &pacing.window, now);
+			store_avg(controls, &pacing.window, now);
 			std::thread::sleep(PAUSED_SLEEP);
 			continue;
 		}
@@ -341,13 +341,13 @@ fn worker_loop(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: cr
 			continue;
 		}
 
-		let ran = run_steps_batch(&sim, &audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), due);
+		let ran = run_steps_batch(sim, audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), due);
 		if ran < due {
 			pacing.debt_ticks = restore_unfinished_ticks(pacing.debt_ticks, due - ran, target_ticks_per_second);
 		}
 		let post = Instant::now();
 		pacing.window.record(post, ran);
-		store_avg(&controls, &pacing.window, post);
+		store_avg(controls, &pacing.window, post);
 		// Hand the core back so a renderer waiting on the arena gets it
 		// promptly (a batch always runs >= 1 step, so `ran` > 0 here).
 		std::thread::yield_now();
@@ -488,10 +488,10 @@ mod tests {
 		h.held_key_release('A');
 		assert!(h.lock().held_keys.is_empty());
 		h.held_key_press('B');
-		h.lock().set_driven_input(3, crate::pin_state::PinState::HIGH);
+		h.lock().set_driven_input(3, PinState::HIGH);
 		let (keys, mods, driven) = h.take_transient_input_state();
 		assert!(keys.contains(&'B') && mods == 7);
-		assert_eq!(driven.get(&3), Some(&crate::pin_state::PinState::HIGH), "toggled inputs travel with the rest");
+		assert_eq!(driven.get(&3), Some(&PinState::HIGH), "toggled inputs travel with the rest");
 		assert!(h.lock().held_keys.is_empty(), "take clears the source");
 		assert!(h.lock().driven_inputs.is_empty(), "take clears the source");
 	}

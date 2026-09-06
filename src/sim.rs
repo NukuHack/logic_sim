@@ -101,6 +101,7 @@ pub struct ExternalInput {
 
 /// Owns the whole simulation graph (all pins/chips across every level of
 /// nesting) and knows how to step it forward one simulation frame.
+#[derive(Debug)]
 pub struct Simulator {
 	pins: Vec<SimPin>,
 	chips: Vec<SimChip>,
@@ -595,9 +596,9 @@ impl Simulator {
 	/// PCG-based pseudo-random bool, matching the original's algorithm so
 	/// race-condition resolution has the same statistical behaviour.
 	fn random_bool(&mut self) -> bool {
-		self.pcg_rng_state = self.pcg_rng_state.wrapping_mul(747796405).wrapping_add(2891336453);
+		self.pcg_rng_state = self.pcg_rng_state.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
 		let state = self.pcg_rng_state;
-		let mut result = ((state >> ((state >> 28).wrapping_add(4))) ^ state).wrapping_mul(277803737);
+		let mut result = ((state >> ((state >> 28).wrapping_add(4))) ^ state).wrapping_mul(277_803_737);
 		result = (result >> 22) ^ result;
 		result < (u32::MAX >> 1)
 	}

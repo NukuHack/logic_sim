@@ -4,6 +4,7 @@
 //! files.
 use crate::gate_op::{MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING, calculate_num_input_bits, is_combinational};
 use crate::render::editor_ui::{LibrarySelection, SaveChipMode};
+use crate::render::{layout, theme};
 use crate::viewer::library::{DEFAULT_LIBRARY_COLLECTION_NAME, is_custom_chip};
 use crate::viewer::state::{Overlay, PendingUnsavedAction, ViewerState};
 use crate::{ChipDescription, ChipLibrary, ChipType, SavePaths, Saver, Simulator};
@@ -81,7 +82,7 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 			.find_map(|c| c.chips.iter_mut().find(|n| n.eq_ignore_ascii_case(old)).map(|slot| *slot = add_name.to_string()))
 			.is_some();
 		if !renamed {
-			for c in v.prefs.chip_collections.iter_mut() {
+			for c in &mut v.prefs.chip_collections {
 				c.chips.retain(|n| !n.eq_ignore_ascii_case(old));
 			}
 		}
@@ -131,7 +132,6 @@ fn stamp_first_save_defaults(v: &mut ViewerState, name: &str) {
 	if !v.unsaved_drafts.contains(&name.to_ascii_lowercase()) {
 		return;
 	}
-	use crate::render::{layout, theme};
 	let input_bits: Vec<crate::PinBitCount> = v.library.get(name).input_pins.iter().map(|p| p.bit_count).collect();
 	let output_bits: Vec<crate::PinBitCount> = v.library.get(name).output_pins.iter().map(|p| p.bit_count).collect();
 	let chip = v.library.get_mut(name);
@@ -147,10 +147,10 @@ fn stamp_first_save_defaults(v: &mut ViewerState, name: &str) {
 fn random_initial_chip_colour() -> [f32; 4] {
 	fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 4] {
 		let i = (h * 6.0).floor() as i32;
-		let f = h * 6.0 - i as f32;
+		let f = h.mul_add(6.0, -(i as f32));
 		let p = v * (1.0 - s);
 		let q = v * (1.0 - f * s);
-		let t = v * (1.0 - (1.0 - f) * s);
+		let t = v * (1.0 - f).mul_add(-s, 1.0);
 		let (r, g, b) = match (i % 6 + 6) % 6 {
 			0 => (v, t, p),
 			1 => (q, v, p),
@@ -162,7 +162,7 @@ fn random_initial_chip_colour() -> [f32; 4] {
 		[r, g, b, 1.0]
 	}
 	// fastrand::f32() is 0..1; lerp it into 0.2..=1.0 for saturation/value by hand
-	let lerp_0_2_to_1 = |t: f32| 0.2 + t * 0.8;
+	let lerp_0_2_to_1 = |t: f32| t.mul_add(0.8, 0.2);
 	hsv_to_rgb(fastrand::f32(), lerp_0_2_to_1(fastrand::f32()), lerp_0_2_to_1(fastrand::f32()))
 }
 
@@ -279,14 +279,11 @@ fn save_chip_as(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<Stri
 			register_chip_name_in_project(v, paths, None, new_name);
 
 			if !old_name.eq_ignore_ascii_case(new_name) {
-				match load_single_chip_from_disk(paths, &v.prefs.project_name, &old_name) {
-					Ok(pristine) => {
-						v.library.add(pristine);
-					}
-					Err(_) => {
-						// No on-disk file for the old identity (it was never actually saved under that
-						// name to begin with) -- nothing to revert to, so leave the in-memory draft as is.
-					}
+				if let Ok(pristine) = load_single_chip_from_disk(paths, &v.prefs.project_name, &old_name) {
+					v.library.add(pristine);
+				} else {
+					// No on-disk file for the old identity (it was never actually saved under that
+					// name to begin with) -- nothing to revert to, so leave the in-memory draft as is.
 				}
 			}
 
@@ -387,10 +384,10 @@ pub(crate) fn confirm_save_chip_popup(v: &mut ViewerState, paths: &SavePaths, st
 				let old_name = v.root_chip_name.clone();
 				v.unsaved_drafts.remove(&old_name.to_ascii_lowercase());
 				if let Some(mut desc) = v.library.remove(&old_name) {
-					desc.name = typed.clone();
+					desc.name.clone_from(&typed);
 					v.library.add(desc);
 				}
-				v.root_chip_name = typed.clone();
+				v.root_chip_name.clone_from(&typed);
 				v.mark_unsaved_draft(&typed);
 			}
 			save_current_chip(v, paths, status);
@@ -566,13 +563,13 @@ pub(crate) fn confirm_unsaved_changes_popup(v: &mut ViewerState, paths: &SavePat
 	v.close_top_overlay();
 }
 
+const NEW_NAME: &str = "New_Chip";
 /// Picks a fresh, not-yet-used (case-insensitively) name for a
-/// brand-new chip, starting from "New_Chip" and falling back to
-/// "New_Chip_2", "New_Chip_3", ... the first suffix that isn't already
+/// brand-new chip, starting from `NEW_NAME` and falling back to
+/// `NEW_NAME`_2, `NEW_NAME`_3, ... the first suffix that isn't already
 /// taken in `library` -- so hitting Ctrl+N repeatedly never collides
 /// with an earlier still-unsaved draft (or a saved chip that happens to
-/// already be named "New_Chip").
-const NEW_NAME: &str = "New_Chip";
+/// already be named `NEW_NAME`).
 pub(crate) fn unique_new_chip_name(library: &ChipLibrary) -> String {
 	if library.try_get(NEW_NAME).is_none() {
 		return NEW_NAME.to_string();
@@ -599,7 +596,7 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 
 	v.undo.clear();
 	v.exit_view_mode();
-	v.root_chip_name = name.clone();
+	v.root_chip_name.clone_from(&name);
 	v.sim.reset_driven_inputs();
 	v.restart_sim_fresh();
 	v.camera_fitted = false;
@@ -625,9 +622,9 @@ pub(crate) fn open_chip_by_name(v: &mut ViewerState, paths: &SavePaths, status: 
 			reset_canvas_interaction(v);
 		}
 	} else if v.library.try_get(name).is_some() {
-		*status = Some(format!("Chip '{}' is a builtin component", name));
+		*status = Some(format!("Chip '{name}' is a builtin component"));
 	} else {
-		*status = Some(format!("Chip '{}' not found in library", name));
+		*status = Some(format!("Chip '{name}' not found in library"));
 	}
 }
 
@@ -660,7 +657,7 @@ mod tests {
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
 		library.add(ChipDescription::new("OTHER", ChipType::Custom));
-		let v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 
 		assert!(!valid_save_name(&v, ""), "blank");
 		assert!(!valid_save_name(&v, "   "), "whitespace");
@@ -682,7 +679,7 @@ mod tests {
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
 		library.add(ChipDescription::new("OTHER", ChipType::Custom));
 
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		let root = v.root_chip_name.clone();
 
 		// Fill every kind of canvas draft state on ROOT.
@@ -719,7 +716,7 @@ mod tests {
 		let paths = SavePaths::new(&root);
 		crate::create_project(&paths, "P").expect("project created");
 
-		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 
 		// Seed the cache as if ROOT's subtree had already been simulated
 		// and some chip's truth table built.
@@ -768,7 +765,7 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.prefs = project.description;
 
 		let mut status = None;
@@ -808,7 +805,7 @@ mod tests {
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new(root, ChipType::Custom));
 		library.add(ChipDescription::new(other, ChipType::Custom));
-		let v = ViewerState::new("P", library, root.to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let v = ViewerState::new("P", library, root.to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		for name in [root, other] {
 			Saver::save_chip(paths, "P", &v.library, &v.library.get(name).clone()).expect("chip written");
 		}
@@ -825,7 +822,7 @@ mod tests {
 			let mut library = ChipLibrary::new();
 			crate::register_all_builtins(&mut library);
 			library.add(ChipDescription::new("ROOT", ChipType::Custom));
-			let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+			let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 			v.prefs = crate::create_project(&paths, "P").expect("project").description;
 			v
 		};
@@ -870,7 +867,7 @@ mod tests {
 		for name in ["ROOT", "OLD NAME"] {
 			library.add(ChipDescription::new(name, ChipType::Custom));
 		}
-		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.prefs = crate::create_project(&paths, "P").expect("project").description;
 		Saver::save_chip(&paths, "P", &v.library, &v.library.get("OLD NAME").clone()).expect("saved");
 
@@ -907,7 +904,7 @@ mod tests {
 		child.output_pins.push(pin);
 		library.add(child.clone());
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.prefs = crate::create_project(&paths, "P").expect("project").description;
 		Saver::save_chip(&paths, "P", &v.library, &v.library.get("CHILD").clone()).expect("child saved");
 

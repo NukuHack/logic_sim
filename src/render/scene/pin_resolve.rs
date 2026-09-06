@@ -16,7 +16,7 @@ use std::collections::HashMap;
 /// 0 if the pin can't be resolved.
 pub(crate) fn resolve_pin_colour(
 	chip: &ChipDescription,
-	placed: &[PlacedSubChip],
+	placed: &[PlacedSubChip<'_>],
 	owner_to_placed: &HashMap<i32, usize>,
 	owner_id: i32,
 	pin_id: i32,
@@ -47,7 +47,7 @@ pub(crate) fn resolve_pin_colour(
 /// Falls back to `Bit1` if the pin can't be resolved.
 pub(crate) fn resolve_pin_bit_count(
 	chip: &ChipDescription,
-	placed: &[PlacedSubChip],
+	placed: &[PlacedSubChip<'_>],
 	owner_to_placed: &HashMap<i32, usize>,
 	owner_id: i32,
 	pin_id: i32,
@@ -75,7 +75,7 @@ pub(crate) fn resolve_pin_bit_count(
 
 pub(crate) fn resolve_pin_position(
 	chip: &ChipDescription,
-	placed: &[PlacedSubChip],
+	placed: &[PlacedSubChip<'_>],
 	owner_to_placed: &HashMap<i32, usize>,
 	owner_id: i32,
 	pin_id: i32,
@@ -139,7 +139,7 @@ mod tests {
 		out0.position = Vec2::new(5.0, 0.0);
 		chip.output_pins.push(out0);
 
-		let placed: Vec<PlacedSubChip> = Vec::new();
+		let placed: Vec<PlacedSubChip<'_>> = Vec::new();
 		let owner_to_placed: HashMap<i32, usize> = HashMap::new();
 
 		let in0_pos = resolve_pin_position(&chip, &placed, &owner_to_placed, 10, 0, true).unwrap();
@@ -167,7 +167,7 @@ mod tests {
 		chip.input_pins.push(in0);
 		chip.input_pins.push(in1);
 
-		let placed: Vec<PlacedSubChip> = Vec::new();
+		let placed: Vec<PlacedSubChip<'_>> = Vec::new();
 		let owner_to_placed: HashMap<i32, usize> = HashMap::new();
 
 		let pos0 = resolve_pin_position(&chip, &placed, &owner_to_placed, 1, 0, true).unwrap();

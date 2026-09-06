@@ -11,7 +11,7 @@ use crate::viewer::state::{KeySelectPurpose, NamingPurpose, ViewerState};
 /// Advances the wheel field at `row_index` (matching the row order
 /// `editor_ui::build_preferences_panel` draws in) to its next option,
 /// wrapping around.
-pub(crate) fn cycle_pref(prefs: &mut crate::json::ProjectDescription, row_index: usize) {
+pub(crate) const fn cycle_pref(prefs: &mut crate::json::ProjectDescription, row_index: usize) {
 	match row_index {
 		0 => prefs.prefs_main_pin_names_display_mode = (prefs.prefs_main_pin_names_display_mode + 1) % 3,
 		1 => prefs.prefs_chip_pin_names_display_mode = (prefs.prefs_chip_pin_names_display_mode + 1) % 3,
@@ -77,11 +77,7 @@ pub(crate) fn confirm_naming_popup(v: &mut ViewerState, status: &mut Option<Stri
 /// editor: a leading `0x`/`0X` means hex, otherwise decimal.
 fn parse_rom_word(text: &str) -> Option<u32> {
 	let text = text.trim();
-	if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-		u32::from_str_radix(hex, 16).ok()
-	} else {
-		text.parse::<u32>().ok()
-	}
+	text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")).map_or_else(|| text.parse::<u32>().ok(), |hex| u32::from_str_radix(hex, 16).ok())
 }
 
 /// Commits `v.overlay_text_input` into the currently-selected cell of the open ROM editor
@@ -180,7 +176,7 @@ pub(crate) fn rom_parse_clipboard_text(text: &str) -> Option<Vec<u32>> {
 
 /// "Copy" (`EditorAction::RomCopy`): puts the whole draft buffer on the
 /// system clipboard via `rom_copy_text`.
-pub(crate) fn copy_rom_editor(v: &mut ViewerState, status: &mut Option<String>) {
+pub(crate) fn copy_rom_editor(v: &ViewerState, status: &mut Option<String>) {
 	let Some(editor) = v.rom_editor() else { return };
 	let text = rom_copy_text(&editor.data);
 	match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
@@ -354,7 +350,7 @@ mod tests {
 		let mut library = crate::ChipLibrary::new();
 		let chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
 		library.add(chip);
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.open_overlay(crate::viewer::state::Overlay::RomEditor(crate::viewer::state::RomEditorState { component_id: 1, data, selected: 3 }));
 		v.overlay_text_input = "999".to_string();
 		v
@@ -403,7 +399,7 @@ mod tests {
 		let mut chip = crate::ChipDescription::new("ROOT", crate::ChipType::Custom);
 		chip.output_pins.push(crate::PinDescription::new("OUT", 4, bit_count));
 		library.add(chip);
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	fn open_pin_edit(v: &mut ViewerState, state: PinEditState) {

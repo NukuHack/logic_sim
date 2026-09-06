@@ -143,7 +143,7 @@ pub(crate) fn record_wire_list_edit(v: &mut ViewerState, before: FullWireState) 
 
 /// Captures a "before" snapshot for a wire-geometry edit. Pair with
 /// [`record_wire_list_edit`] after mutating.
-pub(crate) fn capture_wire_list(v: &mut ViewerState) -> FullWireState {
+pub(crate) fn capture_wire_list(v: &ViewerState) -> FullWireState {
 	capture_full_wire_state(v, &[], &[])
 }
 
@@ -526,17 +526,14 @@ fn apply_wire_existence(v: &mut ViewerState, action: &WireExistenceAction, undo:
 	let root_chip_name = v.root_chip_name.clone();
 
 	if add_wire {
-		match &action.full_state {
-			Some(state) => {
-				if wire_state_resolvable(v, state) {
-					restore_full_wire_state(v, state);
-				}
+		if let Some(state) = &action.full_state {
+			if wire_state_resolvable(v, state) {
+				restore_full_wire_state(v, state);
 			}
-			None => {
-				let chip = v.library.get_mut(&root_chip_name);
-				let index = action.wire_index.min(chip.wires.len());
-				chip.wires.insert(index, action.wire.clone());
-			}
+		} else {
+			let chip = v.library.get_mut(&root_chip_name);
+			let index = action.wire_index.min(chip.wires.len());
+			chip.wires.insert(index, action.wire.clone());
 		}
 	} else {
 		// The replay is strictly linear so `wire_index` should line up;
@@ -614,7 +611,7 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
@@ -817,7 +814,7 @@ mod edge_case_tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {
@@ -964,7 +961,7 @@ mod edge_case_tests {
 		for name in ["FIRST", "SECOND"] {
 			crate::Saver::save_chip(&paths, "P", &library, &library.get(name).clone()).expect("saved");
 		}
-		let mut v = ViewerState::new("P", library, "FIRST".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "FIRST".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 
 		place_nand(&mut v, Vec2::ZERO);
 		assert_eq!(v.undo.history_len(), 1);

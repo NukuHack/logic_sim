@@ -13,6 +13,7 @@ use crate::save_system::util::{copy_directory, ensure_unique_file_name};
 use crate::save_system::version::DLS_VERSION;
 use crate::settings::{AppSettings, serialize_app_settings};
 
+#[derive(Debug)]
 pub struct Saver;
 
 impl Saver {

@@ -27,7 +27,7 @@ pub type Bits = u64;
 /// `PinState::from_raw_with_width`. This is *not* one bit per output wire -- an output pin can itself be multiple wires (a nibble/byte bus), and
 /// `out`'s job is to hand each such pin back its own raw value, not a single bit-vector spanning
 /// every pin.
-pub trait CachedGate: std::fmt::Debug + std::fmt::Display + Send + Sync {
+pub trait CachedGate: fmt::Debug + fmt::Display + Send + Sync {
 	/// Evaluates `input` into `out`. Returns `false` if this evaluator has nothing for `input`
 	/// (e.g. an out-of-range `Lut` row from a stale cache entry, or an `out` slice the wrong
 	/// length), in which case `out` is left untouched and the caller should fall back to a real

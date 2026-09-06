@@ -44,6 +44,7 @@ pub trait PinStateLookup {
 
 /// Trivial lookup that always reports every pin as low -- useful for static
 /// previews / tests where no `Simulator` is available.
+#[derive(Debug)]
 pub struct AllLow;
 impl PinStateLookup for AllLow {
 	fn is_high(&self, _pin_owner_id: i32, _pin_id: i32) -> Option<bool> {
@@ -56,6 +57,7 @@ impl PinStateLookup for AllLow {
 /// reports the pin's per-bit state (`bit_logic_state`) as well as its
 /// first bit's state alone (`logic_state`, used wherever only a single
 /// representative colour is needed -- e.g. a pin's own drawn shape).
+#[derive(Debug)]
 pub struct SimulatorPinState<'a> {
 	pub sim: &'a crate::sim::Simulator,
 	pub scope: crate::sim::ChipIdx,

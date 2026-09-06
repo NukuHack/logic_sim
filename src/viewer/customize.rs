@@ -463,7 +463,7 @@ mod tests {
 		let mut library = crate::ChipLibrary::new();
 		register_all_builtins(&mut library);
 
-		let mut panel = ChipDescription::new("Panel", crate::ChipType::Custom);
+		let mut panel = ChipDescription::new("Panel", ChipType::Custom);
 		panel.input_pins.push(PinDescription::new("IN", 1, PinBitCount::Bit1));
 		panel.size = Vec2::new(3.0, 2.0);
 		panel.sub_chips.push(crate::SubChipDescription {
@@ -478,7 +478,7 @@ mod tests {
 		panel.displays.push(DisplayDescription::new(4, Vec2::new(0.5, 0.25), 1.0));
 		library.add(panel.clone());
 
-		let mut v = ViewerState::new("", library, "Panel".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "Panel".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.last_cursor = Vec2::new(640.0, 400.0);
 		v.camera_fitted = true;
 

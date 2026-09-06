@@ -294,6 +294,7 @@ pub enum PrefValueField {
 /// [`EditorAction::SelectPrefsField`] focus + typed digits) and feeds back
 /// its measured simulation speed for the read-only current-speed row,
 /// mirroring `PreferencesMenu`'s input fields and `UpdateSimSpeedString`.
+#[derive(Debug)]
 pub struct PrefsPanelState<'a> {
 	pub desc: &'a ProjectDescription,
 	pub clock_text: &'a str,
@@ -320,7 +321,7 @@ struct PrefRow<'a> {
 
 /// Builds the preferences overlay from a project's current prefs fields
 /// (`ProjectDescription.Prefs_*`).
-pub fn build_preferences_panel(state: &PrefsPanelState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+pub fn build_preferences_panel(state: &PrefsPanelState<'_>, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let desc = state.desc;
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
@@ -456,6 +457,7 @@ pub enum LibrarySelection {
 /// because there are enough of them that a positional call would be
 /// unreadable at the call site; the host still owns every field, same
 /// "plain data in, plain data out" shape as the rest of this module.
+#[derive(Debug)]
 pub struct ChipLibraryState<'a> {
 	pub collections: &'a [ChipCollection],
 	pub starred_list: &'a [StarredItem],
@@ -488,6 +490,7 @@ pub struct ChipLibraryState<'a> {
 /// result is selected, a Library-style detail panel on the right with
 /// Open/Delete/Use/Star(/Un-star) buttons for it. Mirrors
 /// [`ChipLibraryState`]'s shape for the parts the two panels share.
+#[derive(Debug)]
 pub struct SearchPopupState<'a> {
 	/// Every searchable chip name, unfiltered -- filtered against
 	/// `query` internally, same as the previous `build_search_popup`.
@@ -552,7 +555,7 @@ fn library_panel_header(frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, title:
 /// the right showing whatever row is currently selected -- star/unstar, reorder, a "USE"
 /// action that picks the chip up for placement, and open/delete (chips) or rename/delete
 /// (collections) actions for it.
-pub fn build_chip_library_panel(state: &ChipLibraryState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+pub fn build_chip_library_panel(state: &ChipLibraryState<'_>, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	panel_bg(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
@@ -576,7 +579,7 @@ pub fn build_chip_library_panel(state: &ChipLibraryState, vw: f32, vh: f32, mous
 	finish(frame, ui)
 }
 
-fn build_starred_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState, mouse: Vec2) {
+fn build_starred_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState<'_>, mouse: Vec2) {
 	let ui = UiCtx::new(vw, vh, mouse);
 	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let header_h = 30.0;
@@ -605,7 +608,7 @@ fn build_starred_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, 
 	}
 }
 
-fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState, mouse: Vec2) {
+fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState<'_>, mouse: Vec2) {
 	let ui = UiCtx::new(vw, vh, mouse);
 	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let header_h = 30.0;
@@ -665,7 +668,7 @@ fn build_collections_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 	}
 }
 
-fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState, mouse: Vec2) {
+fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &ChipLibraryState<'_>, mouse: Vec2) {
 	let ui = UiCtx::new(vw, vh, mouse);
 	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let inner_x = rect.x + 12.0;
@@ -893,7 +896,7 @@ fn build_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, s
 /// and, once a result is selected, a Library-style detail panel on the right showing
 /// Open/Delete/Use/Star(/Un-star) for it -- clicking a row just selects it, mirroring the
 /// chip library's own list-then-detail shape rather than acting immediately.
-pub fn build_search_popup(state: &SearchPopupState, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
+pub fn build_search_popup(state: &SearchPopupState<'_>, vw: f32, vh: f32, mouse: Vec2) -> EditorFrame {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
 	panel_bg(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
@@ -918,7 +921,7 @@ pub fn build_search_popup(state: &SearchPopupState, vw: f32, vh: f32, mouse: Vec
 /// filtered, clickable result rows -- selecting one (rather than acting
 /// on it immediately) mirrors `build_collections_panel`/
 /// `build_starred_panel`'s row click.
-fn build_search_list_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &SearchPopupState, mouse: Vec2) {
+fn build_search_list_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &SearchPopupState<'_>, mouse: Vec2) {
 	let ui = UiCtx::new(vw, vh, mouse);
 	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let header_h = 30.0;
@@ -963,7 +966,7 @@ fn build_search_list_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRe
 /// `build_detail_panel` (star/un-star, USE, OPEN, DELETE), plus its own
 /// inline DELETE confirmation -- just without the reorder/collection
 /// buttons that don't apply to a flat search result.
-fn build_search_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &SearchPopupState, mouse: Vec2) {
+fn build_search_detail_panel(frame: &mut EditorFrame, vw: f32, vh: f32, rect: UiRect, state: &SearchPopupState<'_>, mouse: Vec2) {
 	let ui = UiCtx::new(vw, vh, mouse);
 	panel_bg(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
 	let inner_x = rect.x + 12.0;
@@ -1436,7 +1439,7 @@ pub fn build_pin_edit_popup(
 		if i == colour_index.min(theme::COLORS.len() - 1) {
 			// Same translucent-white "picked" wash the customize workspace
 			// lays over its selected body-colour swatch.
-			frame.geometry.add_rect(ui_kit::to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
+			frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
 		}
 	}
 	y += SWATCH_H + ROW_GAP;
@@ -1505,7 +1508,7 @@ pub fn build_led_colour_popup(colour_index: usize, vw: f32, vh: f32, mouse: Vec2
 		let rect = UiRect::new(swatch_x + i as f32 * (swatch_w + 8.0), y, swatch_w, LED_COLOUR_SWATCH_H);
 		add_button_coloured(&mut frame, ui, rect, "", EditorAction::LedColourSetColour(i), true, *colour);
 		if i == colour_index.min(theme::COLORS.len() - 1) {
-			frame.geometry.add_rect(ui_kit::to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
+			frame.geometry.add_rect(to_world(rect.centre(), vw, vh), Vec2::new(rect.w + 4.0, rect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
 		}
 	}
 

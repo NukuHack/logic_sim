@@ -102,7 +102,7 @@ pub fn hit_test_dev_pin(chip: &ChipDescription, world_pos: Vec2) -> Option<(bool
 /// shape (`point_in_pin_shape`, matching `draw_pins`) under `world_pos`,
 /// if any. Iterates subchips back-to-front (last-placed first), the
 /// same draw-order precedence `hit_test_sub_chip` uses.
-pub fn hit_test_sub_chip_pin(placed: &[PlacedSubChip], world_pos: Vec2) -> Option<PinHit> {
+pub fn hit_test_sub_chip_pin(placed: &[PlacedSubChip<'_>], world_pos: Vec2) -> Option<PinHit> {
 	for sub in placed.iter().rev() {
 		let is_flipped = sub.desc.chip_type.is_bus_type() && sub.internal_data.get(1).copied().unwrap_or(0) != 0;
 
@@ -144,7 +144,7 @@ pub fn hit_test_sub_chip_pin(placed: &[PlacedSubChip], world_pos: Vec2) -> Optio
 /// endpoint; subchip pins are tried first since `draw_pins` draws them
 /// first, so a dev-pin overlapping one (unlikely in practice) still
 /// loses to whichever is actually on top.
-pub fn hit_test_any_pin(chip: &ChipDescription, placed: &[PlacedSubChip], world_pos: Vec2) -> Option<PinHit> {
+pub fn hit_test_any_pin(chip: &ChipDescription, placed: &[PlacedSubChip<'_>], world_pos: Vec2) -> Option<PinHit> {
 	if let Some(hit) = hit_test_sub_chip_pin(placed, world_pos) {
 		return Some(hit);
 	}

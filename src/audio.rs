@@ -1,7 +1,10 @@
 //! Buzzer audio synthesis, ported from DLS's `DLS.Simulation.SimAudio`, `AudioState` and the
 //! sample-processing half of Unity's `AudioUnity`.
 
-use std::sync::{Arc, Mutex};
+use std::{
+	fmt::Debug,
+	sync::{Arc, Mutex},
+};
 
 /// One entry per semitone-ish frequency slot; a buzzer drives one of these
 /// by its 8-bit pitch pin. Mirrors `SimAudio.freqCount`.
@@ -37,6 +40,7 @@ const SEMITONE_RATIO: f64 = 1.059_463_094_359;
 /// `DLS.Simulation.SimAudio`; lives outside the [`crate::sim::Simulator`]
 /// (like the original, which keeps it on `Project.audioState`) so
 /// rebuilding the simulated graph on every edit doesn't audibly reset it.
+#[derive(Debug)]
 pub struct SimAudio {
 	freqs_all: [f32; FREQ_COUNT],
 	target_amplitudes_per_freq_temp: [f64; FREQ_COUNT],
@@ -157,7 +161,7 @@ impl Default for SimAudio {
 
 /// Waveform sampler over the current amplitude mix. Ported from
 /// `AudioState` (square wave, 20 harmonic iterations).
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct AudioState {
 	pub sim_audio: SimAudio,
 }
@@ -191,6 +195,12 @@ fn mix_sample(freqs_all: &[f32; FREQ_COUNT], amplitudes: &[f64; FREQ_COUNT], tim
 /// Dropping this stops playback (the underlying stream is closed).
 pub struct AudioPlayer {
 	_stream: cpal::Stream,
+}
+
+impl Debug for AudioPlayer {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		f.debug_struct("AudioPlayer").field("_stream", &"<cpal::Stream>").finish()
+	}
 }
 
 /// The app-wide audio state shared between the simulation (writer) and the

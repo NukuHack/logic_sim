@@ -122,6 +122,7 @@ impl Capture {
 }
 
 /// One layer of the stack: what to draw, what can be clicked, and which regions it claims.
+#[derive(Debug)]
 pub struct StackLayer<A> {
 	pub id: LayerId,
 	pub geometry: SceneGeometry,
@@ -179,6 +180,7 @@ impl<A> StackLayer<A> {
 /// What a dispatched event resolved to: how far it got, where it stopped, and (for clicks) the
 /// button under the cursor. `layer`/`button`/`scroll_regions` are all `None`/empty exactly when
 /// `result` is [`InputResult::Propagate`].
+#[derive(Debug)]
 pub struct Dispatch<'a, A> {
 	pub result: InputResult,
 	pub layer: Option<LayerId>,
@@ -193,6 +195,7 @@ impl<A> Dispatch<'_, A> {
 }
 
 /// The stack itself. Index 0 is drawn first (furthest back); input dispatch walks in reverse.
+#[derive(Debug)]
 pub struct UiStack<A> {
 	layers: Vec<StackLayer<A>>,
 }

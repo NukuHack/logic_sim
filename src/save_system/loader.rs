@@ -10,6 +10,7 @@ use crate::save_system::paths::SavePaths;
 use crate::save_system::project::Project;
 use crate::settings::{AppSettings, parse_app_settings};
 
+#[derive(Debug)]
 pub struct Loader;
 
 impl Loader {

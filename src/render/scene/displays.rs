@@ -156,7 +156,7 @@ fn display_border_col(chip_colour: Rgba) -> Rgba {
 /// span -- see `render::scene::components::draw_component`'s doc comment.
 pub(crate) fn draw_placed_displays_for(
 	geo: &mut SceneGeometry,
-	sub: &crate::render::scene::placed::PlacedSubChip,
+	sub: &crate::render::scene::placed::PlacedSubChip<'_>,
 	library: &ChipLibrary,
 	pin_state: &dyn PinStateLookup,
 ) {

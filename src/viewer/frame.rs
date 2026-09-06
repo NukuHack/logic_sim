@@ -93,13 +93,13 @@ fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, vh: f32, top_y: f32) -> (
 	// box, anchoring it anywhere else would let long chains run off the
 	// screen edge.
 	let text_left = PAD;
-	let text_right = vw - BACK_W - PAD * 2.0;
+	let text_right = PAD.mul_add(-2.0, vw - BACK_W);
 	let max_text_width = (text_right - text_left).max(40.0);
 	let mut geo = SceneGeometry::default();
 	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
 	geo.add_rect(to_world(back.centre(), vw, vh), Vec2::new(back.w, back.h), [0.28, 0.28, 0.34, 1.0]);
 	geo.labels.push(crate::render::foundation::TextLabel {
-		pos: to_world(Vec2::new((text_left + text_right) / 2.0, top_y + BAR_H / 2.0), vw, vh),
+		pos: to_world(Vec2::new(f32::midpoint(text_left, text_right), top_y + BAR_H / 2.0), vw, vh),
 		text: fit_banner_label(&v.viewed_chips_string(), max_text_width),
 		colour: [0.95, 0.95, 0.95, 1.0],
 		font_size: FONT_SIZE,
@@ -123,17 +123,17 @@ const BANNER_FONT_SIZE: f32 = 15.0;
 /// cut with an ellipsis, so even absurdly deep view stacks stay inside
 /// the bar instead of spilling off-screen.
 fn fit_banner_label(chain: &str, max_width: f32) -> String {
-	if crate::render::layout::estimate_text_width(chain, BANNER_FONT_SIZE) <= max_width {
+	if layout::estimate_text_width(chain, BANNER_FONT_SIZE) <= max_width {
 		return chain.to_string();
 	}
 	let names: Vec<&str> = chain.strip_prefix(BANNER_PREFIX).unwrap_or(chain).split(" > ").collect();
 	for keep in (0..names.len()).rev() {
 		let candidate = format!("{}{}…", BANNER_PREFIX, names[..keep].join(" > "));
-		if keep == 0 || crate::render::layout::estimate_text_width(&candidate, BANNER_FONT_SIZE) <= max_width {
+		if keep == 0 || layout::estimate_text_width(&candidate, BANNER_FONT_SIZE) <= max_width {
 			return candidate;
 		}
 	}
-	format!("{}…", BANNER_PREFIX)
+	format!("{BANNER_PREFIX}…")
 }
 
 /// Rebuilds the menu screen's UI stack: the screen itself at the bottom,
@@ -266,17 +266,16 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		// Cold path
 		let root_desc = v.library.get_arc(&scene_chip_name);
 		let bounds = bounding_box(&v.chip_scene_buf).or_else(|| bounding_box(&build_scene(&root_desc, &v.library, &AllLow, None)));
-		match bounds {
-			Some((min, max)) => v.camera.fit_to_bounds(min, max, 0.15),
+		if let Some((min, max)) = bounds {
+			v.camera.fit_to_bounds(min, max, 0.15)
+		} else {
 			// No geometry at all -- e.g. a brand-new blank chip has no components/wires yet, so
 			// there's nothing to fit to. Fall back to a fixed, comfortable default instead of leaving
 			// whatever zoom the camera previously had (which is usually the untouched construction
 			// default of 1.0 -- since chips are sized in grid units of ~0.125, that reads as "zoomed
 			// all the way out" rather than a sane starting view of an empty canvas).
-			None => {
-				v.camera.position = Vec2::ZERO;
-				v.camera.zoom = DEFAULT_EMPTY_CHIP_ZOOM;
-			}
+			v.camera.position = Vec2::ZERO;
+			v.camera.zoom = DEFAULT_EMPTY_CHIP_ZOOM;
 		}
 		v.camera_fitted = true;
 	}
@@ -446,7 +445,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 
 /// The starred-collection flyout anchored to whichever bar button opened
 /// it (falling back to the left edge if that button somehow isn't drawn).
-fn push_bottom_bar_flyout(v: &mut ViewerState, viewer_stack: &mut UiStack<ViewerAction>, vw: f32, vh: f32, mouse: Vec2) {
+fn push_bottom_bar_flyout(v: &ViewerState, viewer_stack: &mut UiStack<ViewerAction>, vw: f32, vh: f32, mouse: Vec2) {
 	let Some(open_name) = v.bottom_bar_open_collection.clone() else { return };
 	let Some(collection) = v.prefs.chip_collections.iter().find(|c| c.name.eq_ignore_ascii_case(&open_name)) else { return };
 	let anchor_x = viewer_stack
@@ -456,8 +455,7 @@ fn push_bottom_bar_flyout(v: &mut ViewerState, viewer_stack: &mut UiStack<Viewer
 		.find(
 			|b| matches!(b.action, ViewerAction::Editor(editor_ui::EditorAction::ToggleStarredCollectionPopup(ref n)) if n.eq_ignore_ascii_case(&open_name)),
 		)
-		.map(|b| b.rect.x)
-		.unwrap_or(8.0);
+		.map_or(8.0, |b| b.rect.x);
 	let flyout_cycle_blocked: std::collections::HashSet<String> =
 		collection.chips.iter().filter(|n| would_create_cycle(&v.library, &v.root_chip_name, n)).map(|n| n.to_ascii_lowercase()).collect();
 	let flyout_frame = editor_ui::build_starred_collection_popup(collection, anchor_x, true, &flyout_cycle_blocked, vw, vh, mouse);
@@ -605,7 +603,7 @@ mod viewed_chips_bar_tests {
 		for name in names {
 			library.add(crate::ChipDescription::new(name.to_string(), crate::ChipType::Custom));
 		}
-		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.view_stack = names.iter().map(|name| ViewedChip { name: name.to_string(), path: vec![] }).collect();
 		v
 	}
@@ -642,7 +640,7 @@ mod viewed_chips_bar_tests {
 		let max_width = 300.0;
 		let fitted = fit_banner_label(&chain, max_width);
 
-		assert!(crate::render::layout::estimate_text_width(&fitted, BANNER_FONT_SIZE) <= max_width, "fitted label measures within the budget");
+		assert!(layout::estimate_text_width(&fitted, BANNER_FONT_SIZE) <= max_width, "fitted label measures within the budget");
 		assert!(fitted.starts_with("Viewing: CHIP0"), "nearest ancestors survive the cut: {fitted}");
 		assert!(fitted.ends_with('…'), "the cut is marked");
 

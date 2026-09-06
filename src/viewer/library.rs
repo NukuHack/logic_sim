@@ -16,7 +16,7 @@ pub(crate) const DEFAULT_LIBRARY_COLLECTION_NAME: &str = "OTHER";
 /// Whether `name` is a chip the player actually authored (as opposed to a built-in primitive
 /// like `AND`/`NAND`/`Pulse`) -- i.e. whether "Open" makes any sense for it.
 pub(crate) fn is_custom_chip(library: &ChipLibrary, name: &str) -> bool {
-	library.try_get(name).map(|d| d.chip_type == ChipType::Custom).unwrap_or(false)
+	library.try_get(name).is_some_and(|d| d.chip_type == ChipType::Custom)
 }
 
 /// True if placing `chip_to_place` as a new subchip inside `root_chip_name` would create a
@@ -46,7 +46,7 @@ fn chip_contains(library: &ChipLibrary, chip_name: &str, target: &str, visited: 
 /// Whether dev-only builtins (`ChipType::is_dev_only`) are hidden from
 /// player-facing lists in this build -- release builds hide them; debug
 /// builds list them like any other chip.
-pub(crate) fn dev_chips_hidden() -> bool {
+pub(crate) const fn dev_chips_hidden() -> bool {
 	cfg!(not(debug_assertions))
 }
 
@@ -68,7 +68,7 @@ pub(crate) fn is_listed_in_current_build(library: &ChipLibrary, name: &str) -> b
 /// `library` belongs to *some* collection, adding any stragglers to `OTHER` -- mirrors the
 /// collection-syncing half of `ChipLibraryMenu.OnMenuOpened`.
 pub(crate) fn sync_library_collections(prefs: &mut ProjectDescription, library: &ChipLibrary, unsaved_drafts: &std::collections::HashSet<String>) {
-	sync_library_collections_gated(prefs, library, unsaved_drafts, !dev_chips_hidden())
+	sync_library_collections_gated(prefs, library, unsaved_drafts, !dev_chips_hidden());
 }
 
 fn sync_library_collections_gated(
@@ -104,7 +104,7 @@ fn sync_library_collections_gated(
 /// still carry those names on disk; pruning here (rather than at render time) keeps every row
 /// index the UI and its click handlers agree on.
 pub(crate) fn prune_hidden_chips_from_palette(prefs: &mut ProjectDescription, library: &ChipLibrary) {
-	prune_hidden_chips_from_palette_gated(prefs, library, !dev_chips_hidden())
+	prune_hidden_chips_from_palette_gated(prefs, library, !dev_chips_hidden());
 }
 
 fn prune_hidden_chips_from_palette_gated(prefs: &mut ProjectDescription, library: &ChipLibrary, include_dev: bool) {
@@ -238,7 +238,7 @@ pub(crate) fn delete_collection(prefs: &mut ProjectDescription, index: usize) {
 pub(crate) fn move_selected_library_row(v: &mut ViewerState, down: bool, force_jump: bool) {
 	match v.library_selection {
 		LibrarySelection::Chip(ci, chi) => {
-			let len = v.prefs.chip_collections.get(ci).map(|c| c.chips.len()).unwrap_or(0);
+			let len = v.prefs.chip_collections.get(ci).map_or(0, |c| c.chips.len());
 			let can_step = if down { chi + 1 < len } else { chi > 0 };
 			if can_step && !force_jump {
 				let new_idx = if down { chi + 1 } else { chi - 1 };
@@ -488,7 +488,7 @@ mod tests {
 		let root_chip_name = "New Chip".to_string();
 		let mut library = library;
 		library.add(ChipDescription::new(&root_chip_name, ChipType::Custom));
-		ViewerState::new("", library, root_chip_name, Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, root_chip_name, Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	#[test]
@@ -518,7 +518,7 @@ mod tests {
 	#[test]
 	fn delete_chip_from_library_preserves_sibling_collection_placement() {
 		let library = lib_with_chips(&["Keep A", "Keep B", "Doomed"]);
-		let mut v = ViewerState::new("P", library, "Keep A".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "Keep A".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.prefs.chip_collections = vec![
 			ChipCollection::new("Custom Folder", vec!["Keep B".to_string(), "Doomed".to_string(), "Keep A".to_string()]),
 			ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()),

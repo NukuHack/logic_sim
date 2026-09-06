@@ -64,7 +64,7 @@ impl ApplicationHandler for App {
 				}
 			}
 
-			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
+			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(&event),
 
 			WindowEvent::ModifiersChanged(mods) => {
 				self.modifiers = mods.state();
@@ -118,7 +118,7 @@ impl ApplicationHandler for App {
 					// released -- see `Self::delete_drag_hit` and `handle_right_mouse_button`'s release
 					// branch, which applies the whole sweep as a single undo step.
 					if v.delete_drag.is_some() {
-						Self::delete_drag_hit(v, cursor)
+						Self::delete_drag_hit(v, cursor);
 					}
 				}
 			}
@@ -284,7 +284,7 @@ impl App {
 		// handler).
 		let cancelled_something = v.pending_wire.is_some()
 			|| !v.pending_place.is_empty()
-			|| !matches!(v.canvas_interaction, crate::viewer::chip_interaction::CanvasInteraction::None)
+			|| !matches!(v.canvas_interaction, CanvasInteraction::None)
 			|| crate::viewer::customize::is_interacting(v);
 		v.pending_wire = None;
 		v.pending_place.clear();
@@ -530,7 +530,7 @@ impl App {
 		}
 	}
 
-	pub(crate) fn handle_key_event(&mut self, event: winit::event::KeyEvent) {
+	pub(crate) fn handle_key_event(&mut self, event: &winit::event::KeyEvent) {
 		let pressed = event.state == ElementState::Pressed;
 		// Feed the Key chip's held-key set on both press and release (not just press, unlike the
 		// shortcut handling below) since it needs to know when a key stops being held. The chip
@@ -544,10 +544,7 @@ impl App {
 			&& c.is_ascii_alphanumeric()
 			&& !v.stack.keyboard_stop()
 		{
-			match pressed {
-				true => v.sim.held_key_press(c),
-				false => v.sim.held_key_release(c),
-			}
+			if pressed { v.sim.held_key_press(c) } else { v.sim.held_key_release(c) }
 		}
 
 		if !pressed {

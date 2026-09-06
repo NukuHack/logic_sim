@@ -12,6 +12,7 @@ use glyphon::{
 	Attrs, Buffer as TextBuffer, Cache as TextCache, Color as GlyphColour, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache, TextArea,
 	TextAtlas, TextBounds, TextRenderer, Viewport as TextViewport,
 };
+use std::fmt;
 
 pub const SHADER_SRC: &str = include_str!("shader.wgsl");
 
@@ -27,7 +28,7 @@ impl Vertex {
 
 	pub fn layout() -> wgpu::VertexBufferLayout<'static> {
 		wgpu::VertexBufferLayout {
-			array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+			array_stride: size_of::<Vertex>() as wgpu::BufferAddress,
 			step_mode: wgpu::VertexStepMode::Vertex,
 			attributes: &Self::ATTRS,
 		}
@@ -74,6 +75,30 @@ pub struct Renderer {
 	text_atlas: TextAtlas,
 	text_viewport: TextViewport,
 	text_renderer: TextRenderer,
+}
+
+impl fmt::Debug for Renderer {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.debug_struct("Renderer")
+            .field("device", &self.device)
+            .field("queue", &self.queue)
+            .field("surface", &self.surface)
+            .field("surface_format", &self.surface_format)
+            .field("config", &self.config)
+            .field("pipeline", &self.pipeline)
+            .field("camera_buffer", &self.camera_buffer)
+            .field("camera_bind_group", &self.camera_bind_group)
+            .field("vertex_buffer", &self.vertex_buffer)
+            .field("vertex_capacity", &self.vertex_capacity)
+            .field("vertex_count", &self.vertex_count)
+            .field("font_system", &self.font_system)
+            .field("swash_cache", &self.swash_cache)
+            // Skip the problematic fields or print placeholders
+            .field("text_atlas", &"<TextAtlas>")
+            .field("text_viewport", &self.text_viewport)
+            .field("text_renderer", &"<TextRenderer>")
+            .finish()
+	}
 }
 
 impl Renderer {
@@ -125,7 +150,7 @@ impl Renderer {
 
 		let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("camera-uniform"),
-			size: std::mem::size_of::<CameraUniform>() as u64,
+			size: size_of::<CameraUniform>() as u64,
 			usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
@@ -181,7 +206,7 @@ impl Renderer {
 		let vertex_capacity = 4096;
 		let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("scene-vertices"),
-			size: (vertex_capacity * std::mem::size_of::<Vertex>()) as u64,
+			size: (vertex_capacity * size_of::<Vertex>()) as u64,
 			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
@@ -230,7 +255,7 @@ impl Renderer {
 		self.vertex_capacity = needed.next_power_of_two();
 		self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
 			label: Some("scene-vertices"),
-			size: (self.vertex_capacity * std::mem::size_of::<Vertex>()) as u64,
+			size: (self.vertex_capacity * size_of::<Vertex>()) as u64,
 			usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
 			mapped_at_creation: false,
 		});
@@ -264,7 +289,7 @@ impl Renderer {
 			buffers.push(buffer);
 		}
 
-		let areas: Vec<TextArea> = labels
+		let areas: Vec<TextArea<'_>> = labels
 			.iter()
 			.zip(buffers.iter())
 			.map(|(label, buffer)| {

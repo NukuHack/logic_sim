@@ -73,7 +73,7 @@ pub(crate) fn context_menu_items_for_component(library: &ChipLibrary, chip_name:
 	items.push(ContextMenuItem::new_enabled("View", ContextMenuAction::View, is_custom_chip(library, chip_name)));
 	items.push(ContextMenuItem::new("Label", ContextMenuAction::Label));
 	let chip_type = library.try_get(chip_name).map(|d| d.chip_type);
-	if matches!(chip_type, Some(ChipType::Pulse) | Some(ChipType::Key) | Some(ChipType::Rom256x16) | Some(ChipType::DisplayLed)) {
+	if matches!(chip_type, Some(ChipType::Pulse | ChipType::Key | ChipType::Rom256x16 | ChipType::DisplayLed)) {
 		items.push(ContextMenuItem::new("Configure", ContextMenuAction::Configure));
 	}
 	if chip_type.unwrap_or_default().is_bus_type() {
@@ -136,7 +136,7 @@ pub(crate) fn apply_context_menu_action(
 		(ContextMenuAction::Open, ContextTarget::LibChip(name)) => {
 			request_open_chip(v, paths, status, &name, true);
 		}
-		(ContextMenuAction::Open, ContextTarget::BarChip(name)) | (ContextMenuAction::Open, ContextTarget::FlyoutChip(name)) => {
+		(ContextMenuAction::Open, ContextTarget::BarChip(name) | ContextTarget::FlyoutChip(name)) => {
 			v.bottom_bar_open_collection = None;
 			request_open_chip(v, paths, status, &name, false);
 		}
@@ -269,7 +269,7 @@ mod tests {
 		pin.value_display_mode = mode;
 		chip.output_pins.push(pin);
 		library.add(chip);
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	/// Right-click "Edit" on a boundary dev-pin opens the pin-edit popup
@@ -329,7 +329,7 @@ mod tests {
 		let mut selfie = crate::ChipDescription::new("SELFIE", ChipType::Custom);
 		selfie_subchip_root(&mut selfie);
 		library.add(selfie);
-		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state());
+		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 		v.prefs.starred_list.push(crate::StarredItem::new("SELFIE", false));
 		Saver::save_chip(&paths, "P", &v.library, v.library.get("SELFIE")).expect("chip saved");
 		register_name_in_project_for_test(&mut v, &paths, "SELFIE");

@@ -45,22 +45,23 @@ pub(crate) fn encode_modifiers(mods: ModifiersState) -> u32 {
 /// for) keep it. Everything else -- Tab, Ctrl+F, typed characters --
 /// dismisses the popup first and then processes normally, mirroring the
 /// original's close-on-any-input stance while keeping shortcuts live.
-pub(crate) fn key_press_aimed_at_context_menu(logical_key: &Key) -> bool {
+pub(crate) const fn key_press_aimed_at_context_menu(logical_key: &Key) -> bool {
 	matches!(logical_key, Key::Named(NamedKey::Escape | NamedKey::Alt | NamedKey::Control | NamedKey::Shift | NamedKey::Super))
 }
 
-fn digit_from_keycode(code: KeyCode) -> Option<char> {
+const fn digit_from_keycode(code: KeyCode) -> Option<char> {
+	use KeyCode as KC;
 	match code {
-		KeyCode::Digit0 | KeyCode::Numpad0 => Some('0'),
-		KeyCode::Digit1 | KeyCode::Numpad1 => Some('1'),
-		KeyCode::Digit2 | KeyCode::Numpad2 => Some('2'),
-		KeyCode::Digit3 | KeyCode::Numpad3 => Some('3'),
-		KeyCode::Digit4 | KeyCode::Numpad4 => Some('4'),
-		KeyCode::Digit5 | KeyCode::Numpad5 => Some('5'),
-		KeyCode::Digit6 | KeyCode::Numpad6 => Some('6'),
-		KeyCode::Digit7 | KeyCode::Numpad7 => Some('7'),
-		KeyCode::Digit8 | KeyCode::Numpad8 => Some('8'),
-		KeyCode::Digit9 | KeyCode::Numpad9 => Some('9'),
+		KC::Digit0 | KC::Numpad0 => Some('0'),
+		KC::Digit1 | KC::Numpad1 => Some('1'),
+		KC::Digit2 | KC::Numpad2 => Some('2'),
+		KC::Digit3 | KC::Numpad3 => Some('3'),
+		KC::Digit4 | KC::Numpad4 => Some('4'),
+		KC::Digit5 | KC::Numpad5 => Some('5'),
+		KC::Digit6 | KC::Numpad6 => Some('6'),
+		KC::Digit7 | KC::Numpad7 => Some('7'),
+		KC::Digit8 | KC::Numpad8 => Some('8'),
+		KC::Digit9 | KC::Numpad9 => Some('9'),
 		_ => None,
 	}
 }
@@ -368,7 +369,7 @@ pub(crate) fn delete_selected(v: &mut ViewerState) {
 /// cancel before falling through to "leave the chip editor" -- a pending
 /// wire, a placement carry, a selection drag/rubber band, or a live
 /// selection. Same split-for-testability reasoning as `can_delete_selection`.
-pub(crate) fn has_cancellable_canvas_state(v: &ViewerState) -> bool {
+pub(crate) const fn has_cancellable_canvas_state(v: &ViewerState) -> bool {
 	v.pending_wire.is_some() || !v.pending_place.is_empty() || !matches!(v.canvas_interaction, CanvasInteraction::None) || !v.selected_ids.is_empty()
 }
 
@@ -470,7 +471,7 @@ mod tests {
 		let mut library = crate::ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(crate::ChipDescription::new("ROOT", crate::ChipType::Custom));
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	fn place_nand(v: &mut ViewerState, pos: Vec2) -> i32 {

@@ -248,11 +248,11 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	let pending = v.pending_wire.as_mut().expect("caller only calls this with a pending wire");
 	let mut turn = world_pos;
 	if snap {
-		turn = crate::render::layout::snap_to_grid_centred(turn);
+		turn = layout::snap_to_grid_centred(turn);
 	}
 	if straighten {
 		let prev = pending.bend_points.last().copied().unwrap_or_else(|| pending.start.position());
-		turn = crate::render::layout::force_straight_line(prev, turn);
+		turn = layout::force_straight_line(prev, turn);
 	}
 	pending.bend_points.push(turn);
 }
@@ -344,7 +344,7 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 	let mut placed_pins: Vec<(PinDescription, bool)> = Vec::new();
 	for (index, (offset, component)) in carry.iter().enumerate() {
 		let id = first_id + index as i32;
-		let place_pos = if snap { crate::render::layout::snap_to_grid_centred(world_pos + *offset) } else { world_pos + *offset };
+		let place_pos = if snap { layout::snap_to_grid_centred(world_pos + *offset) } else { world_pos + *offset };
 
 		if let Some((is_input, template)) = chip_types[index].and_then(builtins::io_pin_template) {
 			let mut new_pin = PinDescription::new(template.name, id, template.bit_count);
@@ -440,7 +440,7 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 /// actually about to be placed.
 pub(crate) fn build_pending_place_scene(
 	library: &ChipLibrary,
-	pending: &[(Vec2, crate::viewer::chip_interaction::PendingComponent)],
+	pending: &[(Vec2, chip_interaction::PendingComponent)],
 	cursor_world_pos: Vec2,
 	snap_to_grid: bool,
 ) -> SceneGeometry {
@@ -453,8 +453,7 @@ pub(crate) fn build_pending_place_scene(
 	let mut ghost_positions: Vec<Vec2> = Vec::new();
 
 	for (index, (offset, component)) in pending.iter().enumerate() {
-		let position =
-			if snap_to_grid { crate::render::layout::snap_to_grid_centred(cursor_world_pos + *offset) } else { cursor_world_pos + *offset };
+		let position = if snap_to_grid { layout::snap_to_grid_centred(cursor_world_pos + *offset) } else { cursor_world_pos + *offset };
 		ghost_positions.push(position);
 		let Some(chip_type) = library.try_get(&component.name).map(|d| d.chip_type) else { continue };
 
@@ -728,7 +727,7 @@ mod tests {
 	/// same apparent screen distance keeps hitting), and never divide by zero.
 	#[test]
 	fn wire_click_tolerance_scales_with_zoom_and_survives_zero() {
-		let mut cam = crate::render::camera::Camera::new(Vec2::new(800.0, 600.0));
+		let mut cam = Camera::new(Vec2::new(800.0, 600.0));
 		cam.zoom = 10.0;
 		assert_eq!(wire_click_tolerance(&cam), 0.6);
 		cam.zoom = 100.0;
@@ -775,7 +774,7 @@ mod tests {
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
 		library.add(ChipDescription::new("ROOT", ChipType::Custom));
-		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), crate::audio::default_shared_state())
+		ViewerState::new("", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state())
 	}
 
 	#[test]
