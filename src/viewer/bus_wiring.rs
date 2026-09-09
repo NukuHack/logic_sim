@@ -9,6 +9,7 @@ use crate::description::{ChipDescription, ChipLibrary, ChipType, PinAddress, Wir
 
 /// The placed subchip type of owner `owner_id` within `chip`, or `None` for
 /// boundary dev-pins (which share the id space but aren't subchips).
+#[must_use]
 pub fn owner_chip_type(chip: &ChipDescription, library: &ChipLibrary, owner_id: i32) -> Option<ChipType> {
 	let sub = chip.sub_chips.iter().find(|s| s.id == owner_id)?;
 	library.try_get(&sub.name).map(|desc| desc.chip_type)
@@ -18,6 +19,7 @@ pub fn owner_chip_type(chip: &ChipDescription, library: &ChipLibrary, owner_id: 
 /// bus origin's output and its terminus' input. Only bus wires may receive
 /// connections from output pins (`CanCompleteWireConnection`'s exception),
 /// because their merged signal has one well-defined source net.
+#[must_use]
 pub fn is_bus_wire(chip: &ChipDescription, library: &ChipLibrary, wire: &WireDescription) -> bool {
 	let source_type = owner_chip_type(chip, library, wire.source_pin_address.pin_owner_id);
 	let target_type = owner_chip_type(chip, library, wire.target_pin_address.pin_owner_id);
@@ -50,6 +52,7 @@ pub fn bus_corrected_target(chip: &ChipDescription, library: &ChipLibrary, wire:
 /// written together when the pair is placed, and both required here --
 /// stricter than the original's single-direction check, and satisfied by
 /// everything the original writes). Non-bus owners are never linked.
+#[must_use]
 pub fn bus_pair_linked(chip: &ChipDescription, library: &ChipLibrary, owner_a: i32, owner_b: i32) -> bool {
 	let links_to = |a: i32, b: i32| {
 		chip.sub_chips
@@ -64,6 +67,7 @@ pub fn bus_pair_linked(chip: &ChipDescription, library: &ChipLibrary, owner_a: i
 /// Whether the partner of bus component `owner_id` (the subchip whose id
 /// sits in its `internal_data[0]`) exists and is itself a bus chip --
 /// used to keep pairs together when one side is deleted or moved.
+#[must_use]
 pub fn bus_partner_id(chip: &ChipDescription, library: &ChipLibrary, owner_id: i32) -> Option<i32> {
 	let sub = chip.sub_chips.iter().find(|s| s.id == owner_id)?;
 	if !library.try_get(&sub.name).is_some_and(|d| d.chip_type.is_bus_type()) {

@@ -38,17 +38,21 @@ const KEPT_LOG_FILES: usize = 4;
 const CONSOLE_DUPLICATE: Duplicate = Duplicate::Debug;
 
 /// Directory the rotating log files are written to.
+#[must_use]
 pub fn log_dir(data_dir: &Path) -> PathBuf {
 	data_dir.join(LOG_DIR_NAME)
 }
 
 /// # Panics
 /// if the temp dor does not exist (should in all environment)
+#[must_use]
+#[allow(clippy::expect_used)]
 pub fn test_logger(label: &str) -> LoggerHandle {
 	init(&scratch(label)).expect("the logger installs into a writable directory")
 }
 
 /// Fresh scratch directory under the OS temp dir, unique per run.
+#[must_use]
 pub fn scratch(label: &str) -> PathBuf {
 	let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
 	std::env::temp_dir().join(format!("dls_rust_test_{label}_{}_{nanos}", std::process::id()))
@@ -61,6 +65,8 @@ pub fn scratch(label: &str) -> PathBuf {
 /// The returned handle *must be kept alive for the rest of the process* --
 /// dropping it flushes and shuts the logger down, which is what makes the
 /// last lines of a run show up on disk.
+#[must_use]
+#[allow(clippy::print_stderr)]
 pub fn init(data_dir: &Path) -> Option<LoggerHandle> {
 	let (spec, spec_text) = resolve_spec();
 	let dir = log_dir(data_dir);
@@ -110,6 +116,8 @@ fn start_terminal_logger(spec: LogSpecification) -> Result<LoggerHandle, flexi_l
 /// The filter to use: [`LOG_SPEC_ENV`] when it is set and parses, otherwise
 /// [`DEFAULT_LOG_SPEC`]. Returns it alongside its normalized text so the
 /// first log line can spell out what is actually in effect.
+#[allow(clippy::print_stderr)]
+#[allow(clippy::expect_used)]
 fn resolve_spec() -> (LogSpecification, String) {
 	let spec = match LogSpecification::env_or_parse(DEFAULT_LOG_SPEC) {
 		Ok(spec) => spec,

@@ -6,6 +6,7 @@
 
 use crate::render::foundation::{SceneGeometry, TextLabel};
 use crate::render::menu_ui::UiRect;
+use crate::render::theme;
 use glam::Vec2;
 
 pub use crate::render::menu_ui::to_world;
@@ -86,6 +87,7 @@ pub struct ContextMenuButton {
 /// slimmer (no text field, no per-row "enabled" flag) since a context
 /// menu's rows are always simple, always-enabled actions.
 #[derive(Debug, Default, Clone)]
+#[must_use]
 pub struct ContextMenuFrame {
 	pub geometry: SceneGeometry,
 	pub buttons: Vec<ContextMenuButton>,
@@ -132,17 +134,17 @@ pub fn build_context_menu(state: &ContextMenuState, vw: f32, vh: f32, mouse: Vec
 		to_world(centre(&panel_rect), vw, vh),
 		Vec2::new(BORDER.mul_add(2.0, panel_rect.w), BORDER.mul_add(2.0, panel_rect.h)),
 		BORDER,
-		[0.17, 0.17, 0.19, 1.0],
-		[0.05, 0.05, 0.06, 1.0],
+		theme::Rgba(0.17, 0.17, 0.19, 1.0),
+		theme::Rgba(0.05, 0.05, 0.06, 1.0),
 	);
 
 	for (i, item) in state.items.iter().enumerate() {
 		let row_rect = UiRect::new(panel_rect.x, (i as f32).mul_add(ROW_H, panel_rect.y), panel_rect.w, ROW_H);
 		let hovered = item.enabled && row_rect.contains(mouse);
 		if hovered {
-			frame.geometry.add_rect(to_world(centre(&row_rect), vw, vh), Vec2::new(row_rect.w, row_rect.h), [0.32, 0.32, 0.4, 1.0]);
+			frame.geometry.add_rect(to_world(centre(&row_rect), vw, vh), Vec2::new(row_rect.w, row_rect.h), theme::Rgba(0.32, 0.32, 0.4, 1.0));
 		}
-		let text_colour = if item.enabled { [0.95, 0.95, 0.95, 1.0] } else { [0.5, 0.5, 0.5, 1.0] };
+		let text_colour = if item.enabled { theme::Rgba(0.95, 0.95, 0.95, 1.0) } else { theme::Rgba(0.5, 0.5, 0.5, 1.0) };
 		frame.geometry.labels.push(TextLabel {
 			pos: to_world(centre(&row_rect), vw, vh),
 			text: item.label.clone(),

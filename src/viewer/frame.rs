@@ -41,11 +41,11 @@ fn status_toast_geometry(message: &str, vw: f32, vh: f32, above_y: Option<f32>) 
 	let bg = UiRect::new((vw - width) / 2.0, centre_y - 14.0, width, 28.0);
 
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.08, 0.08, 0.1, 0.92]);
+	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), theme::Rgba(0.08, 0.08, 0.1, 0.92));
 	geo.labels.push(crate::render::foundation::TextLabel {
 		pos: to_world(bg.centre(), vw, vh),
 		text: message.to_string(),
-		colour: [0.95, 0.78, 0.35, 1.0],
+		colour: theme::Rgba(0.95, 0.78, 0.35, 1.0),
 		font_size: 15.0,
 		width: width - 20.0,
 	});
@@ -59,18 +59,18 @@ fn paused_banner_geometry(paused_step_counter: u32, vw: f32, vh: f32) -> SceneGe
 	const BANNER_H: f32 = 34.0;
 	let bg = UiRect::new(0.0, 0.0, vw, BANNER_H);
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
+	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95].into());
 	geo.labels.push(crate::render::foundation::TextLabel {
 		pos: to_world(bg.centre(), vw, vh),
 		text: "Simulation Paused (press space to advance one step)".to_string(),
-		colour: [1.0, 0.85, 0.25, 1.0],
+		colour: [1.0, 0.85, 0.25, 1.0].into(),
 		font_size: 15.0,
 		width: vw - 120.0,
 	});
 	geo.labels.push(crate::render::foundation::TextLabel {
 		pos: to_world(Vec2::new(vw - 60.0, BANNER_H / 2.0), vw, vh),
 		text: paused_step_counter.to_string(),
-		colour: [1.0, 1.0, 1.0, 0.8],
+		colour: [1.0, 1.0, 1.0, 0.8].into(),
 		font_size: 15.0,
 		width: 50.0,
 	});
@@ -96,19 +96,19 @@ fn viewed_chips_bar_geometry(v: &ViewerState, vw: f32, vh: f32, top_y: f32) -> (
 	let text_right = PAD.mul_add(-2.0, vw - BACK_W);
 	let max_text_width = (text_right - text_left).max(40.0);
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), [0.1, 0.1, 0.12, 0.95]);
-	geo.add_rect(to_world(back.centre(), vw, vh), Vec2::new(back.w, back.h), [0.28, 0.28, 0.34, 1.0]);
+	geo.add_rect(to_world(bg.centre(), vw, vh), Vec2::new(bg.w, bg.h), theme::Rgba(0.1, 0.1, 0.12, 0.95));
+	geo.add_rect(to_world(back.centre(), vw, vh), Vec2::new(back.w, back.h), theme::Rgba(0.28, 0.28, 0.34, 1.0));
 	geo.labels.push(crate::render::foundation::TextLabel {
 		pos: to_world(Vec2::new(f32::midpoint(text_left, text_right), top_y + BAR_H / 2.0), vw, vh),
 		text: fit_banner_label(&v.viewed_chips_string(), max_text_width),
-		colour: [0.95, 0.95, 0.95, 1.0],
+		colour: theme::Rgba(0.95, 0.95, 0.95, 1.0),
 		font_size: FONT_SIZE,
 		width: max_text_width,
 	});
 	geo.labels.push(crate::render::foundation::TextLabel {
 		pos: to_world(back.centre(), vw, vh),
 		text: "Back".to_string(),
-		colour: [1.0, 1.0, 1.0, 1.0],
+		colour: theme::Rgba(1.0, 1.0, 1.0, 1.0),
 		font_size: 14.0,
 		width: BACK_W - 8.0,
 	});
@@ -307,7 +307,7 @@ pub(crate) fn build_viewer_stack(v: &mut ViewerState, status: Option<&str>, vw: 
 		scene_geo.add_polyline(&verts, layout::WIRE_THICKNESS * 2.0, theme::PIN_HIGHLIGHT_COL);
 		let selected = v.wire_edit.and_then(|e| e.selected_bend);
 		for (i, point) in verts.iter().enumerate().skip(1).take(verts.len().saturating_sub(2)) {
-			let colour = if selected.is_some_and(|b| b + 1 == i) { [1.0; 4] } else { theme::PIN_HIGHLIGHT_COL };
+			let colour = if selected.is_some_and(|b| b + 1 == i) { [1.0; 4].into() } else { theme::PIN_HIGHLIGHT_COL };
 			scene_geo.add_circle(*point, layout::WIRE_THICKNESS * 1.8, colour, 12);
 		}
 	}

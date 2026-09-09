@@ -16,6 +16,7 @@ use glam::Vec2;
 /// pin from a subchip's, since the two need opposite treatment when deciding which end of a
 /// new wire a pin can be (see `is_wire_source`).
 #[derive(Debug, Clone, Copy)]
+#[must_use]
 pub struct PinHit {
 	pub owner_id: i32,
 	pub pin_id: i32,
@@ -27,12 +28,14 @@ pub struct PinHit {
 
 impl PinHit {
 	/// Whether this pin can be a new wire's *source* end.
+	#[must_use]
 	pub const fn is_wire_source(&self) -> bool {
 		self.is_input == self.is_boundary
 	}
 
 	/// Whether this pin can be a new wire's *target* end -- see
 	/// `is_wire_source`.
+	#[must_use]
 	pub const fn is_wire_target(&self) -> bool {
 		!self.is_wire_source()
 	}
@@ -55,6 +58,7 @@ pub(crate) fn point_in_pin_shape(point: Vec2, pos: Vec2, bit_count: PinBitCount)
 /// A point-in-shape test mirroring `draw_dev_pin_body`'s exact geometry
 /// (its outer, full-size border shape -- the fill is strictly smaller, so
 /// testing against the border is the more generous/correct hit area).
+#[must_use]
 pub(crate) fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCount, round_left: bool) -> bool {
 	let size = layout::dev_pin_body_size(bit_count);
 	let radius = layout::dev_pin_corner_radius(size);
@@ -63,6 +67,7 @@ pub(crate) fn point_in_dev_pin_body(point: Vec2, pos: Vec2, bit_count: PinBitCou
 
 /// Returns the bit index (0-based) of whichever of an input dev-pin's individual clickable
 /// cells `point` landed on, or `None` if it missed every cell.
+#[must_use]
 pub fn hit_test_input_dev_pin_bit(point: Vec2, pos: Vec2, bit_count: PinBitCount) -> Option<u32> {
 	let cell_size = Vec2::new(layout::INPUT_BIT_CELL_SIZE, layout::INPUT_BIT_CELL_SIZE);
 	for (bit_index, offset) in layout::input_bit_cell_offsets(bit_count).into_iter().enumerate() {
@@ -83,6 +88,7 @@ pub fn hit_test_input_dev_pin_bit(point: Vec2, pos: Vec2, bit_count: PinBitCount
 /// resolve a right-click to "Label this pin" (see `PlacedSubChip`'s and
 /// `point_in_dev_pin_body`'s docs for the input/output `round_left`
 /// distinction this mirrors). Returns `(is_input, pin_id)`.
+#[must_use]
 pub fn hit_test_dev_pin(chip: &ChipDescription, world_pos: Vec2) -> Option<(bool, i32)> {
 	for pin in &chip.input_pins {
 		if point_in_dev_pin_body(world_pos, pin.position, pin.bit_count, true) {
@@ -102,6 +108,7 @@ pub fn hit_test_dev_pin(chip: &ChipDescription, world_pos: Vec2) -> Option<(bool
 /// shape (`point_in_pin_shape`, matching `draw_pins`) under `world_pos`,
 /// if any. Iterates subchips back-to-front (last-placed first), the
 /// same draw-order precedence `hit_test_sub_chip` uses.
+#[must_use]
 pub fn hit_test_sub_chip_pin(placed: &[PlacedSubChip<'_>], world_pos: Vec2) -> Option<PinHit> {
 	for sub in placed.iter().rev() {
 		let is_flipped = sub.desc.chip_type.is_bus_type() && sub.internal_data.get(1).copied().unwrap_or(0) != 0;
@@ -144,6 +151,7 @@ pub fn hit_test_sub_chip_pin(placed: &[PlacedSubChip<'_>], world_pos: Vec2) -> O
 /// endpoint; subchip pins are tried first since `draw_pins` draws them
 /// first, so a dev-pin overlapping one (unlikely in practice) still
 /// loses to whichever is actually on top.
+#[must_use]
 pub fn hit_test_any_pin(chip: &ChipDescription, placed: &[PlacedSubChip<'_>], world_pos: Vec2) -> Option<PinHit> {
 	if let Some(hit) = hit_test_sub_chip_pin(placed, world_pos) {
 		return Some(hit);

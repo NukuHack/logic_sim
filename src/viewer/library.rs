@@ -82,6 +82,7 @@ fn sync_library_collections_gated(
 	}
 	let already_collected: std::collections::HashSet<String> =
 		prefs.chip_collections.iter().flat_map(|c| c.chips.iter().map(|n| n.to_ascii_lowercase())).collect();
+	#[allow(clippy::expect_used)]
 	let default_index =
 		prefs.chip_collections.iter().position(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
 
@@ -228,7 +229,7 @@ pub(crate) fn delete_collection(prefs: &mut ProjectDescription, index: usize) {
 	}
 
 	prefs.set_starred(&name, false, true);
-	prefs.chip_collections.remove(index);
+	let _ = prefs.chip_collections.remove(index);
 }
 
 /// Moves whatever's selected in the library panel one step within its own list (`force_jump =

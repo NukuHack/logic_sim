@@ -16,6 +16,7 @@ use glam::Vec2;
 /// [`TYPE_LAYOUT_CACHE`] and shared across every instance of the same chip
 /// type, keyed by chip name.
 #[derive(Debug, Clone)]
+#[must_use]
 struct TypeLayout {
 	size: Vec2,
 	input_pin_y: Vec<f32>,
@@ -29,6 +30,7 @@ struct TypeLayout {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[must_use]
 struct Fingerprint {
 	chip_type: ChipType,
 	name_location: NameLocation,
@@ -109,6 +111,7 @@ fn type_layout(desc: &ChipDescription) -> (Vec2, Vec<f32>, Vec<f32>) {
 /// Resolved placement of one subchip instance within the scene, in world
 /// space.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct PlacedSubChip<'a> {
 	pub id: i32,
 	pub desc: &'a ChipDescription,
@@ -140,6 +143,7 @@ impl PlacedSubChip<'_> {
 /// Computes the world-space placement (body rect + pin y-offsets) of every
 /// subchip in `chip`, resolving each subchip's own pin layout against
 /// `library`. Subchips referencing an unknown chip name are skipped.
+#[must_use]
 pub fn place_sub_chips<'a>(chip: &'a ChipDescription, library: &'a ChipLibrary) -> Vec<PlacedSubChip<'a>> {
 	let mut placed = Vec::with_capacity(chip.sub_chips.len());
 	place_sub_chips_into(chip, library, &mut placed);
@@ -194,6 +198,7 @@ pub fn clear_type_layout_cache() {
 /// emptied at the start of every [`Self::fill`] call before anything is reinterpreted -- see
 /// the safety comment there.
 #[derive(Default, Debug)]
+#[must_use]
 pub struct PlacedBuf(Vec<PlacedSubChip<'static>>);
 
 impl PlacedBuf {
@@ -212,6 +217,7 @@ impl PlacedBuf {
 		// `PlacedSubChip<'static>` values to reinterpret -- only spare backing capacity, whose
 		// byte layout (pointer/len/cap) doesn't depend on `PlacedSubChip`'s lifetime parameter at
 		// all.
+		#[allow(unsafe_code)]
 		let out: &mut Vec<PlacedSubChip<'a>> = unsafe { std::mem::transmute(&mut self.0) };
 		place_sub_chips_into(chip, library, out);
 		out

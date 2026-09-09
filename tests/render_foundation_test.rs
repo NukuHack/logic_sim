@@ -28,13 +28,16 @@ fn rect_produces_two_triangles_six_verts() {
 #[test]
 fn apply_alpha_scales_triangle_and_label_alpha_leaving_rgb_untouched() {
 	let mut geo = SceneGeometry::default();
-	geo.add_rect(Vec2::ZERO, Vec2::new(2.0, 1.0), [0.5, 0.4, 0.3, 1.0]);
-	geo.labels.push(TextLabel { pos: Vec2::ZERO, text: "AND".into(), colour: [0.1, 0.2, 0.3, 0.8], font_size: 12.0, width: 20.0 });
+	geo.add_rect(Vec2::ZERO, Vec2::new(2.0, 1.0), [0.5, 0.4, 0.3, 1.0].into());
+	geo.labels.push(TextLabel { pos: Vec2::ZERO, text: "AND".into(), colour: [0.1, 0.2, 0.3, 0.8].into(), font_size: 12.0, width: 20.0 });
 
 	apply_alpha(&mut geo, 0.75);
 
-	assert!(geo.triangles.iter().all(|v| v.colour[0] == 0.5 && v.colour[1] == 0.4 && v.colour[2] == 0.3 && (v.colour[3] - 0.75).abs() < 1e-6));
-	let label_colour = geo.labels[0].colour;
+	assert!(geo.triangles.iter().all(|v| {
+		let c: [f32; 4] = v.colour.into();
+		c[0] == 0.5 && c[1] == 0.4 && c[2] == 0.3 && (c[3] - 0.75).abs() < 1e-6
+	}));
+	let label_colour: [f32; 4] = geo.labels[0].colour.into();
 	assert!(label_colour[0] == 0.1 && label_colour[1] == 0.2 && label_colour[2] == 0.3 && (label_colour[3] - 0.6).abs() < 1e-6);
 }
 
@@ -436,21 +439,22 @@ fn state_colour_clamps_out_of_range_index() {
 #[test]
 fn dim_darkens_but_preserves_hue_ratio_and_alpha() {
 	let c = [0.8, 0.4, 0.2, 1.0];
-	let d = dim(c);
-	assert!(d[0] < c[0] && d[1] < c[1] && d[2] < c[2]);
-	assert_eq!(d[3], c[3]);
+	let d = dim(c.into());
+	let d_arr: [f32; 4] = d.into();
+	assert!(d_arr[0] < c[0] && d_arr[1] < c[1] && d_arr[2] < c[2]);
+	assert_eq!(d_arr[3], c[3]);
 	// Hue ratio preserved (uniform scale factor across channels).
-	assert!((d[0] / c[0] - d[1] / c[1]).abs() < 1e-6);
+	assert!((d_arr[0] / c[0] - d_arr[1] / c[1]).abs() < 1e-6);
 }
 
 #[test]
 fn text_colour_is_black_on_light_background() {
-	assert_eq!(text_colour_for_background([1.0, 1.0, 1.0, 1.0]), [0.0, 0.0, 0.0, 1.0]);
+	assert_eq!(text_colour_for_background([1.0, 1.0, 1.0, 1.0].into()), [0.0, 0.0, 0.0, 1.0].into());
 }
 
 #[test]
 fn text_colour_is_white_on_dark_background() {
-	assert_eq!(text_colour_for_background([0.05, 0.05, 0.05, 1.0]), [1.0, 1.0, 1.0, 1.0]);
+	assert_eq!(text_colour_for_background([0.05, 0.05, 0.05, 1.0].into()), [1.0, 1.0, 1.0, 1.0].into());
 }
 
 #[test]
@@ -458,7 +462,8 @@ fn scene_vertex_converts_to_gpu_vertex() {
 	let sv = SceneVertex { pos: Vec2::new(1.0, 2.0), colour: theme::PIN_COL };
 	let v: Vertex = sv.into();
 	assert_eq!(v.position, [1.0, 2.0]);
-	assert_eq!(v.colour, theme::PIN_COL);
+	let expected: [f32; 4] = theme::PIN_COL.into();
+	assert_eq!(v.colour, expected);
 }
 
 #[test]

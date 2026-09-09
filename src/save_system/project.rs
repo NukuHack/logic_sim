@@ -7,7 +7,7 @@
 use crate::ChipLibrary;
 use crate::description::ChipDescription;
 use crate::json::ProjectDescription;
-
+#[must_use]
 #[derive(Debug)]
 pub struct Project {
 	pub description: ProjectDescription,

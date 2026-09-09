@@ -21,6 +21,7 @@ pub const MAX_STEPS_PER_FRAME: u64 = 100_000;
 /// debt, clamped so at most [`MAX_CATCHUP_SECS`] worth of ticks can ever be
 /// owed. Returns the new debt (fractional -- whole ticks are stepped and
 /// subtracted by the caller).
+#[must_use]
 pub fn accumulate_tick_debt(debt_ticks: f64, elapsed: f64, ticks_per_second: f64) -> f64 {
 	let max_debt = MAX_CATCHUP_SECS * ticks_per_second.max(1.0);
 	elapsed.mul_add(ticks_per_second, debt_ticks).clamp(0.0, max_debt)
@@ -29,6 +30,7 @@ pub fn accumulate_tick_debt(debt_ticks: f64, elapsed: f64, ticks_per_second: f64
 /// How many whole ticks are due, and what remains of the debt after taking
 /// them -- capped at [`MAX_STEPS_PER_FRAME`] so excess debt is *dropped*
 /// (matching the original falling behind its target rather than bursting).
+#[must_use]
 pub fn take_due_ticks(debt_ticks: f64) -> (u64, f64) {
 	let due = debt_ticks.floor();
 	if due < 1.0 {
@@ -41,6 +43,7 @@ pub fn take_due_ticks(debt_ticks: f64) -> (u64, f64) {
 /// Puts ticks a pass reserved but couldn't run (its time budget expired,
 /// handing the arena back to the renderer early) back onto the debt,
 /// clamped by the same ceiling [`accumulate_tick_debt`] enforces.
+#[must_use]
 pub fn restore_unfinished_ticks(debt_ticks: f64, unrun_ticks: u64, ticks_per_second: f64) -> f64 {
 	accumulate_tick_debt(debt_ticks + unrun_ticks as f64, 0.0, ticks_per_second)
 }
@@ -79,6 +82,7 @@ impl PerfWindow {
 	/// when nothing has been recorded recently enough to measure (the
 	/// caller decides what to display then -- the original just leaves its
 	/// last value alone).
+	#[must_use]
 	pub fn avg_per_sec(&self, now: Instant) -> Option<f64> {
 		let &(oldest, _) = self.entries.front()?;
 		let active = now.duration_since(oldest).as_secs_f64();

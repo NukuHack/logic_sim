@@ -10,6 +10,7 @@ use glam::Vec2;
 /// bends, via a proper miter join at each interior vertex, rather than naively offsetting
 /// each segment independently and leaving a gap/overlap where two differently-offset segments
 /// would otherwise meet.
+#[must_use]
 pub fn offset_polyline(points: &[Vec2], distance: f32) -> Vec<Vec2> {
 	const MITER_LIMIT: f32 = 4.0;
 	// Unit normal (rotate direction +90 degrees) of the segment from `a`

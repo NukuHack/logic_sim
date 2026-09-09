@@ -24,6 +24,7 @@ use super::eval::{Bits, CachedGate, Lut, Native};
 /// see `adder_variants` below. Still just an integer + two function-pointer calls per row, so
 /// there's no closure/`Box<dyn Fn>` overhead versus a hardcoded variant.
 #[derive(Debug)]
+#[must_use]
 pub struct Candidate {
 	name: &'static str,
 	config: Bits,
@@ -31,12 +32,15 @@ pub struct Candidate {
 	formula: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>,
 }
 impl Candidate {
+	#[must_use]
 	pub const fn name(&self) -> &'static str {
 		self.name
 	}
+	#[must_use]
 	pub const fn config(&self) -> Bits {
 		self.config
 	}
+	#[must_use]
 	pub const fn formula(&self) -> fn(&[Bits], u32, u32, Bits) -> Vec<Bits> {
 		self.formula
 	}
@@ -296,6 +300,7 @@ fn adder_variants() -> Vec<Candidate> {
 /// `recognize` naturally never sees one -- but the `Native` it hands back has no such limit and
 /// is exactly as capable at 4000 bits as it is here (see `formula_from_candidate` +
 /// `Native::new` for building one directly at a width no `Lut` could ever hold).
+#[must_use]
 pub fn recognize(in_bits: u32, out_bits: u32, lut: &Lut) -> Option<Box<dyn CachedGate>> {
 	let candidate = find_candidate(in_bits, out_bits, lut)?;
 	Some(Box::new(Native::new(in_bits, out_bits, candidate.config, candidate.formula)))

@@ -122,7 +122,7 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 
 		let removed_count = to_remove.len();
 		for &ri in to_remove.iter().rev() {
-			chip.wires.remove(ri);
+			let _ = chip.wires.remove(ri);
 		}
 		shift_connected_indices_after_removal(chip, &to_remove);
 		return removed_count;
@@ -162,7 +162,7 @@ pub fn delete_wire(chip: &mut ChipDescription, index: usize, library: &ChipLibra
 
 	let removed_count = to_remove.len();
 	for &i in to_remove.iter().rev() {
-		chip.wires.remove(i);
+		let _ = chip.wires.remove(i);
 	}
 	shift_connected_indices_after_removal(chip, &to_remove);
 
@@ -194,6 +194,8 @@ pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipL
 		let src = ctx.endpoint(index, false, &mut cache, 0);
 		let dst = ctx.endpoint(index, true, &mut cache, 0);
 		let mut world = Vec::with_capacity(chip.wires[index].points.len() + 2);
+
+		#[allow(clippy::expect_used)] // todo!() TODO : remove this
 		world.push(src.or(Some(chip.wires[index].cached_source_point)).expect("endpoint fallback"));
 		world.extend_from_slice(&chip.wires[index].points);
 		world.push(dst.unwrap_or(chip.wires[index].cached_target_point));
@@ -213,7 +215,7 @@ pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipL
 			detach_dependent(chip, d, &anchor, &anchor_world);
 		}
 
-		chip.wires.remove(index);
+		let _ = chip.wires.remove(index);
 		shift_connected_indices_after_removal(chip, &[index]);
 		return 1;
 	}
@@ -261,7 +263,7 @@ pub fn delete_wire_old(chip: &mut ChipDescription, index: usize, library: &ChipL
 
 	let removed_count = to_remove.len();
 	for &i in to_remove.iter().rev() {
-		chip.wires.remove(i);
+		let _ = chip.wires.remove(i);
 	}
 	shift_connected_indices_after_removal(chip, &to_remove);
 
@@ -277,7 +279,7 @@ pub fn delete_wire_segment(chip: &mut ChipDescription, index: usize) -> usize {
 	if index >= chip.wires.len() {
 		return 0;
 	}
-	chip.wires.remove(index);
+	let _ = chip.wires.remove(index);
 	shift_connected_indices_after_removal(chip, &[index]);
 	1
 }

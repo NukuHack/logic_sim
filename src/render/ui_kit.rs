@@ -15,6 +15,7 @@ pub const FONT_SIZE: f32 = 18.0;
 /// world-space point that lands there when drawn through a camera
 /// positioned at `(vw / 2, vh / 2)` with `zoom = 1.0` -- the inverse of
 /// what `Camera::world_to_screen` computes for that same camera.
+#[must_use]
 pub fn to_world(screen: Vec2, vw: f32, vh: f32) -> Vec2 {
 	let _ = vw; // kept for symmetry / clarity at call sites, x maps 1:1
 	Vec2::new(screen.x, vh - screen.y)
@@ -47,6 +48,7 @@ pub fn pin_geometry_to_screen(mut geometry: SceneGeometry, camera: &Camera, vh: 
 /// short, readable signatures -- callers build it once per frame and
 /// pass it down.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct UiCtx {
 	pub vw: f32,
 	pub vh: f32,
@@ -61,6 +63,7 @@ impl UiCtx {
 
 /// An axis-aligned rectangle in screen pixel space.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct UiRect {
 	pub x: f32,
 	pub y: f32,
@@ -73,10 +76,12 @@ impl UiRect {
 		Self { x, y, w, h }
 	}
 
+	#[must_use]
 	pub const fn contains(&self, p: Vec2) -> bool {
 		p.x >= self.x && p.x <= self.x + self.w && p.y >= self.y && p.y <= self.y + self.h
 	}
 
+	#[must_use]
 	pub const fn centre(&self) -> Vec2 {
 		Vec2::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
 	}
@@ -93,6 +98,7 @@ impl UiRect {
 /// One clickable region of a [`Frame`] -- a hit-box plus the action a click on it means, in the
 /// caller's own action enum (`menu_ui::UiAction` / `editor_ui::EditorAction`).
 #[derive(Debug, Clone, PartialEq)]
+#[must_use]
 pub struct Button<A> {
 	pub rect: UiRect,
 	pub action: A,
@@ -103,6 +109,7 @@ pub struct Button<A> {
 /// against it. Generic over the caller's own action enum so `menu_ui` and `editor_ui` can each
 /// keep their own `MenuFrame`/`EditorFrame` alias without duplicating this shape.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct Frame<A> {
 	pub geometry: SceneGeometry,
 	pub buttons: Vec<Button<A>>,
@@ -139,11 +146,11 @@ pub fn add_label<A>(frame: &mut Frame<A>, ui: UiCtx, centre: Vec2, width: f32, t
 /// default look, or `Some(colour)` for a differently-tinted button
 pub fn add_button<A: Clone>(frame: &mut Frame<A>, ui: UiCtx, rect: UiRect, label: &str, action: A, enabled: bool, base_colour: Option<theme::Rgba>) {
 	let hovered = enabled && rect.contains(ui.mouse);
-	let bg = if enabled {
+	let bg: theme::Rgba = if enabled {
 		match base_colour {
-			Some(base) if hovered => [(base[0] + 0.12).min(1.0), (base[1] + 0.12).min(1.0), (base[2] + 0.12).min(1.0), base[3]],
+			Some(base) if hovered => theme::Rgba((base.0 + 0.12).min(1.0), (base.1 + 0.12).min(1.0), (base.2 + 0.12).min(1.0), base.3),
 			Some(base) => base,
-			None if hovered => [0.45, 0.45, 0.5, 1.0],
+			None if hovered => theme::Rgba(0.45, 0.45, 0.5, 1.0),
 			None => theme::CHIP_BODY_COL,
 		}
 	} else {
@@ -170,10 +177,10 @@ pub fn text_field_box<A>(
 	label_inset: f32,
 	focused: bool,
 ) {
-	let bg = if focused { [0.17, 0.17, 0.2, 1.0] } else { [0.08, 0.08, 0.09, 1.0] };
+	let bg: theme::Rgba = if focused { theme::Rgba(0.17, 0.17, 0.2, 1.0) } else { theme::Rgba(0.08, 0.08, 0.09, 1.0) };
 	fill_rect(frame, ui, rect, bg);
 	let shown = if text.is_empty() { format!("{placeholder}|") } else { format!("{text}|") };
-	add_label(frame, ui, rect.centre(), rect.w - label_inset, &shown, [1.0, 1.0, 1.0, 1.0], font_size);
+	add_label(frame, ui, rect.centre(), rect.w - label_inset, &shown, theme::Rgba(1.0, 1.0, 1.0, 1.0), font_size);
 }
 
 /// Draws one text-entry field and records its hit-box as `frame.text_field`.

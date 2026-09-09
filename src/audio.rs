@@ -54,6 +54,7 @@ pub struct SimAudio {
 }
 
 impl SimAudio {
+	#[must_use]
 	pub fn new() -> Self {
 		let mut freqs_all = [0.0; FREQ_COUNT];
 		let mut perceptual_gain_correction = [0.0; FREQ_COUNT];
@@ -76,18 +77,21 @@ impl SimAudio {
 		}
 	}
 
+	#[must_use]
 	pub const fn freqs_all(&self) -> &[f32; FREQ_COUNT] {
 		&self.freqs_all
 	}
 
 	/// Current smoothed amplitude per frequency slot (what [`AudioState::sample`]
 	/// mixes); exposed for tests/visualization.
+	#[must_use]
 	pub const fn amplitudes(&self) -> &[f64; FREQ_COUNT] {
 		&self.target_amplitudes_per_freq
 	}
 
 	/// This step's unsmoothed note targets -- what [`Self::register_note`]
 	/// accumulates into and [`Self::init_frame`] clears.
+	#[must_use]
 	pub const fn step_targets(&self) -> &[f64; FREQ_COUNT] {
 		&self.target_amplitudes_per_freq_temp
 	}
@@ -169,6 +173,7 @@ pub struct AudioState {
 impl AudioState {
 	/// The mixed waveform value at absolute `time` (seconds since the
 	/// player started). Summing only audible slots keeps idle playback cheap.
+	#[must_use]
 	pub fn sample(&self, time: f64) -> f32 {
 		mix_sample(&self.sim_audio.freqs_all, &self.sim_audio.target_amplitudes_per_freq, time)
 	}
@@ -208,6 +213,7 @@ impl Debug for AudioPlayer {
 pub type SharedAudioState = Arc<Mutex<AudioState>>;
 
 /// A fresh, silent shared state -- what the app creates at startup.
+#[must_use]
 pub fn default_shared_state() -> SharedAudioState {
 	Arc::new(Mutex::new(AudioState::default()))
 }
@@ -327,11 +333,13 @@ fn promote_worker_to_realtime() {}
 
 /// The gain + clip stage of `AudioUnity.OnAudioFilterRead`: anything past
 /// [`CLIP_THRESHOLD`] is flattened to exactly that magnitude, preserving sign.
-pub fn process_output_sample(raw: f32) -> f32 {
+#[must_use]
+pub const fn process_output_sample(raw: f32) -> f32 {
 	if raw.abs() > CLIP_THRESHOLD { CLIP_THRESHOLD * raw.signum() } else { raw }
 }
 
 /// Band-limited square wave (`AudioState.SquareWave`): odd harmonics only.
+#[must_use]
 fn square_wave(t: f64) -> f32 {
 	let mut sum = 0.0f64;
 	for i in 1..=WAVE_ITERATIONS {
@@ -344,10 +352,12 @@ fn square_wave(t: f64) -> f32 {
 
 /// Frequency `num_above_a0` semitones above A0 (`CalculateFrequency`;
 /// buzzer slots pass `index / 3`, i.e. three slots per semitone).
+#[must_use]
 pub fn calculate_frequency(num_above_a0: f64) -> f32 {
 	(A0_FREQUENCY_HZ * SEMITONE_RATIO.powf(num_above_a0)) as f32
 }
 
+#[must_use]
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
 	b.mul_add(t, a * (1.0 - t))
 }

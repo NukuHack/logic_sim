@@ -3,10 +3,12 @@ TODO LIST :
 - Tab-based label views + rn it does what is shouldn't, it should do what the prefs. expect it to
 	if the prefs say for anything to "always" or "tab to toggle" and the user toggles it, it should be constant on (no need for also hover it)
 
-Flat output buffer: does one heap allocation per row (many small allocs).
+Flat output buffer: does one heap allocation per row (insted of many small allocs).
 	Switching to a single preallocated one directional array with a fixed stride (num_outputs per row) would cut that too
 	I left this alone since it would greatly limit maximum LUT size, and it has a big blast radius.
 	Probably an u64 would be big enough for every case, if the bits are packed correctly (32 bit with tristate save, 64 without, currently we don't store tri-state)
+
+shift clicking at "placing" should place the components but also peek them on the cursor
 
 FUTURE PLANS :
 

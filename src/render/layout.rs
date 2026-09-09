@@ -26,6 +26,7 @@ pub const MIN_CHIP_SIZE: f32 = GRID_SIZE;
 
 /// Stacks `pins` from the top downward along one edge of a chip and returns (total chip
 /// height, per-pin grid-space y offset from the chip's vertical centre).
+#[must_use]
 pub fn calculate_default_pin_layout(pins: &[PinBitCount]) -> (f32, Vec<f32>) {
 	let mut grid_y: i32 = 0; // top, before centring
 	let mut pin_grid_y_vals = Vec::with_capacity(pins.len());
@@ -49,6 +50,7 @@ pub fn calculate_default_pin_layout(pins: &[PinBitCount]) -> (f32, Vec<f32>) {
 /// Minimum chip height needed to fit both the input and output pin stacks
 /// (the taller of the two wins). Mirrors
 /// `SubChipHelper.MinChipHeightForPins(inputs, outputs)`.
+#[must_use]
 pub fn min_chip_height_for_pins(inputs: &[PinBitCount], outputs: &[PinBitCount]) -> f32 {
 	let h_in = if inputs.is_empty() { 0.0 } else { calculate_default_pin_layout(inputs).0 };
 	let h_out = if outputs.is_empty() { 0.0 } else { calculate_default_pin_layout(outputs).0 };
@@ -60,6 +62,7 @@ pub fn min_chip_height_for_pins(inputs: &[PinBitCount], outputs: &[PinBitCount])
 /// text layout / font metrics that belong to the UI framework, not the
 /// simulation-facing layout; callers can widen the returned size to fit a
 /// label using their own text measurement).
+#[must_use]
 pub fn calculate_min_chip_size_for_pins(inputs: &[PinBitCount], outputs: &[PinBitCount]) -> Vec2 {
 	let min_height = min_chip_height_for_pins(inputs, outputs);
 	let has_pins = !inputs.is_empty() || !outputs.is_empty();
@@ -75,6 +78,7 @@ pub const AVG_CHAR_WIDTH_RATIO: f32 = 0.62;
 /// Estimated world-space width needed to draw `text` at `font_size`. See
 /// `AVG_CHAR_WIDTH_RATIO` for why this is an estimate rather than an
 /// exact font-metrics measurement.
+#[must_use]
 pub fn estimate_text_width(text: &str, font_size: f32) -> f32 {
 	text.chars().count() as f32 * font_size * AVG_CHAR_WIDTH_RATIO
 }
@@ -84,6 +88,7 @@ pub fn estimate_text_width(text: &str, font_size: f32) -> f32 {
 /// width as the text label's wrap/clip width, an under-sized body means the label's text is
 /// clipped down to a sliver and is effectively invisible on screen even though the
 /// geometry/label data is technically being produced.
+#[must_use]
 pub fn calculate_min_chip_size(inputs: &[PinBitCount], outputs: &[PinBitCount], desc: &ChipDescription, font_size: f32) -> Vec2 {
 	let name = &desc.name;
 	// 7-segment/RGB/dot displays draw live pixel content that's illegible at their pin-count-only
@@ -109,6 +114,7 @@ pub fn calculate_min_chip_size(inputs: &[PinBitCount], outputs: &[PinBitCount], 
 /// `calculate_min_chip_size_for_pins`'s pin-count-only result (as small as `GRID_SIZE * 2`
 /// wide, since their name is `Hidden` and can't widen them the way an ordinary chip's label
 /// does) -- far too small to read the pixel/segment content drawn on them.
+#[must_use]
 pub fn display_min_size(chip_type: ChipType) -> Option<Vec2> {
 	match chip_type {
 		ChipType::SevenSegmentDisplay => Some(Vec2::splat(GRID_SIZE) * 10.0),
@@ -128,6 +134,7 @@ pub const GRID_MIN_PIXEL_THICKNESS: f32 = 1.5;
 /// `zoom` (screen pixels per world unit): `GRID_THICKNESS`, widened if
 /// needed so it never renders thinner than `GRID_MIN_PIXEL_THICKNESS` on
 /// screen. See `GRID_MIN_PIXEL_THICKNESS` for why this matters.
+#[must_use]
 pub fn grid_line_thickness(zoom: f32) -> f32 {
 	if zoom <= 0.0 {
 		return GRID_THICKNESS;
@@ -141,6 +148,7 @@ pub fn grid_line_thickness(zoom: f32) -> f32 {
 /// like any other chip's body -- grows with the bit width it carries (e.g. an 8-bit dev-pin
 /// is visibly larger than a 1-bit one), rather than every dev-pin sharing one fixed
 /// placeholder size regardless of width.
+#[must_use]
 pub fn dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
 	calculate_min_chip_size_for_pins(&[bit_count], &[])
 }
@@ -158,12 +166,14 @@ pub const INPUT_BIT_CELL_SIZE: f32 = INPUT_BIT_CIRCLE_RADIUS;
 
 /// Grid arrangement (columns, rows) of per-bit clickable cells for an
 /// *input* dev-pin's body comes from `PinBitCount::input_bit_grid_dims`.
+#[must_use]
 pub fn input_dev_pin_body_size(bit_count: PinBitCount) -> Vec2 {
 	let (cols, rows) = bit_count.input_bit_grid_dims();
 	Vec2::new(INPUT_BIT_CELL_SIZE * cols as f32, INPUT_BIT_CELL_SIZE * rows as f32)
 }
 
 /// World-space centre offsets
+#[must_use]
 pub fn input_bit_cell_offsets(bit_count: PinBitCount) -> Vec<Vec2> {
 	let (cols, rows) = bit_count.input_bit_grid_dims();
 	let total = input_dev_pin_body_size(bit_count);
@@ -191,6 +201,7 @@ pub const DEV_PIN_BORDER_WIDTH: f32 = 0.02;
 /// (see `SceneGeometry::add_rounded_rect`). Scales with the body's own
 /// size (rather than a flat constant) so an 8-bit dev-pin's rounding
 /// doesn't look disproportionately small next to its larger body.
+#[must_use]
 pub fn dev_pin_corner_radius(size: Vec2) -> f32 {
 	(size.x.min(size.y) * 0.35).max(0.0)
 }
@@ -205,6 +216,7 @@ pub const DEV_PIN_SEGMENTS: u32 = (PIN_SEGMENTS as f32 * 1.5) as u32;
 /// position + size and the pin's grid-space y-offset (from
 /// `calculate_default_pin_layout`). `is_left_side` picks the left (input) or
 /// right (output) edge of the chip body.
+#[must_use]
 pub fn pin_world_position(chip_centre: Vec2, chip_size: Vec2, pin_grid_y: f32, is_left_side: bool) -> Vec2 {
 	let half_w = chip_size.x / 2.0;
 	let x_offset = if is_left_side { -half_w - SUB_CHIP_PIN_INSET } else { half_w + SUB_CHIP_PIN_INSET };
@@ -213,10 +225,12 @@ pub fn pin_world_position(chip_centre: Vec2, chip_size: Vec2, pin_grid_y: f32, i
 
 // ---- Grid snapping (GridHelper.cs) -----------------------------------------
 
+#[must_use]
 pub fn snap_to_grid_scalar(v: f32) -> f32 {
 	(v / GRID_SIZE).round() * GRID_SIZE
 }
 
+#[must_use]
 pub fn snap_to_grid(v: Vec2) -> Vec2 {
 	Vec2::new(snap_to_grid_scalar(v.x), snap_to_grid_scalar(v.y))
 }
@@ -224,6 +238,7 @@ pub fn snap_to_grid(v: Vec2) -> Vec2 {
 /// Snaps to grid lines *or* the centre of grid cells (whichever is
 /// closer, per axis) -- mirrors `GridHelper.SnapToGrid(v, true, true)`,
 /// the variant placement/wire editing actually uses.
+#[must_use]
 pub fn snap_to_grid_centred(v: Vec2) -> Vec2 {
 	Vec2::new(snap_to_grid_scalar(v.x * 2.0) / 2.0, snap_to_grid_scalar(v.y * 2.0) / 2.0)
 }
@@ -231,6 +246,7 @@ pub fn snap_to_grid_centred(v: Vec2) -> Vec2 {
 /// Constrains `curr` to lie horizontally or vertically of `prev` --
 /// whichever axis is already closer -- mirroring
 /// `GridHelper.ForceStraightLine` (the "straight wires" pref / shift-hold).
+#[must_use]
 pub fn force_straight_line(prev: Vec2, curr: Vec2) -> Vec2 {
 	let mut offset = curr - prev;
 	if offset.x.abs() > offset.y.abs() {

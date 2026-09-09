@@ -32,6 +32,7 @@ pub use wires::{delete_wire, delete_wire_old, delete_wire_segment};
 /// Finds whichever placed subchip's body (as laid out by [`place_sub_chips`]) contains
 /// `world_pos`, if any -- used to resolve a right-click on the canvas to "which component did
 /// the player click".
+#[must_use]
 pub fn hit_test_sub_chip<'a, 'b>(placed: &'b [PlacedSubChip<'a>], world_pos: Vec2) -> Option<&'b PlacedSubChip<'a>> {
 	placed.iter().rev().find(|p| point_in_rect(world_pos, p.centre, p.size))
 }
@@ -50,6 +51,7 @@ pub fn build_scene(chip: &ChipDescription, library: &ChipLibrary, pin_state: &dy
 /// component (dragging draws carried components translucently) without
 /// touching its pins or wires.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct ComponentSpan {
 	pub triangles: std::ops::Range<usize>,
 	pub labels: std::ops::Range<usize>,
@@ -57,11 +59,13 @@ pub struct ComponentSpan {
 
 /// Per-subchip-id map of [`ComponentSpan`]s.
 #[derive(Debug, Default, Clone)]
+#[must_use]
 pub struct ComponentSpans {
 	spans: HashMap<i32, ComponentSpan>,
 }
 
 impl ComponentSpans {
+	#[must_use]
 	pub fn get(&self, subchip_id: i32) -> Option<&ComponentSpan> {
 		self.spans.get(&subchip_id)
 	}
@@ -76,10 +80,10 @@ impl ComponentSpans {
 /// [`crate::render::foundation::apply_alpha`].
 pub fn fade_component(geo: &mut SceneGeometry, span: &ComponentSpan, alpha: f32) {
 	for v in &mut geo.triangles[span.triangles.clone()] {
-		v.colour[3] *= alpha;
+		v.colour.3 *= alpha;
 	}
 	for l in &mut geo.labels[span.labels.clone()] {
-		l.colour[3] *= alpha;
+		l.colour.3 *= alpha;
 	}
 }
 
@@ -90,6 +94,7 @@ pub fn fade_component(geo: &mut SceneGeometry, span: &ComponentSpan, alpha: f32)
 /// duplicate-then-drag), matching [`ComponentSpan`]'s ghost fade instead of
 /// stretching along at full strength.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct WireEndpoints {
 	pub triangles: std::ops::Range<usize>,
 	pub owners: (i32, i32),
@@ -97,6 +102,7 @@ pub struct WireEndpoints {
 
 /// Per-wire-index map of [`WireEndpoints`].
 #[derive(Debug, Default, Clone)]
+#[must_use]
 pub struct WireSpans {
 	spans: HashMap<usize, WireEndpoints>,
 }
@@ -109,6 +115,7 @@ impl WireSpans {
 	/// The span for one specific wire, by its index in the chip's wire
 	/// list -- for a delete-drag's directly-hit bare wires (as opposed to
 	/// [`Self::touching`], which finds wires via a swept *component*).
+	#[must_use]
 	pub fn get(&self, wire_idx: usize) -> Option<&WireEndpoints> {
 		self.spans.get(&wire_idx)
 	}
@@ -136,7 +143,7 @@ impl WireSpans {
 /// labels of their own).
 pub fn fade_wire(geo: &mut SceneGeometry, span: &WireEndpoints, alpha: f32) {
 	for v in &mut geo.triangles[span.triangles.clone()] {
-		v.colour[3] *= alpha;
+		v.colour.3 *= alpha;
 	}
 }
 
@@ -272,14 +279,14 @@ mod span_tests {
 		// Fading one component's span touches exactly its slice: the wire
 		// layer drawn before every span, and the other component's span,
 		// both stay at full alpha.
-		let full_alpha = scene.triangles[0].colour[3];
+		let full_alpha = scene.triangles[0].colour.3;
 		assert_eq!(full_alpha, 1.0);
 
 		let mut faded = scene.clone();
 		fade_component(&mut faded, span1, 0.5);
-		assert!((faded.triangles[span1.triangles.start].colour[3] - 0.5).abs() < 1e-6, "the span itself fades");
-		assert_eq!(faded.triangles[span2.triangles.start].colour[3], full_alpha, "other components don't");
-		assert_eq!(faded.triangles[0].colour[3], full_alpha, "wires drawn beneath every span don't");
-		assert!((faded.labels[span1.labels.start].colour[3] - 0.5).abs() < 1e-6, "labels fade with their component");
+		assert!((faded.triangles[span1.triangles.start].colour.3 - 0.5).abs() < 1e-6, "the span itself fades");
+		assert_eq!(faded.triangles[span2.triangles.start].colour.3, full_alpha, "other components don't");
+		assert_eq!(faded.triangles[0].colour.3, full_alpha, "wires drawn beneath every span don't");
+		assert!((faded.labels[span1.labels.start].colour.3 - 0.5).abs() < 1e-6, "labels fade with their component");
 	}
 }

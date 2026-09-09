@@ -11,6 +11,7 @@ use std::f32::consts::PI;
 /// any wgpu `Vertex` type so this module has zero GPU dependencies; the
 /// `render::gpu` module converts these 1:1 into its own bytemuck vertex.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct SceneVertex {
 	pub pos: Vec2,
 	pub colour: Rgba,
@@ -22,6 +23,7 @@ pub struct SceneVertex {
 /// pipeline (`render::gpu`'s glyphon integration), not the flat-colour
 /// triangle pipeline the rest of the scene uses.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct TextLabel {
 	/// World-space anchor point: the label is horizontally *and*
 	/// vertically centred on this point (callers wanting a "near the top
@@ -43,6 +45,7 @@ pub struct TextLabel {
 /// struct so the call reads as a single "corners" concept instead of two
 /// loose booleans.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[must_use]
 pub struct RoundCorners {
 	pub left: bool,
 	pub right: bool,
@@ -57,6 +60,7 @@ impl RoundCorners {
 /// (`triangles.len()` is always a multiple of 3), plus any text labels to
 /// be drawn on top of it (e.g. gate/chip names).
 #[derive(Debug, Default, Clone)]
+#[must_use]
 pub struct SceneGeometry {
 	pub triangles: Vec<SceneVertex>,
 	pub labels: Vec<TextLabel>,
@@ -253,10 +257,12 @@ impl SceneGeometry {
 /// the cursor) without needing a second draw path just for blending.
 pub fn apply_alpha(geo: &mut SceneGeometry, alpha: f32) {
 	for v in &mut geo.triangles {
-		v.colour[3] *= alpha;
+		let Rgba(r, g, b, a) = v.colour;
+		v.colour = Rgba(r, g, b, a * alpha);
 	}
 	for l in &mut geo.labels {
-		l.colour[3] *= alpha;
+		let Rgba(r, g, b, a) = l.colour;
+		l.colour = Rgba(r, g, b, a * alpha);
 	}
 }
 
@@ -265,6 +271,7 @@ pub fn apply_alpha(geo: &mut SceneGeometry, alpha: f32) {
 /// screen instead of relying on a fixed default zoom (chips are sized in
 /// grid units of ~0.125, so a zoom=1.0 default shows them as an
 /// indistinguishable speck).
+#[must_use]
 pub fn bounding_box(geo: &SceneGeometry) -> Option<(Vec2, Vec2)> {
 	let mut iter = geo.triangles.iter();
 	let first = iter.next()?.pos;

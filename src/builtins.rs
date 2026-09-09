@@ -16,6 +16,7 @@ pub fn register_all(library: &mut ChipLibrary) {
 	}
 }
 
+#[must_use]
 pub fn create_all() -> Vec<ChipDescription> {
 	let mut chips = vec![
 		// ---- I/O Pins ----
@@ -209,6 +210,7 @@ pub fn create_input_or_output_pin(chip_type: ChipType) -> ChipDescription {
 /// JSON (see `json::to_chip_description`), just built up in code instead of loaded from disk.
 /// The returned pin's `id` is always `0`; callers must overwrite it with a fresh id scoped to
 /// the chip they're adding it to.
+#[must_use]
 pub fn io_pin_template(chip_type: ChipType) -> Option<(bool, PinDescription)> {
 	let (is_input, is_output, num_bits) = is_input_or_output_pin(chip_type);
 	if !is_input && !is_output {
@@ -256,6 +258,7 @@ fn create_bus_terminus(bit_count: PinBitCount) -> ChipDescription {
 /// Mirrors DLS.Description.ChipTypeHelper.GetName -- the display name for a
 /// chip type, also used as its `ChipDescription.name` / library lookup key
 /// for builtins.
+#[must_use]
 pub fn name_for(chip_type: ChipType) -> String {
 	use ChipType as C;
 	let s = match chip_type {

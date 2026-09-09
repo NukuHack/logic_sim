@@ -140,6 +140,13 @@ fn placed_panel_embedded_display_lights_on_canvas() {
 	let geo = build_scene(&host, &library, &lookup, None);
 
 	let lit_seg_col = [1.0f32, 0.32, 0.28, 1.0].map(f32::to_bits); // theme::SEVEN_SEG_COLS[1], palette-A "on"
-	let colours: std::collections::HashSet<_> = geo.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect();
+	let colours: std::collections::HashSet<_> = geo
+		.triangles
+		.iter()
+		.map(|v| {
+			let arr: [f32; 4] = v.colour.into();
+			[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+		})
+		.collect();
 	assert!(colours.contains(&lit_seg_col), "the panel's embedded 7-segment must render lit once its scope is entered");
 }

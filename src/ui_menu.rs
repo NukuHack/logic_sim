@@ -10,6 +10,7 @@ use crate::settings::AppSettings;
 
 /// Which top-level screen of the startup flow is currently shown. Mirrors
 /// `MainMenu.MenuScreen`.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuScreen {
 	Main,
@@ -20,6 +21,7 @@ pub enum MenuScreen {
 
 /// A modal popup layered on top of the current screen. Mirrors
 /// `MainMenu.PopupKind`.
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PopupKind {
 	None,
@@ -34,6 +36,7 @@ pub enum PopupKind {
 /// straight into `Main.*` methods with side effects; this port separates
 /// "decide what happened" from "actually load a project / quit the app /
 /// apply settings", so the host stays in control of those side effects).
+#[must_use]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum MenuOutcome {
 	/// Nothing to do -- stay on the menu.
@@ -52,6 +55,7 @@ pub const MAX_PROJECT_NAME_LENGTH: usize = 20;
 /// Headless state machine for the startup screen. Mirrors the *behaviour*
 /// of `DLS.Graphics.MainMenu`'s static state, made instantiable (so tests,
 /// or a multi-window host, don't have to fight a global).
+#[must_use]
 #[derive(Debug)]
 pub struct MainMenu {
 	paths: SavePaths,
@@ -75,7 +79,6 @@ impl MainMenu {
 	}
 
 	// ---- Queries (for driving a UI) ----
-
 	pub const fn screen(&self) -> MenuScreen {
 		self.screen
 	}
@@ -88,10 +91,12 @@ impl MainMenu {
 		&self.projects
 	}
 
+	#[must_use]
 	pub const fn selected_project_index(&self) -> Option<usize> {
 		self.selected_project_index
 	}
 
+	#[must_use]
 	pub fn selected_project(&self) -> Option<&ProjectDescription> {
 		self.selected_project_index.and_then(|i| self.projects.get(i))
 	}
@@ -99,6 +104,7 @@ impl MainMenu {
 	/// `Ok(())` if the selected project can be opened by this build,
 	/// `Err(reason)` otherwise. Mirrors `MainMenu.CanOpenProject`, applied
 	/// to whichever project is currently selected on the load-project screen.
+	#[must_use]
 	pub fn selected_project_compatibility(&self) -> Option<Result<(), String>> {
 		self.selected_project().map(can_open_project)
 	}
@@ -191,6 +197,7 @@ impl MainMenu {
 	/// Mirrors pressing "Open" on the load-project screen. Returns `None`
 	/// if nothing valid is selected (mirrors the original disabling the
 	/// button in that case).
+	#[must_use]
 	pub fn open_selected(&self) -> Option<MenuOutcome> {
 		let project = self.selected_project()?;
 		if can_open_project(project).is_ok() {
@@ -233,6 +240,7 @@ impl MainMenu {
 	/// live validation shown while typing in `MainMenu.DrawNamePopup`
 	/// (`projectNameValidator` + the "already exists" check), combined
 	/// into the single pass/fail the Confirm button's enabled-state used.
+	#[must_use]
 	pub fn is_valid_new_project_name(&self, name: &str) -> bool {
 		if name.trim().is_empty() || name.chars().count() > MAX_PROJECT_NAME_LENGTH {
 			return false;

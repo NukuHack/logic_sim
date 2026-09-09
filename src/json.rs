@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Default)]
 pub struct JsonColour {
 	pub r: f32,
@@ -21,6 +22,7 @@ pub struct JsonColour {
 	pub a: f32,
 }
 
+#[must_use]
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct JsonPinAddress {
 	#[serde(rename = "PinID")]
@@ -29,6 +31,7 @@ struct JsonPinAddress {
 	pin_owner_id: i32,
 }
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct JsonPinDescription {
 	#[serde(rename = "Name")]
@@ -46,6 +49,7 @@ struct JsonPinDescription {
 	value_display_mode: ValueDisplayMode,
 }
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct JsonPinColourInfo {
 	#[serde(rename = "PinColour")]
@@ -54,6 +58,7 @@ struct JsonPinColourInfo {
 	pin_id: i32,
 }
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct JsonSubChipDescription {
 	#[serde(rename = "Name")]
@@ -71,6 +76,7 @@ struct JsonSubChipDescription {
 	internal_data: Option<Vec<u32>>,
 }
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 struct JsonWireDescription {
 	#[serde(rename = "SourcePinAddress")]
@@ -120,6 +126,7 @@ impl_serde_via_int!(PinBitCount);
 impl_serde_via_int!(Color);
 impl_serde_via_int!(WireConnectionType);
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 struct JsonDisplayDescription {
 	#[serde(rename = "SubChipID")]
@@ -131,6 +138,7 @@ struct JsonDisplayDescription {
 	scale: f32,
 }
 
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 struct JsonChipDescription {
 	#[serde(rename = "DLSVersion", default)]
@@ -339,6 +347,7 @@ fn serialize_chip_description_impl(desc: &ChipDescription, library: Option<&Chip
 /// `UnsavedChangeDetector` flag phantom edits right after opening); - anything else: one
 /// entry per output pin of the library description -- the subchip's own override where one
 /// exists, else that pin's default colour.
+#[must_use]
 fn json_pin_colour_info(s: &SubChipDescription, library: Option<&ChipLibrary>) -> Option<Vec<JsonPinColourInfo>> {
 	let stored = || s.pin_colour_info.iter().map(|(pin_id, colour)| JsonPinColourInfo { pin_colour: *colour, pin_id: *pin_id }).collect::<Vec<_>>();
 	let Some(library) = library else { return Some(stored()) };
@@ -368,13 +377,14 @@ const JSON_FLOAT_EPSILON: f64 = 0.0001;
 /// compares numbers approximately (within [`JSON_FLOAT_EPSILON`]). Port of
 /// `DLS.Description.UnsavedChangeDetector.IsEquivalentJson`, backing the
 /// unsaved-changes prompt's "did this chip actually change" check.
+#[must_use]
 pub fn is_equivalent_json(json_a: &str, json_b: &str) -> bool {
 	match (serde_json::from_str::<serde_json::Value>(json_a), serde_json::from_str::<serde_json::Value>(json_b)) {
 		(Ok(token_a), Ok(token_b)) => is_equivalent_token(&token_a, &token_b),
 		_ => false,
 	}
 }
-
+#[must_use]
 fn is_equivalent_token(a: &serde_json::Value, b: &serde_json::Value) -> bool {
 	use serde_json::Value;
 	match (a, b) {
@@ -434,6 +444,7 @@ pub fn load_chip_library_from_dir(chips_dir: &Path) -> std::io::Result<(ChipLibr
 /// display strings on the C# side aren't serialized there either, so
 /// they're simply not represented here).
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[must_use]
 pub struct StarredItem {
 	#[serde(rename = "Name", default)]
 	pub name: String,
@@ -450,6 +461,7 @@ impl StarredItem {
 /// A named, collapsible group of chips in the chip palette. Mirrors
 /// `DLS.Description.ChipCollection`.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[must_use]
 pub struct ChipCollection {
 	#[serde(rename = "Name", default)]
 	pub name: String,
@@ -468,6 +480,7 @@ impl ChipCollection {
 /// Serde default for a `bool` field that should default to `true` when
 /// absent from an on-disk file (plain `#[serde(default)]` would give
 /// `false`) -- used by `Prefs_UseCaching`.
+#[must_use]
 const fn default_true() -> bool {
 	true
 }
@@ -476,6 +489,7 @@ const fn default_true() -> bool {
 /// metadata file saved at `<project>/ProjectDescription.json`. Field names
 /// match the original exactly (via `serde(rename)`) so files written by
 /// either the C# game or this port are interchangeable.
+#[must_use]
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
 pub struct ProjectDescription {
 	#[serde(rename = "ProjectName", default)]
@@ -523,6 +537,7 @@ pub struct ProjectDescription {
 
 impl ProjectDescription {
 	/// Mirrors `ProjectDescription.IsStarred`.
+	#[must_use]
 	pub fn is_starred(&self, chip_name: &str, is_collection: bool) -> bool {
 		self.starred_list.iter().any(|item| item.is_collection == is_collection && item.name.eq_ignore_ascii_case(chip_name))
 	}

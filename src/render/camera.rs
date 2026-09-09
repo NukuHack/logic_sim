@@ -5,6 +5,7 @@
 use glam::Vec2;
 
 #[derive(Debug, Clone, Copy)]
+#[must_use]
 pub struct Camera {
 	/// World-space point the camera is centred on.
 	pub position: Vec2,
@@ -81,6 +82,7 @@ impl Camera {
 
 	/// Convert a screen-space pixel coordinate (origin top-left, +y down)
 	/// into world space.
+	#[must_use]
 	pub const fn screen_to_world(&self, screen: Vec2) -> Vec2 {
 		let ndc_x = (screen.x / self.viewport.x).mul_add(2.0, -1.0);
 		let ndc_y = (screen.y / self.viewport.y).mul_add(-2.0, 1.0);
@@ -89,6 +91,7 @@ impl Camera {
 		Vec2::new(self.position.x + ndc_x * half_w, self.position.y + ndc_y * half_h)
 	}
 
+	#[must_use]
 	pub const fn world_to_screen(&self, world: Vec2) -> Vec2 {
 		let half_w = self.viewport.x / (2.0 * self.zoom);
 		let half_h = self.viewport.y / (2.0 * self.zoom);
@@ -102,6 +105,7 @@ impl Camera {
 	/// Column-major orthographic view-projection matrix mapping world space
 	/// to wgpu clip space (x,y in [-1, 1], origin at `self.position`).
 	/// Matches the layout expected by a `mat4x4<f32>` uniform in WGSL.
+	#[must_use]
 	pub const fn view_proj_matrix(&self) -> [[f32; 4]; 4] {
 		let half_w = self.viewport.x / (2.0 * self.zoom);
 		let half_h = self.viewport.y / (2.0 * self.zoom);

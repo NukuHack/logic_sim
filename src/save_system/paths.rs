@@ -17,6 +17,7 @@ const APP_SETTINGS_FILE_NAME: &str = "AppSettings.json";
 /// Root-relative path layout for all saved data. Mirrors the *shape* of
 /// `DLS.SaveSystem.SavePaths`; the actual root directory is up to the
 /// caller (see `default_data_dir` for a reasonable non-Unity default).
+#[must_use]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavePaths {
 	root: PathBuf,
@@ -33,6 +34,7 @@ impl SavePaths {
 	/// - macOS: `~/Library/Application Support/DigitalLogicSim`
 	/// - Linux: `~/.local/share/DigitalLogicSim`
 	/// - Falls back to `./DigitalLogicSimData` if no platform data directory can be determined.
+	#[must_use]
 	pub fn default_data_dir() -> PathBuf {
 		dirs::data_dir().map_or_else(|| PathBuf::from(".").join("DigitalLogicSimData"), |d| d.join("DigitalLogicSim"))
 	}
@@ -50,6 +52,7 @@ impl SavePaths {
 	/// opposed to `platform_data_dir`'s more generic "a reasonable place to
 	/// put app data" used by `default_data_dir`): `LocalLow` (not `Roaming`)
 	/// on Windows, and `~/.config/unity3d` (not XDG data home) on Linux.
+	#[must_use]
 	pub fn unity_persistent_data_dir() -> PathBuf {
 		let path = {
 			#[cfg(target_os = "windows")]
@@ -69,6 +72,7 @@ impl SavePaths {
 		dirs::home_dir().map_or_else(|| PathBuf::from("Digital-Logic-Sim"), |home| home.join(path))
 	}
 
+	#[must_use]
 	pub fn root(&self) -> &Path {
 		&self.root
 	}
@@ -80,37 +84,43 @@ impl SavePaths {
 	}
 
 	// ---- Path to save folder for all projects ----
-
+	#[must_use]
 	pub fn projects_path(&self) -> PathBuf {
 		self.root.join(PROJECTS_DIR_NAME)
 	}
 
+	#[must_use]
 	pub fn deleted_projects_path(&self) -> PathBuf {
 		self.root.join(DELETED_PROJECTS_DIR_NAME)
 	}
 
+	#[must_use]
 	pub fn app_settings_path(&self) -> PathBuf {
 		self.root.join(APP_SETTINGS_FILE_NAME)
 	}
 
 	// ---- Path to save folder for a specific project ----
-
+	#[must_use]
 	pub fn project_path(&self, project_name: &str) -> PathBuf {
 		self.projects_path().join(project_name)
 	}
 
+	#[must_use]
 	pub fn deleted_project_path(&self, project_name: &str) -> PathBuf {
 		self.deleted_projects_path().join(project_name)
 	}
 
+	#[must_use]
 	pub fn chips_path(&self, project_name: &str) -> PathBuf {
 		self.project_path(project_name).join(CHIPS_DIR_NAME)
 	}
 
+	#[must_use]
 	pub fn deleted_chips_path(&self, project_name: &str) -> PathBuf {
 		self.project_path(project_name).join(DELETED_CHIPS_DIR_NAME)
 	}
 
+	#[must_use]
 	pub fn project_description_path(&self, project_name: &str) -> PathBuf {
 		self.project_path(project_name).join(PROJECT_FILE_NAME)
 	}

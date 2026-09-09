@@ -46,7 +46,7 @@ pub(crate) fn open_customize(v: &mut ViewerState) {
 		enforce_min_size(&mut draft);
 	}
 
-	let colour_seed = if draft.colour[3] > 0.0 { draft.colour } else { theme::CHIP_BODY_COL };
+	let colour_seed = if draft.colour[3] > 0.0 { draft.colour } else { theme::CHIP_BODY_COL.into() };
 
 	v.customize = Some(CustomizeState {
 		saved_save_text: std::mem::take(&mut v.overlay_text_input),
@@ -108,7 +108,7 @@ pub(crate) fn cycle_name_location(v: &mut ViewerState) {
 pub(crate) fn pick_colour(v: &mut ViewerState, palette_index: usize) {
 	let colour = theme::COLORS[palette_index % theme::COLORS.len()];
 	let Some(customize) = v.customize.as_mut() else { return };
-	customize.draft.colour = [colour[0], colour[1], colour[2], 1.0];
+	customize.draft.colour = colour.with_a(1.0).into();
 	v.overlay_text_input = hex_of(customize.draft.colour);
 }
 
@@ -237,7 +237,7 @@ pub(crate) fn delete_held_display(v: &mut ViewerState) {
 	let Some(customize) = v.customize.as_mut() else { return };
 	match customize.interaction {
 		CustomizeInteraction::MovingDisplay { index, .. } | CustomizeInteraction::ScalingDisplay { index, .. } => {
-			customize.draft.displays.remove(index);
+			let _ = customize.draft.displays.remove(index);
 			customize.interaction = CustomizeInteraction::None;
 		}
 		CustomizeInteraction::PlacingDisplay { .. } | CustomizeInteraction::Resizing { .. } | CustomizeInteraction::None => {
@@ -361,12 +361,7 @@ fn snap_scalar(value: f32) -> f32 {
 /// Alpha-0 ("unset") colours commit as fully-opaque defaults rather than
 /// staying invisible-on-save.
 fn finalize_colour(colour: [f32; 4]) -> [f32; 4] {
-	if colour[3] > 0.0 {
-		colour
-	} else {
-		let body = theme::CHIP_BODY_COL;
-		[body[0], body[1], body[2], 1.0]
-	}
+	if colour[3] > 0.0 { colour } else { theme::CHIP_BODY_COL.with_a(1.0).into() }
 }
 
 fn hex_of(colour: [f32; 4]) -> String {
@@ -512,8 +507,19 @@ mod tests {
 		let layer = stack.layers().iter().find(|l| l.id == LayerId::CustomizePanel).expect("customize layer built");
 		let _ = editor_action as fn(crate::render::editor_ui::EditorAction) -> ViewerAction;
 
-		let lit: std::collections::HashSet<_> = layer.geometry.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect();
-		let seg_on_a = theme::SEVEN_SEG_COLS[1].map(f32::to_bits);
+		let lit: std::collections::HashSet<_> = layer
+			.geometry
+			.triangles
+			.iter()
+			.map(|v| {
+				let arr: [f32; 4] = v.colour.into();
+				[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+			})
+			.collect();
+		let seg_on_a = {
+			let arr: [f32; 4] = theme::SEVEN_SEG_COLS[1].into();
+			[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+		};
 		assert!(lit.contains(&seg_on_a), "lit 7-segment colour must appear; got {} distinct colours", lit.len());
 	}
 }

@@ -28,7 +28,7 @@ pub(crate) fn draw_component(
 	// Use this chip's saved body colour (alpha 0 means "not saved" --
 	// fall back to the theme default) rather than always drawing every
 	// chip with the same flat grey.
-	let body_colour = if sub.desc.colour[3] > 0.0 { sub.desc.colour } else { theme::CHIP_BODY_COL };
+	let body_colour: theme::Rgba = if sub.desc.colour[3] > 0.0 { sub.desc.colour.into() } else { theme::CHIP_BODY_COL };
 
 	// 7-segment/RGB/dot displays draw their own live pixel/segment content in place of the plain
 	// body rect (`NameLocation` is `Hidden` because the body is the visualisation). `DisplayLed`
@@ -84,7 +84,8 @@ fn draw_display_seven_segment(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, 
 	displays::draw_seven_segment(geo, ClipRect::OPEN, sub.centre, scale, sub.id, pin_state);
 }
 
-fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, body_colour: [f32; 4]) {
+#[allow(clippy::expect_used)]
+fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, body_colour: theme::Rgba) {
 	// Draw this subchip's name label, unless explicitly hidden (e.g. display/bus/pin chips, whose
 	// body is the visualisation) -- except the Key chip, which forces its label to show regardless:
 	// the bound key's letter (from saved `InternalData[0]`, capitalised ASCII) is its only visualisation.
@@ -100,7 +101,7 @@ fn draw_key_component(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, body_col
 	geo.add_rect(sub.centre, sub.size, body_colour);
 }
 
-fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, pin_state: &dyn PinStateLookup, _body_colour: [f32; 4]) {
+fn draw_display_led(geo: &mut SceneGeometry, sub: &PlacedSubChip<'_>, pin_state: &dyn PinStateLookup, _body_colour: theme::Rgba) {
 	// An LED's body is its indicator; the shared painter draws the black
 	// backing plus the tinted inner square in all three wire states
 	// (lit/dim/disconnected by the input pin, coloured by
@@ -177,7 +178,18 @@ mod tests {
 	/// "this colour shows up somewhere" without needing to know which
 	/// rect (by draw order) corresponds to which segment/pixel.
 	fn colours_present(geo: &SceneGeometry) -> std::collections::HashSet<[u32; 4]> {
-		geo.triangles.iter().map(|v| v.colour.map(|c| c.to_bits())).collect()
+		geo.triangles
+			.iter()
+			.map(|v| {
+				let arr: [f32; 4] = v.colour.into();
+				[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+			})
+			.collect()
+	}
+
+	fn rgba_bits(c: theme::Rgba) -> [u32; 4] {
+		let arr: [f32; 4] = c.into();
+		[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
 	}
 
 	/// A blank 7-segment display (every segment pin low, `COL` low) draws
@@ -196,9 +208,9 @@ mod tests {
 		assert_eq!(rects_drawn(&geo), 8);
 
 		let colours = colours_present(&geo);
-		assert!(colours.contains(&theme::SEVEN_SEG_COLS[0].map(f32::to_bits)), "expected the palette-A off colour to appear");
-		assert!(!colours.contains(&theme::SEVEN_SEG_COLS[1].map(f32::to_bits)), "no segment should be lit");
-		assert!(!colours.contains(&theme::SEVEN_SEG_COLS[3].map(f32::to_bits)), "COL is low, so palette B shouldn't appear at all");
+		assert!(colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[0])), "expected the palette-A off colour to appear");
+		assert!(!colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[1])), "no segment should be lit");
+		assert!(!colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[3])), "COL is low, so palette B shouldn't appear at all");
 	}
 
 	/// Driving just the `A` segment (pin id 0) high lights only that
@@ -217,8 +229,8 @@ mod tests {
 		draw_display_seven_segment(&mut geo, &sub, &state);
 
 		let colours = colours_present(&geo);
-		assert!(colours.contains(&theme::SEVEN_SEG_COLS[1].map(f32::to_bits)), "segment A should be lit");
-		assert!(colours.contains(&theme::SEVEN_SEG_COLS[0].map(f32::to_bits)), "the other 6 segments should still be off");
+		assert!(colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[1])), "segment A should be lit");
+		assert!(colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[0])), "the other 6 segments should still be off");
 	}
 
 	/// The `COL` pin (id 7) going high swaps in the alternate (palette B)
@@ -237,10 +249,10 @@ mod tests {
 		draw_display_seven_segment(&mut geo, &sub, &state);
 
 		let colours = colours_present(&geo);
-		assert!(colours.contains(&theme::SEVEN_SEG_COLS[4].map(f32::to_bits)), "lit segment should use palette B's on colour");
-		assert!(colours.contains(&theme::SEVEN_SEG_COLS[3].map(f32::to_bits)), "unlit segments should use palette B's off colour");
-		assert!(!colours.contains(&theme::SEVEN_SEG_COLS[0].map(f32::to_bits)), "palette A's off colour shouldn't appear once COL is high");
-		assert!(!colours.contains(&theme::SEVEN_SEG_COLS[1].map(f32::to_bits)), "palette A's on colour shouldn't appear once COL is high");
+		assert!(colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[4])), "lit segment should use palette B's on colour");
+		assert!(colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[3])), "unlit segments should use palette B's off colour");
+		assert!(!colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[0])), "palette A's off colour shouldn't appear once COL is high");
+		assert!(!colours.contains(&rgba_bits(theme::SEVEN_SEG_COLS[1])), "palette A's on colour shouldn't appear once COL is high");
 	}
 
 	/// With no live sim (`internal_state` returns `None`), the RGB/dot

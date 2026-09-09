@@ -613,7 +613,7 @@ mod tests {
 	}
 
 	fn has_alpha_near(geo: &SceneGeometry, target: f32) -> bool {
-		geo.triangles.iter().any(|v| (v.colour[3] - target).abs() < 1e-4)
+		geo.triangles.iter().any(|v| (v.colour.3 - target).abs() < 1e-4)
 	}
 
 	fn has_colour(geo: &SceneGeometry, colour: theme::Rgba) -> bool {
@@ -717,7 +717,7 @@ mod tests {
 		let stack = build_viewer_stack(&mut v, None, 1280.0, 800.0, mouse_at(Vec2::new(4.0, 0.0)));
 		let canvas_geo = &stack.layers()[0].geometry;
 		assert!(has_alpha_near(canvas_geo, PENDING_PLACEMENT_ALPHA), "carried body renders at ghost alpha");
-		assert!(has_alpha_near(canvas_geo, theme::SELECTION_BOX_MOVING_COL[3]), "moving highlight drawn over it");
+		assert!(has_alpha_near(canvas_geo, theme::SELECTION_BOX_MOVING_COL.3), "moving highlight drawn over it");
 		assert_eq!(position_of(&v, a), Vec2::new(4.0, 0.0), "frame building doesn't disturb the live drag");
 
 		// Rubber band: band quad visible instead, nothing faded.
@@ -725,7 +725,7 @@ mod tests {
 		begin_selection_box(&mut v, Vec2::new(-2.0, -1.0));
 		let stack = build_viewer_stack(&mut v, None, 1280.0, 800.0, mouse_at(Vec2::new(3.0, 2.0)));
 		let canvas_geo = &stack.layers()[0].geometry;
-		assert!(has_alpha_near(canvas_geo, theme::SELECTION_BOX_COL[3]), "rubber band visible while dragging the mouse");
+		assert!(has_alpha_near(canvas_geo, theme::SELECTION_BOX_COL.3), "rubber band visible while dragging the mouse");
 		assert!(!has_alpha_near(canvas_geo, PENDING_PLACEMENT_ALPHA), "no ghost alpha during box select");
 	}
 }

@@ -8,7 +8,7 @@ use crate::render::theme::{self, Rgba};
 use glam::Vec2;
 
 /// Translucent red of the original's out-of-bounds overlay (`new(1, 0, 0, 0.24)`).
-const OUT_OF_BOUNDS_COL: Rgba = [1.0, 0.0, 0.0, 0.24];
+const OUT_OF_BOUNDS_COL: Rgba = Rgba::new(1.0, 0.0, 0.0, 0.24);
 
 /// Axis-aligned region display content is clipped to while drawing.
 #[derive(Debug, Clone, Copy)]
@@ -49,6 +49,7 @@ impl ClipRect {
 /// width -- 7-segment `1.0` (body `GridSize*10` minus insets), dot `1.5` (pin-stack height
 /// `1.75` minus `GridSize*2`), RGB `2.375` (`GridSize*21` body), LED `0.1875` (`0.25` body
 /// minus `GridSize*0.5`).
+#[must_use]
 pub const fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
 	match chip_type {
 		ChipType::SevenSegmentDisplay => Some(Vec2::new(1.0, 1.75)),
@@ -61,6 +62,7 @@ pub const fn display_base_size(chip_type: ChipType) -> Option<Vec2> {
 
 /// Whether `chip_type` can be placed as an embedded display on another
 /// chip (the customize menu lists exactly these subchips).
+#[must_use]
 pub const fn is_display_type(chip_type: ChipType) -> bool {
 	display_base_size(chip_type).is_some()
 }
@@ -71,6 +73,7 @@ pub const fn is_display_type(chip_type: ChipType) -> bool {
 /// into the host (mirrors the original's `Description.HasDisplay()`
 /// filter for the customization DISPLAYS list, and `SubChipHelper.
 /// CreateDisplayInstances`'s recursion).
+#[must_use]
 pub fn can_be_embedded_display(desc: &ChipDescription) -> bool {
 	is_display_type(desc.chip_type) || (desc.chip_type == ChipType::Custom && !desc.displays.is_empty())
 }
@@ -120,6 +123,7 @@ fn cascade_bounds(desc: &ChipDescription, scale: f32, library: &ChipLibrary, dep
 /// base-size rect about the anchor; a custom entry takes the union of its
 /// whole cascade (see [`cascade_bounds`]). `None` when there's nothing to
 /// show.
+#[must_use]
 pub fn display_entry_bounds(display: &DisplayDescription, desc: &ChipDescription, library: &ChipLibrary) -> Option<(Vec2, Vec2)> {
 	match desc.chip_type {
 		ChipType::Custom => cascade_bounds(desc, display.scale, library, 0),
@@ -131,10 +135,10 @@ pub fn display_entry_bounds(display: &DisplayDescription, desc: &ChipDescription
 /// chip's body colour (`GetChipDisplayBorderCol`): darkened for light
 /// bodies, brightened for dark ones.
 fn display_border_col(chip_colour: Rgba) -> Rgba {
-	let body = if chip_colour[3] > 0.0 { chip_colour } else { theme::CHIP_BODY_COL };
-	let darken = theme::text_colour_for_background(body)[0] == 0.0;
+	let body = if chip_colour.3 > 0.0 { chip_colour } else { theme::CHIP_BODY_COL };
+	let darken = theme::text_colour_for_background(body).0 == 0.0;
 	let shift = |c: f32| if darken { c - 0.13 } else { c + 0.13 };
-	[shift(body[0]).clamp(0.0, 1.0), shift(body[1]).clamp(0.0, 1.0), shift(body[2]).clamp(0.0, 1.0), 1.0]
+	[shift(body.0).clamp(0.0, 1.0), shift(body.1).clamp(0.0, 1.0), shift(body.2).clamp(0.0, 1.0), 1.0].into()
 }
 
 /// Canvas-path entry: draws one *placed* subchip's embedded displays
@@ -160,7 +164,7 @@ pub(crate) fn draw_placed_displays_for(
 	// static previews with no simulator) draw blank, mirroring the
 	// original's `sim == null` branch.
 	let scoped: Box<dyn PinStateLookup> = pin_state.enter_scope(sub.id).unwrap_or_else(|| Box::new(AllLow));
-	draw_subchip_displays(geo, sub.centre, sub.size, &desc.sub_chips, &desc.displays, library, scoped.as_ref(), desc.colour, false);
+	draw_subchip_displays(geo, sub.centre, sub.size, &desc.sub_chips, &desc.displays, library, scoped.as_ref(), desc.colour.into(), false);
 }
 
 /// Draws every embedded display of a chip, clipped to the body rect at (`chip_centre`,
@@ -332,7 +336,7 @@ pub(crate) fn draw_pixel_grid(
 	const PIXELS_PER_ROW: usize = 16;
 	const BORDER_FRAC: f32 = 0.95;
 	const PIXEL_SIZE_FRAC: f32 = 0.925;
-	const OFF_PIXEL_COL: Rgba = [0.1, 0.1, 0.1, 1.0];
+	const OFF_PIXEL_COL: Rgba = Rgba::new(0.1, 0.1, 0.1, 1.0);
 
 	clip.add_rect(geo, centre, Vec2::splat(scale), theme::STATE_DISCONNECTED_COL);
 
@@ -345,13 +349,13 @@ pub(crate) fn draw_pixel_grid(
 
 	for y in 0..PIXELS_PER_ROW {
 		for x in 0..PIXELS_PER_ROW {
-			let col = match internal_state.and_then(|s| s.get(y * PIXELS_PER_ROW + x)) {
+			let col: Rgba = match internal_state.and_then(|s| s.get(y * PIXELS_PER_ROW + x)) {
 				Some(&pixel_state) => {
 					if is_rgb {
-						[unpack_4bit_channel(pixel_state), unpack_4bit_channel(pixel_state >> 4), unpack_4bit_channel(pixel_state >> 8), 1.0]
+						[unpack_4bit_channel(pixel_state), unpack_4bit_channel(pixel_state >> 4), unpack_4bit_channel(pixel_state >> 8), 1.0].into()
 					} else {
 						let v = u32::from(pixel_state != 0) as f32;
-						[v, v, v, 1.0]
+						[v, v, v, 1.0].into()
 					}
 				}
 				None => OFF_PIXEL_COL,
@@ -477,7 +481,13 @@ mod tests {
 	}
 
 	fn colours_present(geo: &SceneGeometry) -> std::collections::HashSet<[u32; 4]> {
-		geo.triangles.iter().map(|v| v.colour.map(f32::to_bits)).collect()
+		geo.triangles
+			.iter()
+			.map(|v| {
+				let arr: [f32; 4] = v.colour.into();
+				[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+			})
+			.collect()
 	}
 
 	#[test]
@@ -487,11 +497,23 @@ mod tests {
 
 		// Display fully outside the body.
 		let geo = draws_into(&f, Vec2::splat(2.0), &[DisplayDescription::new(5, Vec2::new(50.0, 50.0), 1.0)], true);
-		assert!(colours_present(&geo).contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "sticking-out display must be flagged red");
+		assert!(
+			colours_present(&geo).contains(&{
+				let arr: [f32; 4] = OUT_OF_BOUNDS_COL.into();
+				[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+			}),
+			"sticking-out display must be flagged red"
+		);
 
 		// Same display centred well inside the body.
 		let geo = draws_into(&f, Vec2::splat(4.0), &[DisplayDescription::new(5, Vec2::ZERO, 0.5)], true);
-		assert!(!colours_present(&geo).contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "fitting display must not be flagged red");
+		assert!(
+			!colours_present(&geo).contains(&{
+				let arr: [f32; 4] = OUT_OF_BOUNDS_COL.into();
+				[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+			}),
+			"fitting display must not be flagged red"
+		);
 	}
 
 	#[test]
@@ -621,7 +643,13 @@ mod tests {
 		// the entry mostly out of a small body -- flagged.
 		let small = [DisplayDescription::new(9, Vec2::new(2.9, 2.9), 1.0)];
 		let geo = draws_into(&f, Vec2::splat(1.0), &small, true);
-		assert!(colours_present(&geo).contains(&OUT_OF_BOUNDS_COL.map(f32::to_bits)), "a sticking-out cascade gets the red flag");
+		assert!(
+			colours_present(&geo).contains(&{
+				let arr: [f32; 4] = OUT_OF_BOUNDS_COL.into();
+				[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+			}),
+			"a sticking-out cascade gets the red flag"
+		);
 	}
 
 	/// A custom display entry whose target carries nothing drawable draws
@@ -735,9 +763,18 @@ mod tests {
 			}
 		}
 
-		let lit = theme::state_colour(LogicState::High, Color::Red).map(f32::to_bits);
-		let dim = theme::state_colour(LogicState::Low, Color::Red).map(f32::to_bits);
-		let black = theme::STATE_DISCONNECTED_COL.map(f32::to_bits); // also the backing quad
+		let lit = {
+			let arr: [f32; 4] = theme::state_colour(LogicState::High, Color::Red).into();
+			[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+		};
+		let dim = {
+			let arr: [f32; 4] = theme::state_colour(LogicState::Low, Color::Red).into();
+			[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+		};
+		let black = {
+			let arr: [f32; 4] = theme::STATE_DISCONNECTED_COL.into();
+			[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
+		}; // also the backing quad
 		type LedCase = (LogicState, Vec<[u32; 4]>, Vec<[u32; 4]>);
 		let cases: [LedCase; 3] = [
 			(LogicState::High, vec![lit], vec![dim]),

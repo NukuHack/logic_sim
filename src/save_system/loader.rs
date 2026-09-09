@@ -24,6 +24,7 @@ impl Loader {
 	}
 
 	/// Mirrors `Loader.ProjectExists`.
+	#[must_use]
 	pub fn project_exists(paths: &SavePaths, project_name: &str) -> bool {
 		paths.project_description_path(project_name).is_file()
 	}
@@ -52,6 +53,7 @@ impl Loader {
 	/// `<root>/Projects/`, sorted newest-`LastSaveTime`-first. Directories
 	/// that fail to load (missing/corrupt `ProjectDescription.json`) are
 	/// silently skipped, matching the original.
+	#[must_use]
 	pub fn load_all_project_descriptions(paths: &SavePaths) -> Vec<ProjectDescription> {
 		let mut descriptions = Vec::new();
 

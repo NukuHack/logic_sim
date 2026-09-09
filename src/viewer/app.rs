@@ -321,6 +321,7 @@ impl App {
 
 /// Creates the wgpu renderer for the app's single window. Split from
 /// `resumed` so the (blocking) GPU setup stays readable.
+#[allow(clippy::expect_used)]
 pub(crate) fn create_render_state(window: std::sync::Arc<winit::window::Window>, size: winit::dpi::PhysicalSize<u32>) -> RenderState {
 	let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::default());
 	let surface = instance.create_surface(window.clone()).expect("failed to create surface");

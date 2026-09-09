@@ -1,17 +1,55 @@
 //! Colour palette, ported from `DLS.Graphics.DrawSettings.CreateTheme()`.
-//! Kept as plain `[f32; 4]` RGBA (0..1) so it can feed straight into a wgpu
+//! Kept as a dedicated `Rgba` struct so it can feed straight into a wgpu
 //! vertex colour attribute without any GPU-specific types.
 
 use crate::{description::Color, pin_state::LogicState};
 
-pub type Rgba = [f32; 4];
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Rgba(pub f32, pub f32, pub f32, pub f32);
+
+impl From<[f32; 4]> for Rgba {
+	fn from(arr: [f32; 4]) -> Self {
+		Self(arr[0], arr[1], arr[2], arr[3])
+	}
+}
+impl From<Rgba> for [f32; 4] {
+	fn from(rgba: Rgba) -> Self {
+		[rgba.0, rgba.1, rgba.2, rgba.3]
+	}
+}
+
+impl Rgba {
+	pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+		Self(r, g, b, a)
+	}
+
+	pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
+		Self(r, g, b, 1.0)
+	}
+
+	pub const fn with_a(self, a: f32) -> Self {
+		Self(self.0, self.1, self.2, a)
+	}
+
+	// Common gray-ish UI colour constants (associated on Rgba for easy reuse)
+	pub const GRAY_ALMOST_BLACK: Self = Self(0.09, 0.09, 0.10, 1.0);
+	pub const GRAY_DARK: Self = Self(0.16, 0.16, 0.18, 0.98);
+	pub const GRAY_HEADER: Self = Self(0.11, 0.11, 0.12, 1.0);
+	pub const GRAY_PANEL: Self = Self(0.22, 0.22, 0.25, 1.0);
+	pub const GRAY_HOVER: Self = Self(0.32, 0.32, 0.36, 1.0);
+	pub const GRAY_MEDIUM: Self = Self(0.45, 0.45, 0.50, 1.0);
+	pub const GRAY_LIGHT: Self = Self(0.60, 0.60, 0.65, 1.0);
+	pub const TRANSLUCENT_BLACK: Self = Self(0.0, 0.0, 0.0, 0.55);
+}
 
 const fn rgb(r: f32, g: f32, b: f32) -> Rgba {
-	[r, g, b, 1.0]
+	Rgba::rgb(r, g, b)
 }
+
 #[allow(dead_code)] // kept for reference / future support
 const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Rgba {
-	[r, g, b, a]
+	Rgba::new(r, g, b, a)
 }
 
 /// 8-entry "lit" (logic-high) state colour palette, index chosen
@@ -34,7 +72,7 @@ pub const COLORS: [Rgba; 8] = [
 /// bits disagree, or for an explicitly disconnected pin
 /// (`pin_state::LOGIC_DISCONNECTED`). Always flat black, regardless of the
 /// pin/wire's palette index.
-pub const STATE_DISCONNECTED_COL: Rgba = [0.0, 0.0, 0.0, 1.0];
+pub const STATE_DISCONNECTED_COL: Rgba = Rgba(0.0, 0.0, 0.0, 1.0);
 
 /// How much of a lit colour's brightness survives in its "off" (logic-low)
 /// variant. Applied uniformly in `dim` rather than hand-tuning a second
@@ -46,28 +84,28 @@ const LOW_STATE_BRIGHTNESS: f32 = 0.3;
 /// derive a pin/wire's logic-low colour from its logic-high colour instead
 /// of maintaining a separate low-colour lookup table.
 pub fn dim(c: Rgba) -> Rgba {
-	[c[0] * LOW_STATE_BRIGHTNESS, c[1] * LOW_STATE_BRIGHTNESS, c[2] * LOW_STATE_BRIGHTNESS, c[3]]
+	Rgba(c.0 * LOW_STATE_BRIGHTNESS, c.1 * LOW_STATE_BRIGHTNESS, c.2 * LOW_STATE_BRIGHTNESS, c.3)
 }
 
-pub const PIN_COL: Rgba = [0.0, 0.0, 0.0, 1.0];
-pub const PIN_HIGHLIGHT_COL: Rgba = [1.0, 1.0, 1.0, 1.0];
+pub const PIN_COL: Rgba = Rgba(0.0, 0.0, 0.0, 1.0);
+pub const PIN_HIGHLIGHT_COL: Rgba = Rgba(1.0, 1.0, 1.0, 1.0);
 pub const PIN_INVALID_COL: Rgba = rgb(0.15, 0.15, 0.15);
 
 /// Translucent quad drawn over every selected component (and filled by the
 /// rubber-band selection rectangle). Mirrors `DrawSettings.SelectionBoxCol`.
-pub const SELECTION_BOX_COL: Rgba = [1.0, 1.0, 1.0, 0.1];
+pub const SELECTION_BOX_COL: Rgba = Rgba(1.0, 1.0, 1.0, 0.1);
 /// Same quad while its components are being carried by a drag -- slightly
 /// brighter than at rest (`DrawSettings.SelectionBoxMovingCol`).
-pub const SELECTION_BOX_MOVING_COL: Rgba = [1.0, 1.0, 1.0, 0.125];
+pub const SELECTION_BOX_MOVING_COL: Rgba = Rgba(1.0, 1.0, 1.0, 0.125);
 /// The moving-selection quad when the carry would land on top of something
 /// it may not overlap (`DrawSettings.SelectionBoxInvalidCol`).
-pub const SELECTION_BOX_INVALID_COL: Rgba = [243.0 / 255.0, 81.0 / 255.0, 75.0 / 255.0, 120.0 / 255.0];
+pub const SELECTION_BOX_INVALID_COL: Rgba = Rgba(243.0 / 255.0, 81.0 / 255.0, 75.0 / 255.0, 120.0 / 255.0);
 
 pub const BACKGROUND_COL: Rgba = rgb(66.0 / 255.0, 66.0 / 255.0, 69.0 / 255.0);
 pub const GRID_COL: Rgba = rgb(49.0 / 255.0, 49.0 / 255.0, 51.0 / 255.0);
 
 /// Red button tint for destructive/cancel actions (Discard, Cancel, Delete).
-pub const DANGEROUS_ACTION_COL: Rgba = [0.62, 0.18, 0.18, 1.0];
+pub const DANGEROUS_ACTION_COL: Rgba = Rgba(0.62, 0.18, 0.18, 1.0);
 
 pub const CHIP_BODY_COL: Rgba = rgb(0.55, 0.55, 0.58);
 pub const CHIP_OUTLINE_COL: Rgba = rgb(0.15, 0.15, 0.16);
@@ -91,8 +129,9 @@ pub const HOVER_LABEL_COL: Rgba = rgb(0.95, 0.95, 0.95);
 
 /// Perceptual (Rec. 709) luminance of an RGBA colour, ignoring alpha.
 /// Mirrors `ColHelper.Luminance`.
+#[must_use]
 pub fn luminance(c: Rgba) -> f32 {
-	0.0722f32.mul_add(c[2], 0.7152f32.mul_add(c[1], 0.2126 * c[0]))
+	0.0722f32.mul_add(c.2, 0.7152f32.mul_add(c.1, 0.2126 * c.0))
 }
 
 /// Black or white text colour that reads legibly against `bg`, mirroring
@@ -102,7 +141,7 @@ pub fn luminance(c: Rgba) -> f32 {
 /// nuance is skipped here in favour of a plain black/white pick, which stays
 /// legible on every body colour.
 pub fn text_colour_for_background(bg: Rgba) -> Rgba {
-	if luminance(bg) > 0.57 { [0.0, 0.0, 0.0, 1.0] } else { [1.0, 1.0, 1.0, 1.0] }
+	if luminance(bg) > 0.57 { Rgba::new(0.0, 0.0, 0.0, 1.0) } else { Rgba::new(1.0, 1.0, 1.0, 1.0) }
 }
 
 /// Colour for one of the 8 state-palette indices in a given logic state, clamped like

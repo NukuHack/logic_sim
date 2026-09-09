@@ -28,6 +28,7 @@ const MAX_WIRE_CONNECTION_DEPTH: u32 = 64;
 /// The closest point to `p` on line segment `a`-`b`. Mirrors
 /// `WireInstance.ClosestPointOnLineSegment`; used to re-project a
 /// wire-tap's cached attachment point onto its target wire's segment.
+#[must_use]
 pub(crate) fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
 	let ab = Vec2::new(b.x - a.x, b.y - a.y);
 	let sqr_len = ab.y.mul_add(ab.y, ab.x * ab.x);
@@ -44,6 +45,7 @@ pub(crate) fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
 /// sub-chip-id -> layout-index map, and the wire list) so call sites pass
 /// one borrow instead of four parallel parameters -- these always travel
 /// together and every caller has all four on hand.
+#[must_use]
 pub(crate) struct WireCtx<'a> {
 	pub chip: &'a ChipDescription,
 	pub placed: &'a [PlacedSubChip<'a>],
@@ -58,6 +60,7 @@ impl WireCtx<'_> {
 	/// world space, no resolution needed); the two endpoint indices recurse
 	/// into [`WireCtx::endpoint`], since either one might itself be a tap on
 	/// yet another wire. Mirrors `WireInstance.GetWirePoint`.
+	#[must_use]
 	fn point(&self, wire_idx: usize, point_index: usize, cache: &mut WirePointCache, depth: u32) -> Option<Vec2> {
 		let wire = self.wires.get(wire_idx)?;
 		let last_index = wire.points.len() + 1; // bends.len() interior points + 2 endpoints
@@ -72,6 +75,7 @@ impl WireCtx<'_> {
 
 	/// Resolves one end of wire `wire_idx` (`is_target`: false = source, true = target) to a
 	/// world-space position.
+	#[must_use]
 	pub fn endpoint(&self, wire_idx: usize, is_target: bool, cache: &mut WirePointCache, depth: u32) -> Option<Vec2> {
 		if let Some(&cached) = cache.get(&(wire_idx, is_target)) {
 			return cached;
@@ -113,6 +117,7 @@ impl WireCtx<'_> {
 /// One point along an existing wire's drawn centreline, close enough to a click to tap a new
 /// wire onto -- returned by `hit_test_wire_tap`.
 #[derive(Debug, Clone, Copy)]
+#[must_use]
 pub struct WireTapHit {
 	pub wire_index: usize,
 	pub segment_index: i32,
@@ -128,6 +133,7 @@ pub struct WireTapHit {
 /// units of any of its segments), returning that wire's index into `chip.wires` -- used to
 /// resolve a right-click "delete wire" to *one specific* `WireDescription`, not e.g. every
 /// wire fanning out of the same source pin.
+#[must_use]
 pub fn hit_test_wire(chip: &ChipDescription, library: &ChipLibrary, world_pos: Vec2, max_dist: f32) -> Option<usize> {
 	closest_wire_hit(chip, library, world_pos, max_dist).map(|hit| hit.wire_index)
 }
@@ -138,6 +144,7 @@ pub fn hit_test_wire(chip: &ChipDescription, library: &ChipLibrary, world_pos: V
 /// endpoints (including tap-on-another-wire ones) the same way
 /// `draw_wires` does, so "closest to what's actually drawn" matches what
 /// the player sees, not just the saved bend points.
+#[must_use]
 pub fn closest_wire_hit(chip: &ChipDescription, library: &ChipLibrary, world_pos: Vec2, max_dist: f32) -> Option<WireTapHit> {
 	let placed = place_sub_chips(chip, library);
 	let owner_to_placed: HashMap<i32, usize> = placed.iter().enumerate().map(|(i, p)| (p.id, i)).collect();

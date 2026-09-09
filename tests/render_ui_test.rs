@@ -34,7 +34,7 @@ fn point(x: f32, y: f32) -> Vec2 {
 
 fn button_layer(id: LayerId, rect: UiRect, capture: Capture) -> StackLayer<&'static str> {
 	let mut frame: Frame<&'static str> = Frame::default();
-	frame.geometry.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), [1.0, 1.0, 1.0, 1.0]);
+	frame.geometry.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), [1.0, 1.0, 1.0, 1.0].into());
 	frame.buttons.push(Button { rect, action: "btn", enabled: true });
 	StackLayer::from_frame(id, frame, capture)
 }
@@ -194,7 +194,7 @@ fn convert_frame_maps_a_foreign_action_type_into_the_stacks_own() {
 	// The host app wraps `EditorAction`s in its own unified viewer-action enum; conversion must
 	// carry buttons (mapped), geometry and the text-field hit-box across unchanged.
 	let mut frame: Frame<&'static str> = Frame::default();
-	frame.geometry.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), [1.0, 1.0, 1.0, 1.0]);
+	frame.geometry.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), [1.0, 1.0, 1.0, 1.0].into());
 	frame.buttons.push(Button { rect: UiRect::new(0.0, 0.0, 10.0, 10.0), action: "btn", enabled: true });
 	frame.text_field = Some(UiRect::new(1.0, 2.0, 3.0, 4.0));
 
@@ -245,7 +245,7 @@ fn topmost_button_walks_front_to_back_and_skips_disabled_rows() {
 
 	fn layer_with(id: LayerId, capture: Capture, action: &'static str, enabled: bool) -> StackLayer<&'static str> {
 		let mut frame: Frame<&'static str> = Frame::default();
-		frame.geometry.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), [1.0, 1.0, 1.0, 1.0]);
+		frame.geometry.add_rect(Vec2::ZERO, Vec2::new(1.0, 1.0), [1.0, 1.0, 1.0, 1.0].into());
 		frame.buttons.push(Button { rect: UiRect::new(0.0, 0.0, 50.0, 50.0), action, enabled });
 		StackLayer::from_frame(id, frame, capture)
 	}
@@ -507,12 +507,21 @@ fn pin_edit_popup_offers_the_display_wheel_only_when_asked() {
 	assert!(multi.buttons.iter().any(|b| b.action == EditorAction::ClosePopup));
 	assert!(multi.text_field.is_some(), "the pin name field owns typing");
 	let active_highlight = [0.3f32, 0.42, 0.58, 1.0].map(f32::to_bits);
-	assert!(multi.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == active_highlight), "the selected wheel option is highlighted");
+	assert!(
+		multi.geometry.triangles.iter().any(|v| {
+			let c: [f32; 4] = v.colour.into();
+			c.map(f32::to_bits) == active_highlight
+		}),
+		"the selected wheel option is highlighted"
+	);
 
 	// 1-bit call: no wheel at all, and no highlight tiles.
 	let single = build_pin_edit_popup("CLK", false, 1, 0, 1280.0, 800.0, Vec2::ZERO);
 	assert!(!single.buttons.iter().any(|b| matches!(b.action, EditorAction::PinEditSetDisplayMode(_))));
-	assert!(!single.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == active_highlight));
+	assert!(!single.geometry.triangles.iter().any(|v| {
+		let c: [f32; 4] = v.colour.into();
+		c.map(f32::to_bits) == active_highlight
+	}));
 }
 
 #[test]
@@ -525,7 +534,13 @@ fn pin_edit_popup_offers_colour_swatch_rows() {
 		for i in 0..8 {
 			assert!(frame.buttons.iter().any(|b| b.action == EditorAction::PinEditSetColour(i)), "colour swatch {i} must be clickable");
 		}
-		assert!(frame.geometry.triangles.iter().any(|v| v.colour.map(f32::to_bits) == pick_wash), "the picked swatch is washed out");
+		assert!(
+			frame.geometry.triangles.iter().any(|v| {
+				let c: [f32; 4] = v.colour.into();
+				c.map(f32::to_bits) == pick_wash
+			}),
+			"the picked swatch is washed out"
+		);
 	}
 }
 
@@ -754,8 +769,8 @@ fn main_screen_has_five_buttons_with_expected_actions() {
 fn load_project_screen_lists_projects_as_clickable_rows() {
 	let root = temp_dir("menu_ui_load_screen");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Alpha").unwrap();
-	create_project(&paths, "Beta").unwrap();
+	let _p = create_project(&paths, "Alpha").unwrap();
+	let _p2 = create_project(&paths, "Beta").unwrap();
 
 	let mut menu = MainMenu::new(paths);
 	menu.choose_open_project();
@@ -771,7 +786,7 @@ fn load_project_screen_lists_projects_as_clickable_rows() {
 fn load_project_screen_toolbar_buttons_disabled_without_a_selection() {
 	let root = temp_dir("menu_ui_toolbar_disabled");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Alpha").unwrap();
+	let _p = create_project(&paths, "Alpha").unwrap();
 	let mut menu = MainMenu::new(paths);
 	menu.choose_open_project();
 
@@ -788,7 +803,7 @@ fn load_project_screen_toolbar_buttons_disabled_without_a_selection() {
 fn load_project_screen_toolbar_buttons_enabled_once_a_compatible_project_is_selected() {
 	let root = temp_dir("menu_ui_toolbar_enabled");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Alpha").unwrap();
+	let _p = create_project(&paths, "Alpha").unwrap();
 	let mut menu = MainMenu::new(paths);
 	menu.choose_open_project();
 	menu.select_project(0);
@@ -905,7 +920,7 @@ fn build_popup_frame_is_empty_when_no_popup_is_open() {
 fn delete_confirmation_popup_has_no_text_field() {
 	let root = temp_dir("menu_ui_delete_popup");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Doomed").unwrap();
+	let _p = create_project(&paths, "Doomed").unwrap();
 	let mut menu = MainMenu::new(paths);
 	menu.choose_open_project();
 	menu.select_project(0);

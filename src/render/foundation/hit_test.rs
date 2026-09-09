@@ -8,6 +8,7 @@ use glam::Vec2;
 /// A point-in-shape test matching `SceneGeometry::add_rounded_rect`'s actual drawn geometry
 /// exactly (same corner-rounding rules), so hover hit-testing lines up with what's on screen
 /// instead of assuming every pin is a plain circle.
+#[must_use]
 pub fn point_in_rounded_rect(point: Vec2, centre: Vec2, size: Vec2, radius: f32, round_left: bool, round_right: bool) -> bool {
 	let hw = size.x / 2.0;
 	let hh = size.y / 2.0;
@@ -42,6 +43,7 @@ pub fn point_in_rounded_rect(point: Vec2, centre: Vec2, size: Vec2, radius: f32,
 
 /// A point-in-circle test, for hit-testing a plain circle shape (a 1-bit
 /// pin's connection dot -- see `scene::pins::draw_pin_shape`).
+#[must_use]
 pub fn point_in_circle(point: Vec2, centre: Vec2, radius: f32) -> bool {
 	let dx = point.x - centre.x;
 	let dy = point.y - centre.y;
@@ -50,6 +52,7 @@ pub fn point_in_circle(point: Vec2, centre: Vec2, radius: f32) -> bool {
 
 /// A plain axis-aligned rectangle hit-test -- for a subchip's body (which,
 /// unlike its pins, is never rounded) and any other centred-rect region.
+#[must_use]
 pub fn point_in_rect(point: Vec2, centre: Vec2, size: Vec2) -> bool {
 	(point.x - centre.x).abs() <= size.x / 2.0 && (point.y - centre.y).abs() <= size.y / 2.0
 }

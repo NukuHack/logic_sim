@@ -25,6 +25,7 @@ pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
 #[derive(Debug, Default)]
+#[must_use]
 pub struct CachingState {
 	/// Keyed by chip name. Replaces the original's `Dictionary<string, uint[][]> combinationalChipCaches`
 	pub combinational_chip_cache: HashMap<Arc<str>, Box<dyn CachedGate>>,
@@ -36,6 +37,7 @@ pub struct CachingState {
 
 /// Mirrors `SimChip.CalculateNumberOfInputBits`: total width in bits across
 /// every input pin (e.g. one 4-bit pin + two 1-bit pins == 6).
+#[must_use]
 pub fn calculate_num_input_bits(sim: &Simulator, chip: ChipIdx) -> u32 {
 	let c = sim.chip(chip);
 	let mut total = 0u32;
@@ -52,6 +54,7 @@ pub fn calculate_num_input_bits(sim: &Simulator, chip: ChipIdx) -> u32 {
 /// subchips can reference the same underlying chip definition more than once (e.g. two AND
 /// gates in one schematic), and without memoization each occurrence re-walks that shared
 /// subtree from scratch.
+#[must_use]
 pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 	let mut memo = HashMap::new();
 	is_combinational_memoized(sim, chip, &mut memo)
@@ -62,6 +65,7 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 /// than shared across calls: a chip's combinational-ness can only depend on its own subtree,
 /// so a fresh table per call is both correct and enough to eliminate the redundant re-walks
 /// that matter (a chip used many times inside one parent).
+#[must_use]
 fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<i32, bool>) -> bool {
 	use crate::description::ChipType as E;
 
@@ -145,6 +149,7 @@ fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<
 		visited += 1;
 		if let Some(neighbors) = graph.get(&id) {
 			for &n in neighbors {
+				#[allow(clippy::expect_used)]
 				let deg = in_degree.get_mut(&n).expect("every id in `graph` was inserted into `in_degree` above");
 				*deg -= 1;
 				if *deg == 0 {

@@ -6,6 +6,7 @@ use crate::description::ChipType;
 use crate::json::{ChipCollection, StarredItem};
 
 /// Mirrors `BuiltinCollectionCreator.GetDefaultStarredList`.
+#[must_use]
 pub fn default_starred_list() -> Vec<StarredItem> {
 	vec![StarredItem::new("IN/OUT", true), StarredItem::new(name_for(ChipType::Nand), false)]
 }
@@ -14,6 +15,7 @@ pub fn default_starred_list() -> Vec<StarredItem> {
 /// dev-only builtins (`dev.RAM-8`, the bus termini -- see
 /// `ChipType::is_dev_only`) are only filed into a fresh palette in debug
 /// builds; release projects never list them.
+#[must_use]
 pub fn default_chip_collections() -> Vec<ChipCollection> {
 	let mut bus = vec![ChipType::Bus1Bit, ChipType::Bus4Bit, ChipType::Bus8Bit];
 	let mut memory = vec![ChipType::Rom256x16];

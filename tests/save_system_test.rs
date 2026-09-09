@@ -210,7 +210,7 @@ fn create_project_creates_the_chips_folder_so_the_project_is_immediately_open_ab
 	let root = temp_dir("create_project_chips_folder");
 	let paths = SavePaths::new(&root);
 
-	create_project(&paths, "Fresh Project").unwrap();
+	let _p = create_project(&paths, "Fresh Project").unwrap();
 
 	assert!(paths.chips_path("Fresh Project").is_dir());
 

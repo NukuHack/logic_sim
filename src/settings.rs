@@ -23,17 +23,20 @@ pub enum FullScreenMode {
 
 impl FullScreenMode {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
 	/// Reconstruct from an integer, matching the original C# enum order.
 	/// Invalid values fall back to `Custom`.
+	#[must_use]
 	pub const fn from_int(v: i32) -> Self {
 		Self::from_primitive(v)
 	}
 }
 
 /// Mirrors `DLS.Description.AppSettings`.
+#[must_use]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct AppSettings {
 	pub resolution_x: i32,
@@ -70,16 +73,19 @@ struct JsonAppSettings {
 	#[serde(rename = "VSyncEnabled", default = "default_vsync")]
 	vsync_enabled: bool,
 }
-
+#[must_use]
 const fn default_resolution_x() -> i32 {
 	1920
 }
+#[must_use]
 const fn default_resolution_y() -> i32 {
 	1080
 }
+#[must_use]
 const fn default_fullscreen_mode() -> i32 {
 	FullScreenMode::FullScreenWindow.to_int()
 }
+#[must_use]
 const fn default_vsync() -> bool {
 	true
 }

@@ -27,11 +27,13 @@ pub type Bits = u64;
 /// `PinState::from_raw_with_width`. This is *not* one bit per output wire -- an output pin can itself be multiple wires (a nibble/byte bus), and
 /// `out`'s job is to hand each such pin back its own raw value, not a single bit-vector spanning
 /// every pin.
+#[must_use]
 pub trait CachedGate: fmt::Debug + fmt::Display + Send + Sync {
 	/// Evaluates `input` into `out`. Returns `false` if this evaluator has nothing for `input`
 	/// (e.g. an out-of-range `Lut` row from a stale cache entry, or an `out` slice the wrong
 	/// length), in which case `out` is left untouched and the caller should fall back to a real
 	/// step.
+	#[must_use]
 	fn eval(&self, input: u64, out: &mut [u32]) -> bool;
 }
 
@@ -40,6 +42,7 @@ pub trait CachedGate: fmt::Debug + fmt::Display + Send + Sync {
 /// hashing -- this is the fast path and should be preferred whenever the full table fits in
 /// memory (see the auto/user caching budgets in `caching.rs`).
 #[derive(Debug)]
+#[must_use]
 pub struct Lut {
 	rows: Box<[Box<[u32]>]>,
 }
@@ -70,15 +73,18 @@ impl Lut {
 	}
 
 	/// Row count, i.e. `2^in_bits` for a fully-built table.
+	#[must_use]
 	pub fn len(&self) -> usize {
 		self.rows.len()
 	}
 
+	#[must_use]
 	pub fn is_empty(&self) -> bool {
 		self.rows.is_empty()
 	}
 
 	/// The packed fields for input row `input`, or `None` if out of range.
+	#[must_use]
 	pub fn row(&self, input: u64) -> Option<&[u32]> {
 		self.rows.get(input as usize).map(|r| &**r)
 	}
@@ -119,6 +125,7 @@ type DuoSizedFn = fn(&[Bits], u32, u32, Bits) -> Vec<Bits>;
 /// `in_bits`/`out_bits` are carried alongside `config`
 /// so one `fn` pointer can serve an entire parametric family
 #[derive(Debug)]
+#[must_use]
 pub struct Native {
 	in_bits: u32,
 	out_bits: u32,
@@ -192,6 +199,7 @@ impl CachedGate for Native {
 /// single-step `Native` formula is, which is what actually lets it back the cache path in the
 /// future.
 #[derive(Debug)]
+#[must_use]
 pub struct NativeList {
 	in_bits: u32,
 	out_bits: u32,
@@ -265,6 +273,7 @@ impl CachedGate for NativeList {
 /// moment any single pin doesn't match a known pattern, since a partial `NativeMulti` (some
 /// pins closed-form, one pin only representable as a table) isn't a shape this type can hold.
 #[derive(Debug)]
+#[must_use]
 pub struct NativeMulti {
 	/// One entry per output pin, in the same order as the chip's `output_pins`.
 	entries: Vec<Native>,
@@ -339,6 +348,7 @@ impl CachedGate for NativeMulti {
 /// this is exactly as O(1) as a plain `Native` -- one formula call regardless of how many
 /// output pins it's feeding.
 #[derive(Debug)]
+#[must_use]
 pub struct NativeSplit {
 	native: Native,
 	/// Each output pin's `(bit offset into the combined word, width)`, in output-pin order.

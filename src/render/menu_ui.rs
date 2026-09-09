@@ -115,7 +115,7 @@ fn add_title(frame: &mut MenuFrame, vw: f32, vh: f32, y: f32, text: &str) {
 	frame.geometry.labels.push(TextLabel {
 		pos: to_world(Vec2::new(vw / 2.0, y), vw, vh),
 		text: text.to_string(),
-		colour: [1.0, 1.0, 1.0, 1.0],
+		colour: theme::Rgba(1.0, 1.0, 1.0, 1.0),
 		font_size: TITLE_FONT_SIZE,
 		width: vw - 40.0,
 	});
@@ -166,7 +166,7 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 			Vec2::new(cx, list_top + 30.0),
 			row_w,
 			"No projects yet -- create one from the main menu.",
-			[0.8, 0.8, 0.8, 1.0],
+			theme::Rgba(0.8, 0.8, 0.8, 1.0),
 			FONT_SIZE,
 		);
 	}
@@ -177,16 +177,16 @@ fn build_load_project_screen(menu: &MainMenu, vw: f32, vh: f32, frame: &mut Menu
 		let selected = menu.selected_project_index() == Some(i);
 		let compatible = crate::save_system::can_open_project(project).is_ok();
 
-		let bg = if selected {
-			[0.35, 0.45, 0.6, 1.0]
+		let bg: theme::Rgba = if selected {
+			theme::Rgba(0.35, 0.45, 0.6, 1.0)
 		} else if rect.contains(mouse) {
-			[0.4, 0.4, 0.44, 1.0]
+			theme::Rgba(0.4, 0.4, 0.44, 1.0)
 		} else {
-			[0.3, 0.3, 0.33, 1.0]
+			theme::Rgba(0.3, 0.3, 0.33, 1.0)
 		};
 		ui_kit::fill_rect(frame, ui, rect, bg);
 
-		let text_colour = if compatible { theme::text_colour_for_background(bg) } else { [0.9, 0.35, 0.35, 1.0] };
+		let text_colour = if compatible { theme::text_colour_for_background(bg) } else { theme::Rgba(0.9, 0.35, 0.35, 1.0) };
 		let label = if compatible {
 			format!("{}   (saved {} ago)", project.project_name, crate::save_system::to_relative_time(&project.last_save_time))
 		} else {
@@ -244,7 +244,7 @@ fn build_about_screen(vw: f32, vh: f32, frame: &mut MenuFrame, mouse: Vec2) {
 		Vec2::new(cx, 180.0),
 		vw - 160.0,
 		"A Rust port of Sebastian Lague's Digital Logic Sim (rendering + save system + project picker).",
-		[0.85, 0.85, 0.85, 1.0],
+		[0.85, 0.85, 0.85, 1.0].into(),
 		FONT_SIZE,
 	);
 	let back_rect = UiRect::new(cx - BUTTON_W / 2.0, vh - 30.0, BUTTON_W, BUTTON_H);
@@ -259,7 +259,7 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 	let cy = vh / 2.0;
 
 	let panel_rect = UiRect::new(cx - panel_w / 2.0, cy - panel_h / 2.0, panel_w, panel_h);
-	ui_kit::fill_rect(frame, ui, panel_rect, [0.18, 0.18, 0.2, 1.0]);
+	ui_kit::fill_rect(frame, ui, panel_rect, theme::Rgba(0.18, 0.18, 0.2, 1.0));
 
 	let (title, is_name_popup) = match menu.popup() {
 		PopupKind::NewProject => ("New Project", true),
@@ -268,7 +268,7 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 		PopupKind::DeleteConfirmation => ("Delete Project?", false),
 		PopupKind::None => ("", false),
 	};
-	add_label(frame, ui, Vec2::new(cx, panel_rect.y + 30.0), panel_w - 40.0, title, [1.0, 1.0, 1.0, 1.0], 22.0);
+	add_label(frame, ui, Vec2::new(cx, panel_rect.y + 30.0), panel_w - 40.0, title, theme::Rgba(1.0, 1.0, 1.0, 1.0), 22.0);
 
 	if is_name_popup {
 		let field_rect = UiRect::new(cx - (panel_w - 60.0) / 2.0, panel_rect.y + 70.0, panel_w - 60.0, 36.0);
@@ -276,7 +276,15 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 
 		let valid = menu.popup() != PopupKind::NewProject || menu.is_valid_new_project_name(text_input);
 		if !valid && !text_input.is_empty() {
-			add_label(frame, ui, Vec2::new(cx, panel_rect.y + 118.0), panel_w - 40.0, "Invalid or already-used name", [0.9, 0.35, 0.35, 1.0], 14.0);
+			add_label(
+				frame,
+				ui,
+				Vec2::new(cx, panel_rect.y + 118.0),
+				panel_w - 40.0,
+				"Invalid or already-used name",
+				[0.9, 0.35, 0.35, 1.0].into(),
+				14.0,
+			);
 		}
 	} else if let Some(project) = menu.selected_project() {
 		add_label(
@@ -285,7 +293,7 @@ fn build_popup(menu: &MainMenu, vw: f32, vh: f32, text_input: &str, frame: &mut 
 			Vec2::new(cx, panel_rect.y + 100.0),
 			panel_w - 40.0,
 			&format!("Delete '{}'? A backup copy will be kept.", project.project_name),
-			[0.9, 0.9, 0.9, 1.0],
+			theme::Rgba(0.9, 0.9, 0.9, 1.0),
 			15.0,
 		);
 	}
@@ -317,7 +325,7 @@ pub fn status_label(vw: f32, vh: f32, message: &str) -> TextLabel {
 	TextLabel {
 		pos: to_world(Vec2::new(vw / 2.0, vh - 14.0), vw, vh),
 		text: message.to_string(),
-		colour: [0.95, 0.75, 0.3, 1.0],
+		colour: [0.95, 0.75, 0.3, 1.0].into(),
 		font_size: 14.0,
 		width: vw - 40.0,
 	}

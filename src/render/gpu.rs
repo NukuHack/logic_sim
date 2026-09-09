@@ -18,6 +18,7 @@ pub const SHADER_SRC: &str = include_str!("shader.wgsl");
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[must_use]
 pub struct Vertex {
 	pub position: [f32; 2],
 	pub colour: [f32; 4],
@@ -26,6 +27,7 @@ pub struct Vertex {
 impl Vertex {
 	pub const ATTRS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4];
 
+	#[must_use]
 	pub const fn layout() -> wgpu::VertexBufferLayout<'static> {
 		wgpu::VertexBufferLayout {
 			array_stride: size_of::<Self>() as wgpu::BufferAddress,
@@ -37,10 +39,11 @@ impl Vertex {
 
 impl From<SceneVertex> for Vertex {
 	fn from(v: SceneVertex) -> Self {
-		Self { position: [v.pos.x, v.pos.y], colour: v.colour }
+		Self { position: [v.pos.x, v.pos.y], colour: v.colour.into() }
 	}
 }
 
+#[must_use]
 pub fn scene_to_vertices(scene: &SceneGeometry) -> Vec<Vertex> {
 	scene.triangles.iter().map(|v| Vertex::from(*v)).collect()
 }
@@ -107,6 +110,7 @@ impl Renderer {
 	/// `background` is the clear colour (see `render::theme::BACKGROUND_COL`).
 	/// # Panics
 	/// if idk
+	#[allow(clippy::expect_used)]
 	pub async fn new(instance: &wgpu::Instance, surface: wgpu::Surface<'static>, width: u32, height: u32) -> Self {
 		let adapter = instance
 			.request_adapter(&wgpu::RequestAdapterOptions {
@@ -270,6 +274,7 @@ impl Renderer {
 	/// must be kept alive until after `text_renderer.render(...)` is called -- `TextArea`
 	/// borrows them, so `render()` builds them, prepares, and draws all in one scope rather than
 	/// stashing them on `self`.
+	#[allow(clippy::expect_used)]
 	fn prepare_text(&mut self, labels: &[TextLabel], camera: &Camera) -> Vec<TextBuffer> {
 		self.text_viewport.update(&self.queue, Resolution { width: self.config.width, height: self.config.height });
 
@@ -313,10 +318,10 @@ impl Renderer {
 						bottom: (top + font_px * 1.2).ceil() as i32,
 					},
 					default_color: GlyphColour::rgba(
-						(label.colour[0] * 255.0) as u8,
-						(label.colour[1] * 255.0) as u8,
-						(label.colour[2] * 255.0) as u8,
-						(label.colour[3] * 255.0) as u8,
+						(label.colour.0 * 255.0) as u8,
+						(label.colour.1 * 255.0) as u8,
+						(label.colour.2 * 255.0) as u8,
+						(label.colour.3 * 255.0) as u8,
 					),
 					custom_glyphs: &[],
 				}
@@ -431,6 +436,7 @@ impl Renderer {
 			// middleware over an existing pass -- no extra clear/load needed), but never leaks into
 			// the next layer's pass, unlike the old single-pass renderer.
 			if has_text {
+				#[allow(clippy::expect_used)]
 				self.text_renderer.render(&self.text_atlas, &self.text_viewport, &mut pass).expect("glyphon text render failed");
 			}
 		}
@@ -441,6 +447,7 @@ impl Renderer {
 
 /// Convenience used by `scene_to_vertices` tests below and by callers that
 /// want to build an initial vertex buffer without going through `Renderer`.
+#[must_use]
 pub fn upload_ready_bytes(vertices: &[Vertex]) -> &[u8] {
 	bytemuck::cast_slice(vertices)
 }

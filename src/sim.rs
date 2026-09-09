@@ -86,6 +86,7 @@ pub struct SimChip {
 }
 
 impl SimChip {
+	#[must_use]
 	pub const fn is_ready(&self) -> bool {
 		self.num_inputs_ready == self.num_connected_inputs
 	}
@@ -247,14 +248,17 @@ impl KeyboardSnapshot {
 
 	/// `code`'s current `(is_pressed, last_touch)`, or `(false, 0)` if it's
 	/// never been touched.
+	#[must_use]
 	pub fn get(&self, code: KeyCode) -> KeyTouch {
 		self.keys.get(&code).copied().unwrap_or((false, 0))
 	}
 
+	#[must_use]
 	pub fn is_pressed(&self, code: KeyCode) -> bool {
 		self.get(code).0
 	}
 
+	#[must_use]
 	pub fn last_touch(&self, code: KeyCode) -> u128 {
 		self.get(code).1
 	}
@@ -277,6 +281,7 @@ impl KeyboardSnapshot {
 
 	/// Collapses the modifier-ish keys in this snapshot into the
 	/// `key_mods_bits` bitmask the `KeyMods` chip outputs.
+	#[must_use]
 	pub fn modifiers_bitmask(&self) -> u16 {
 		let mut bits = 0u16;
 		let mut set = |held: bool, bit: u16| {
@@ -302,6 +307,7 @@ impl KeyboardSnapshot {
 impl Simulator {
 	/// Build a simulator whose root chip is `root_desc`, resolving any
 	/// subchips against `library`.
+	#[must_use]
 	pub fn build(root_desc: &ChipDescription, library: &ChipLibrary) -> Self {
 		let mut pins = Vec::new();
 		let mut chips = Vec::new();
@@ -354,12 +360,14 @@ impl Simulator {
 
 	/// Whether `c` (already normalised the way the `Key` chip expects --
 	/// uppercase letters, plain digits) is currently held.
+	#[must_use]
 	pub fn is_key_held(&self, c: char) -> bool {
 		self.keyboard.is_pressed(KeyCode::Char(c))
 	}
 
 	/// Current `key_mods_bits` bitmask, derived live from the keyboard
 	/// snapshot rather than stored separately.
+	#[must_use]
 	pub fn key_modifiers(&self) -> u16 {
 		self.keyboard.modifiers_bitmask()
 	}
@@ -385,14 +393,17 @@ impl Simulator {
 		self.set_key_pressed(KeyCode::Function(1), bits & key_mods_bits::FUNC != 0);
 	}
 
+	#[must_use]
 	pub const fn root(&self) -> ChipIdx {
 		self.root
 	}
 
+	#[must_use]
 	pub fn chip(&self, idx: ChipIdx) -> &SimChip {
 		&self.chips[idx.0]
 	}
 
+	#[must_use]
 	pub fn pin(&self, idx: PinIdx) -> &SimPin {
 		&self.pins[idx.0]
 	}
@@ -420,6 +431,7 @@ impl Simulator {
 	/// only the `PlacedSubChip::id` it already has on hand. Mirrors the
 	/// lookup half of `SimChip.GetSimPinFromAddress`, but for the owning
 	/// chip itself rather than one of its pins.
+	#[must_use]
 	pub fn find_sub_chip(&self, chip: ChipIdx, id: i32) -> Option<ChipIdx> {
 		let c = &self.chips[chip.0];
 		c.sub_chips.iter().copied().find(|&sub| self.chips[sub.0].id == id)
@@ -427,6 +439,7 @@ impl Simulator {
 
 	/// Find a pin anywhere within `chip` (its own dev-pins, or a direct
 	/// subchip's pins) by address. Mirrors SimChip.GetSimPinFromAddress.
+	#[must_use]
 	pub fn find_pin(&self, chip: ChipIdx, address: PinAddress) -> Option<PinIdx> {
 		let c = &self.chips[chip.0];
 
@@ -1073,6 +1086,7 @@ impl Simulator {
 	/// RAM/ROM contents, pulse countdowns, display buffers, clock phases -- that a rebuild would
 	/// otherwise reset (`build_internal_state`'s defaults), and what `ViewerState::rebuild_sim`
 	/// carries across so editing one wire no longer wipes unrelated chips' memory.
+	#[must_use]
 	pub fn capture_internal_states(&self) -> InternalStateMap {
 		let mut map = InternalStateMap::default();
 		self.capture_internal_states_at(self.root, &[], &mut map);
@@ -1153,6 +1167,7 @@ impl Simulator {
 	/// owner-chip id-path + pin id + `is_input` flag. Paired with
 	/// [`restore_pin_states`] to carry signal levels across a rebuild so
 	/// the renderer doesn't see a frame of DISCONNECTED defaults.
+	#[must_use]
 	pub fn capture_pin_states(&self) -> PinStateMap {
 		let mut map = PinStateMap::default();
 		self.capture_pin_states_at(self.root, &[], &mut map);

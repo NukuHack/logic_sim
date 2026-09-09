@@ -12,6 +12,7 @@ use glam::Vec2;
 
 /// What happened when an input event was offered to the stack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub enum InputResult {
 	/// A layer consumed the event. Layers underneath are skipped, but app-level listeners that
 	/// run regardless of the UI (e.g. feeding held keys to the simulation) still see it.
@@ -28,6 +29,7 @@ pub enum InputResult {
 /// layer-specific side effects (e.g. "a click that landed on the flyout's padding closes the
 /// flyout") without the stack itself knowing anything about chips or projects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub enum LayerId {
 	MenuScreen,
 	MenuPopup,
@@ -70,6 +72,7 @@ impl LayerId {
 	/// Whether this layer is one of the full-screen editor panels opened "on" the viewer
 	/// (`ViewerState::overlay`, plus the search popup which stacks independently above any of
 	/// them). Used to keep the stack in sync with live state between redraws.
+	#[must_use]
 	pub const fn is_overlay_panel(self) -> bool {
 		matches!(
 			self,
@@ -91,6 +94,7 @@ impl LayerId {
 	/// owning a text field, and the context menu. Pointer-hover surfaces (bottom bar, flyout,
 	/// toast) are deliberately excluded -- hovering the bar must not steal the editor's
 	/// shortcuts.
+	#[must_use]
 	pub const fn captures_keyboard(self) -> bool {
 		if self.is_overlay_panel() {
 			return true;
@@ -101,6 +105,7 @@ impl LayerId {
 
 /// Which part of a layer claims mouse events that miss its buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[must_use]
 pub enum Capture {
 	/// Only button hits belong to this layer; everything else passes through.
 	#[default]
@@ -123,6 +128,7 @@ impl Capture {
 
 /// One layer of the stack: what to draw, what can be clicked, and which regions it claims.
 #[derive(Debug)]
+#[must_use]
 pub struct StackLayer<A> {
 	pub id: LayerId,
 	pub geometry: SceneGeometry,
@@ -181,6 +187,7 @@ impl<A> StackLayer<A> {
 /// button under the cursor. `layer`/`button`/`scroll_regions` are all `None`/empty exactly when
 /// `result` is [`InputResult::Propagate`].
 #[derive(Debug)]
+#[must_use]
 pub struct Dispatch<'a, A> {
 	pub result: InputResult,
 	pub layer: Option<LayerId>,
@@ -196,6 +203,7 @@ impl<A> Dispatch<'_, A> {
 
 /// The stack itself. Index 0 is drawn first (furthest back); input dispatch walks in reverse.
 #[derive(Debug)]
+#[must_use]
 pub struct UiStack<A> {
 	layers: Vec<StackLayer<A>>,
 }
@@ -219,11 +227,13 @@ impl<A> UiStack<A> {
 		&self.layers
 	}
 
+	#[must_use]
 	pub fn top_id(&self) -> Option<LayerId> {
 		self.layers.last().map(|l| l.id)
 	}
 
 	/// Bottom-to-top geometry references, ready to hand to `gpu::Renderer::render`.
+	#[must_use]
 	pub fn geometries(&self) -> Vec<&SceneGeometry> {
 		self.layers.iter().map(|l| &l.geometry).collect()
 	}
@@ -250,6 +260,7 @@ impl<A> UiStack<A> {
 	/// The layer keyboard events belong to: the topmost layer that either captures the keyboard
 	/// by nature (full-screen modal, context menu) or owns a text field. `None` means "no UI has
 	/// focus" -- keys fall through to the canvas's own handling (shortcuts).
+	#[must_use]
 	pub fn keyboard_target(&self) -> Option<LayerId> {
 		self.layers.iter().rev().find(|l| l.id.captures_keyboard()).map(|l| l.id)
 	}
@@ -258,6 +269,7 @@ impl<A> UiStack<A> {
 	/// [`InputResult::Stop`] half of key routing): it owns a text field, or it's the key-select
 	/// popup whose whole point is capturing the next keystroke. While this is true, characters
 	/// must not also reach app-level always-on listeners (e.g. the simulation's Key chips).
+	#[must_use]
 	pub fn keyboard_stop(&self) -> bool {
 		self.layers.iter().rev().find(|l| l.id.captures_keyboard()).is_some_and(|l| l.text_field.is_some() || l.id == LayerId::KeySelect)
 	}
@@ -266,6 +278,7 @@ impl<A> UiStack<A> {
 	/// right-click "open a menu on whatever row I'm over" routing, where a click on a row of a
 	/// panel should find that row even though the panel's padding around it would normally
 	/// swallow clicks first.
+	#[must_use]
 	pub fn topmost_button(&self, pos: Vec2) -> Option<(LayerId, &Button<A>)> {
 		self.layers.iter().rev().find_map(|l| l.buttons.iter().find(|b| b.enabled && b.rect.contains(pos)).map(|b| (l.id, b)))
 	}
@@ -275,6 +288,7 @@ impl<A> UiStack<A> {
 	/// buttons are greyed out for *placement* only: a cycle-blocked
 	/// starred chip can't be picked up, but its popup's Open/Un-star rows
 	/// are still meaningful.
+	#[must_use]
 	pub fn topmost_button_or_disabled(&self, pos: Vec2) -> Option<(LayerId, &Button<A>)> {
 		self.layers.iter().rev().find_map(|l| l.buttons.iter().find(|b| b.rect.contains(pos)).map(|b| (l.id, b)))
 	}

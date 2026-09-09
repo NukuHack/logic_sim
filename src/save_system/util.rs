@@ -17,13 +17,14 @@ const RESERVED_NAMES: &[&str] = &[
 ];
 
 /// Mirrors `SaveUtils.NameContainsForbiddenChar`.
+#[must_use]
 pub fn name_contains_forbidden_char(name: &str) -> bool {
 	if name.is_empty() {
 		return false;
 	}
 	name.chars().any(|c| FORBIDDEN_CHARS.contains(&c))
 }
-
+#[must_use]
 fn is_reserved_file_name(name: &str) -> bool {
 	let trimmed = name.trim();
 	RESERVED_NAMES.iter().any(|reserved| trimmed.eq_ignore_ascii_case(reserved))
@@ -31,6 +32,7 @@ fn is_reserved_file_name(name: &str) -> bool {
 
 /// Mirrors `SaveUtils.ValidFileName`: true if `name` is safe to use as a
 /// file/directory name on every operating system this game supports.
+#[must_use]
 pub fn valid_file_name(name: &str) -> bool {
 	if name.is_empty() {
 		return false;
@@ -41,6 +43,7 @@ pub fn valid_file_name(name: &str) -> bool {
 /// Mirrors `SaveUtils.EnsureUniqueFileName`: if `original_path` already
 /// exists, appends `_1`, `_2`, ... (before the extension) until a free path
 /// is found.
+#[must_use]
 pub fn ensure_unique_file_name(original_path: &Path) -> PathBuf {
 	if !original_path.exists() {
 		return original_path.to_path_buf();
@@ -63,6 +66,7 @@ pub fn ensure_unique_file_name(original_path: &Path) -> PathBuf {
 
 /// Mirrors `SaveUtils.EnsureUniqueDirectoryName`: if `path` already exists,
 /// appends `_1`, `_2`, ... until a free path is found.
+#[must_use]
 pub fn ensure_unique_directory_name(path: &Path) -> PathBuf {
 	if !path.exists() {
 		return path.to_path_buf();

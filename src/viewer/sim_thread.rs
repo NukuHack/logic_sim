@@ -247,6 +247,7 @@ impl Drop for SimHandle {
 	}
 }
 
+#[allow(clippy::expect_used)]
 fn spawn_worker(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: crate::audio::SharedAudioState) -> std::thread::JoinHandle<()> {
 	std::thread::Builder::new()
 		.name("DLS_SimThread".to_string())

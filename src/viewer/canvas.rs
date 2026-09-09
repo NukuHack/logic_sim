@@ -87,6 +87,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	let placed = scene::place_sub_chips(root_desc, &v.library);
 
 	if let Some(hit) = scene::hit_test_any_pin(root_desc, &placed, world_pos) {
+		#[allow(clippy::expect_used)]
 		let pending_ref = v.pending_wire.as_ref().expect("caller only calls this with a pending wire");
 		// Widths must match -- except where exactly one end is a bus chip: the bus is the port's
 		// merge-everything node, so any-width pins may drive or tap it (its origin merges
@@ -123,7 +124,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			});
 			return;
 		}
-
+		#[allow(clippy::expect_used)]
 		let pending = v.pending_wire.take().expect("checked above");
 
 		let mut wire = if let Some(start_owner) = bus_start_owner {
@@ -185,6 +186,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	// landing on another wire falls through to the ignore below (the
 	// wire-to-wire case `resolve_completion_on_wire` rejects as ambiguous).
 	if !on_component && v.pending_wire.as_ref().is_some_and(|p| matches!(p.start, PendingWireEnd::Pin { .. })) {
+		#[allow(clippy::expect_used)]
 		let pending = v.pending_wire.as_ref().expect("checked above");
 		let PendingWireEnd::Pin { owner_id, pin_id, .. } = pending.start else { unreachable!("branch guarantees a pin start") };
 		let start_is_source = pending.start.is_source();
@@ -199,6 +201,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 			}
 			match bus_wiring::resolve_completion_on_wire(root_desc, &v.library, tap.wire_index, false, pending.start.is_source(), owner_id, pin_id) {
 				Ok((source, target)) => {
+					#[allow(clippy::expect_used)]
 					let pending = v.pending_wire.take().expect("checked above");
 					// Whichever end of the pending placement is the one landing on the tapped wire's line
 					// is the end that must visually attach there -- an output-started placement completes
@@ -242,6 +245,7 @@ fn try_continue_pending_wire(v: &mut ViewerState, world_pos: Vec2, status: &mut 
 	// straight wires are forced -- mirroring `WireInstance.SetWirePointWithSnapping`.
 	let snap = v.should_snap_to_grid();
 	let straighten = v.force_straight_wires();
+	#[allow(clippy::expect_used)]
 	let pending = v.pending_wire.as_mut().expect("caller only calls this with a pending wire");
 	let mut turn = world_pos;
 	if snap {
@@ -348,9 +352,11 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			new_pin.position = place_pos;
 			if is_input {
 				chip.input_pins.push(new_pin);
+				#[allow(clippy::expect_used)]
 				placed_pins.push((chip.input_pins.last().expect("just pushed").clone(), true));
 			} else {
 				chip.output_pins.push(new_pin);
+				#[allow(clippy::expect_used)]
 				placed_pins.push((chip.output_pins.last().expect("just pushed").clone(), false));
 			}
 			continue;
@@ -378,6 +384,7 @@ pub(crate) fn try_place_pending_components(v: &mut ViewerState, world_pos: Vec2,
 			SubChipDescription { name: component.name.clone(), id, internal_data, position: place_pos, label: None, pin_colour_info: Vec::new() }
 		};
 		chip.sub_chips.push(subchip);
+		#[allow(clippy::expect_used)]
 		placed_subchips.push(chip.sub_chips.last().expect("just pushed").clone());
 	}
 
@@ -648,6 +655,7 @@ pub(crate) fn handle_canvas_click(v: &mut ViewerState, world_pos: Vec2, status: 
 	// and any other click leaves edit mode and falls through to the
 	// normal handling below.
 	if v.wire_edit.is_some() {
+		#[allow(clippy::expect_used)]
 		let edit_index = v.wire_edit.map(|e| e.wire_index).expect("checked above");
 		if let Some(bend) = crate::viewer::wire_edit::bend_hit(v, world_pos) {
 			let original = {

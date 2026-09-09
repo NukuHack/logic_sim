@@ -36,7 +36,7 @@ fn choose_new_project_opens_the_new_project_popup() {
 #[test]
 fn is_valid_new_project_name_rejects_empty_too_long_forbidden_and_duplicate_names() {
 	let (mut menu, root) = menu_with_temp_paths("valid_name_checks");
-	create_project(&SavePaths::new(&root), "Existing").unwrap();
+	let _p = create_project(&SavePaths::new(&root), "Existing").unwrap();
 	menu.refresh_projects();
 
 	assert!(!menu.is_valid_new_project_name(""));
@@ -115,7 +115,7 @@ fn open_selected_returns_none_when_nothing_is_selected() {
 fn open_selected_returns_outcome_for_a_compatible_project() {
 	let (mut menu, root) = menu_with_temp_paths("open_selected_compatible");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "P").unwrap();
+	let _p = create_project(&paths, "P").unwrap();
 	menu.choose_open_project();
 	menu.select_project(0);
 
@@ -168,7 +168,7 @@ fn request_rename_and_duplicate_are_ignored_for_incompatible_projects() {
 fn confirm_delete_backs_up_the_project_and_refreshes_the_list() {
 	let (mut menu, root) = menu_with_temp_paths("confirm_delete");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Doomed").unwrap();
+	let _p = create_project(&paths, "Doomed").unwrap();
 
 	menu.choose_open_project();
 	menu.select_project(0);
@@ -190,7 +190,7 @@ fn confirm_delete_backs_up_the_project_and_refreshes_the_list() {
 fn rename_via_name_popup_updates_disk_and_reselects_the_project() {
 	let (mut menu, root) = menu_with_temp_paths("rename_via_popup");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Old Name").unwrap();
+	let _p = create_project(&paths, "Old Name").unwrap();
 
 	menu.choose_open_project();
 	menu.select_project(0);
@@ -212,15 +212,16 @@ fn rename_via_name_popup_updates_disk_and_reselects_the_project() {
 fn duplicate_via_name_popup_creates_a_second_project() {
 	let (mut menu, root) = menu_with_temp_paths("duplicate_via_popup");
 	let paths = SavePaths::new(&root);
-	create_project(&paths, "Original").unwrap();
+	let _p = create_project(&paths, "Original").unwrap();
 
 	menu.choose_open_project();
 	menu.select_project(0);
 	menu.request_duplicate_selected();
 	assert_eq!(menu.popup(), PopupKind::DuplicateProject);
 
-	menu.confirm_name_popup("Original Copy").unwrap();
+	let outcome = menu.confirm_name_popup("Original Copy").unwrap();
 
+	assert_eq!(outcome, None);
 	assert_eq!(menu.popup(), PopupKind::None);
 	assert_eq!(menu.projects().len(), 2);
 	assert!(paths.project_description_path("Original").is_file());

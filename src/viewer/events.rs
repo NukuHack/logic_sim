@@ -34,6 +34,7 @@ impl ApplicationHandler for App {
 
 		let window_attrs =
 			winit::window::Window::default_attributes().with_title(self.window_title()).with_inner_size(winit::dpi::LogicalSize::new(1280.0, 800.0));
+		#[allow(clippy::expect_used)]
 		let window = std::sync::Arc::new(event_loop.create_window(window_attrs).expect("failed to create window"));
 
 		let size = window.inner_size();
@@ -302,6 +303,7 @@ impl App {
 		// `DeleteWirePoint` triggered by a right-click during wire editing.
 		if v.wire_edit.is_some() {
 			let world_pos = v.camera.screen_to_world(self.mouse_pos);
+			#[allow(clippy::expect_used)]
 			if let Some(bend) = crate::viewer::wire_edit::bend_hit(v, world_pos) {
 				v.wire_edit.as_mut().expect("checked above").selected_bend = Some(bend);
 				crate::viewer::wire_edit::delete_selected_bend(v);
@@ -444,6 +446,7 @@ impl App {
 			hit_test_sub_chip(&placed, world_pos).map(|sub| sub.id)
 		};
 		if let Some(id) = component_hit {
+			#[allow(clippy::expect_used)]
 			let sweep = v.delete_drag.as_mut().expect("ensured Some above");
 			if !sweep.components.contains(&id) {
 				sweep.components.push(id);
@@ -458,6 +461,7 @@ impl App {
 			hit_test_wire(root_desc, &v.library, world_pos, max_dist)
 		};
 		if let Some(wire_idx) = wire_hit {
+			#[allow(clippy::expect_used)]
 			let sweep = v.delete_drag.as_mut().expect("ensured Some above");
 			if !sweep.wires.contains(&wire_idx) {
 				sweep.wires.push(wire_idx);
@@ -639,7 +643,7 @@ impl App {
 				Screen::Menu => self.menu_stack.geometries(),
 				Screen::Viewer(v) => v.stack.geometries(),
 			};
-			match state.renderer.render(&geoms, &camera, crate::render::theme::BACKGROUND_COL) {
+			match state.renderer.render(&geoms, &camera, crate::render::theme::BACKGROUND_COL.into()) {
 				Ok(()) => {}
 				Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
 					let size = state.window.inner_size();

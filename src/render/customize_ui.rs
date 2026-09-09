@@ -176,7 +176,7 @@ fn list_scroll_max(entry_count: usize, viewport_h: f32) -> f32 {
 }
 
 fn effective_body_colour(draft: &ChipDescription) -> Rgba {
-	if draft.colour[3] > 0.0 { draft.colour } else { theme::CHIP_BODY_COL }
+	if draft.colour[3] > 0.0 { draft.colour.into() } else { theme::CHIP_BODY_COL }
 }
 
 /// Builds the whole customize workspace for one frame: dark backdrop,
@@ -184,7 +184,7 @@ fn effective_body_colour(draft: &ChipDescription) -> Rgba {
 pub(crate) fn build_chip_customizer(ctx: &CustomizeCtx<'_>, vw: f32, vh: f32, mouse: Vec2) -> CustomizeFrameOut {
 	let ui = UiCtx::new(vw, vh, mouse);
 	let mut frame = EditorFrame::default();
-	ui_kit::fill_rect(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), [0.0, 0.0, 0.0, 0.55]);
+	ui_kit::fill_rect(&mut frame, ui, UiRect::new(0.0, 0.0, vw, vh), Rgba::TRANSLUCENT_BLACK);
 
 	let menu_rect = UiRect::new(PAD, PAD, MENU_W, PAD.mul_add(-2.0, vh));
 	let preview_rect = UiRect::new(PAD.mul_add(2.0, MENU_W), PAD, PAD.mul_add(-4.0, vw - MENU_W).max(80.0), PAD.mul_add(-2.0, vh));
@@ -218,10 +218,10 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 	use CustomizeInteraction as Ci;
 	let inner_x = rect.x + 12.0;
 	let inner_w = rect.w - 24.0;
-	ui_kit::fill_rect(frame, ui, rect, [0.16, 0.16, 0.18, 0.98]);
+	ui_kit::fill_rect(frame, ui, rect, Rgba::GRAY_DARK);
 
 	let mut y = rect.y + 14.0;
-	ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 12.0), inner_w, "Customize chip", [1.0; 4], 22.0);
+	ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 12.0), inner_w, "Customize chip", Rgba(1.0, 1.0, 1.0, 1.0), 22.0);
 	y += 34.0;
 
 	let hint = match ctx.interaction {
@@ -232,7 +232,7 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 		Ci::PlacingDisplay { .. } => ["Click inside the preview to place", "Delete/Escape cancels"],
 	};
 	for line in hint {
-		ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 8.0), inner_w, line, [0.85, 0.65, 0.4, 1.0], 13.5);
+		ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, y + 8.0), inner_w, line, Rgba(0.85, 0.65, 0.4, 1.0), 13.5);
 		y += 20.0;
 	}
 	y += 6.0;
@@ -265,7 +265,11 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 		let srect = UiRect::new(((i % 4) as f32).mul_add(swatch_w + GAP, inner_x), ((i / 4) as f32).mul_add(26.0 + GAP, y), swatch_w, 26.0);
 		ui_kit::fill_rect(frame, ui, srect, *colour);
 		if same_rgb(effective_body_colour(ctx.draft), *colour) {
-			frame.geometry.add_rect(ui_kit::to_world(srect.centre(), ui.vw, ui.vh), Vec2::new(srect.w + 4.0, srect.h + 4.0), [1.0, 1.0, 1.0, 0.35]);
+			frame.geometry.add_rect(
+				ui_kit::to_world(srect.centre(), ui.vw, ui.vh),
+				Vec2::new(srect.w + 4.0, srect.h + 4.0),
+				Rgba(1.0, 1.0, 1.0, 0.35),
+			);
 		}
 		frame.buttons.push(EditorButton { rect: srect, action: EditorAction::CustomizePickColour(i), enabled: true });
 	}
@@ -276,8 +280,16 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 
 	// DISPLAYS header
 	let header_bg = UiRect::new(inner_x, y, inner_w, ROW_H);
-	ui_kit::fill_rect(frame, ui, header_bg, [0.11, 0.11, 0.12, 1.0]);
-	ui_kit::add_label(frame, ui, header_bg.centre(), header_bg.w - 12.0, &format!("DISPLAYS ({})", ctx.entries.len()), [0.24, 0.82, 0.41, 1.0], 15.0);
+	ui_kit::fill_rect(frame, ui, header_bg, Rgba::GRAY_HEADER);
+	ui_kit::add_label(
+		frame,
+		ui,
+		header_bg.centre(),
+		header_bg.w - 12.0,
+		&format!("DISPLAYS ({})", ctx.entries.len()),
+		Rgba(0.24, 0.82, 0.41, 1.0),
+		15.0,
+	);
 	y += ROW_H + LIST_ROW_GAP;
 
 	// Scrollable list viewport.
@@ -293,7 +305,7 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 			Vec2::new(list_rect.centre().x, list_rect.y + 16.0),
 			list_rect.w,
 			"Place a display component first",
-			[0.6, 0.6, 0.65, 1.0],
+			Rgba::GRAY_LIGHT,
 			13.5,
 		);
 	}
@@ -308,10 +320,10 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 		// greyed duplicates out instead -- here the click gives the rows
 		// a second job, so they stay live).
 		let enabled = !ctx.interaction.is_active();
-		let bg = if enabled && r.contains(ui.mouse) { [0.32, 0.32, 0.36, 1.0] } else { [0.22, 0.22, 0.25, 1.0] };
+		let bg = if enabled && r.contains(ui.mouse) { Rgba::GRAY_HOVER } else { Rgba::GRAY_PANEL };
 		ui_kit::fill_rect(frame, ui, r, bg);
 		let label = if entry.placed { format!("{}  (placed)", entry.label) } else { entry.label.clone() };
-		let label_colour = if entry.placed { [0.55, 0.85, 0.6, 1.0] } else { theme::text_colour_for_background(bg) };
+		let label_colour = if entry.placed { Rgba(0.55, 0.85, 0.6, 1.0) } else { theme::text_colour_for_background(bg) };
 		ui_kit::add_label(frame, ui, r.centre(), r.w - 12.0, &label, label_colour, 14.0);
 		frame.buttons.push(EditorButton { rect: r, action: EditorAction::CustomizePlaceEntry(index), enabled });
 	}
@@ -321,7 +333,7 @@ fn build_menu(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: 
 		let track = list_rect.h - 4.0;
 		let thumb_h = (track * (list_rect.h / (list_rect.h + max))).clamp(18.0, track);
 		let thumb_y = (scroll / max).mul_add(track - thumb_h, list_rect.y + 2.0);
-		ui_kit::fill_rect(frame, ui, UiRect::new(list_rect.x + list_rect.w - 4.0, thumb_y, 3.0, thumb_h), [0.45, 0.45, 0.5, 1.0]);
+		ui_kit::fill_rect(frame, ui, UiRect::new(list_rect.x + list_rect.w - 4.0, thumb_y, 3.0, thumb_h), Rgba::GRAY_MEDIUM);
 	}
 
 	list_rect
@@ -337,13 +349,13 @@ fn build_force_cache_row(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: Ui
 	let box_rect = UiRect::new(inner_x, y, box_size, box_size);
 	let checked = !ctx.draft.cache_kind.is_off();
 
-	ui_kit::fill_rect(frame, ui, box_rect, [0.09, 0.09, 0.1, 1.0]);
-	frame.geometry.add_rect(ui_kit::to_world(box_rect.centre(), ui.vw, ui.vh), Vec2::new(box_size - 3.0, box_size - 3.0), [0.4, 0.4, 0.45, 1.0]);
+	ui_kit::fill_rect(frame, ui, box_rect, Rgba::GRAY_ALMOST_BLACK);
+	frame.geometry.add_rect(ui_kit::to_world(box_rect.centre(), ui.vw, ui.vh), Vec2::new(box_size - 3.0, box_size - 3.0), Rgba(0.4, 0.4, 0.45, 1.0));
 	if checked {
 		frame.geometry.add_rect(
 			ui_kit::to_world(box_rect.centre(), ui.vw, ui.vh),
 			Vec2::new(box_size - 8.0, box_size - 8.0),
-			[0.24, 0.82, 0.41, 1.0],
+			Rgba(0.24, 0.82, 0.41, 1.0),
 		);
 	}
 
@@ -354,7 +366,7 @@ fn build_force_cache_row(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: Ui
 		Vec2::new(label_x + (inner_w - box_size - 8.0) / 2.0, box_rect.centre().y),
 		inner_w - box_size - 8.0,
 		"Caching",
-		[0.9, 0.9, 0.92, 1.0],
+		Rgba(0.9, 0.9, 0.92, 1.0),
 		14.0,
 	);
 
@@ -371,7 +383,7 @@ fn build_force_cache_row(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: Ui
 		} else {
 			format!("{input_bits} input bits -- too wide to cache even with this on ({MAX_NUM_INPUT_BITS_WHEN_USER_CACHING} max).")
 		};
-		ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, next_y + 8.0), inner_w, &hint, [0.6, 0.6, 0.65, 1.0], 12.0);
+		ui_kit::add_label(frame, ui, Vec2::new(inner_x + inner_w / 2.0, next_y + 8.0), inner_w, &hint, Rgba::GRAY_LIGHT, 12.0);
 		next_y += 20.0;
 	}
 
@@ -386,7 +398,7 @@ fn total_input_bits(draft: &ChipDescription) -> u32 {
 }
 
 fn same_rgb(a: Rgba, b: Rgba) -> bool {
-	(a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4 && (a[2] - b[2]).abs() < 1e-4
+	(a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4 && (a.2 - b.2).abs() < 1e-4
 }
 
 /// The live preview: dark surface, chip body + edge pins + name label +
@@ -394,7 +406,7 @@ fn same_rgb(a: Rgba, b: Rgba) -> bool {
 /// pixels, corner resize brackets, display grab/scale hotspots and the
 /// placement ghost.
 fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rect: UiRect, mouse: Vec2) {
-	ui_kit::fill_rect(frame, ui, rect, [0.09, 0.09, 0.105, 1.0]);
+	ui_kit::fill_rect(frame, ui, rect, Rgba(0.09, 0.09, 0.105, 1.0));
 
 	let size = ctx.draft.size;
 	let px_per_unit = fit_ppu(ctx, rect);
@@ -486,7 +498,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 		let hovered = !ctx.interaction.is_active()
 			&& (ui.mouse.x - corner_px.x).abs() <= bracket_len * 1.25
 			&& (ui.mouse.y - corner_px.y).abs() <= bracket_len * 1.25;
-		let colour = if active || hovered { [1.0, 1.0, 1.0, 1.0] } else { [0.72, 0.72, 0.76, 1.0] };
+		let colour = if active || hovered { Rgba(1.0, 1.0, 1.0, 1.0) } else { Rgba(0.72, 0.72, 0.76, 1.0) };
 		let thick = if active { 3.0 } else { 2.0 };
 
 		// Legs run inward along the body edges (never diagonally), so the
@@ -509,7 +521,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 		frame.geometry.labels.push(TextLabel {
 			pos: ui_kit::to_world(Vec2::new(ui.mouse.x + 14.0, ui.mouse.y - 16.0), ui.vw, ui.vh),
 			text: format!("{:.2} x {:.2}", size.x, size.y),
-			colour: [1.0, 1.0, 1.0, 1.0],
+			colour: Rgba(1.0, 1.0, 1.0, 1.0),
 			font_size: 14.0,
 			width: 140.0,
 		});
@@ -542,7 +554,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 			if let Some(resolved) = resolved
 				&& let Some((drect, _)) = placed_rect(i, resolved)
 			{
-				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 1.0, 1.0, 1.0]);
+				draw_display_brackets(&mut frame.geometry, ui, drect, Rgba(1.0, 1.0, 1.0, 1.0));
 			}
 		}
 	} else {
@@ -552,7 +564,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 			};
 			let Some((drect, scale_corner)) = placed_rect(display, resolved) else { continue };
 			if drect.contains(mouse) {
-				draw_display_brackets(&mut frame.geometry, ui, drect, [1.0, 0.8, 0.25, 1.0]);
+				draw_display_brackets(&mut frame.geometry, ui, drect, Rgba(1.0, 0.8, 0.25, 1.0));
 			}
 			frame.buttons.push(EditorButton { rect: scale_corner, action: EditorAction::CustomizeGrabDisplayScale(i), enabled: true });
 			frame.buttons.push(EditorButton { rect: drect, action: EditorAction::CustomizeGrabDisplayMove(i), enabled: true });
@@ -563,7 +575,7 @@ fn build_preview(ctx: &CustomizeCtx<'_>, frame: &mut EditorFrame, ui: UiCtx, rec
 const CORNER_SIGNS: [(f32, f32); 4] = [(-1.0, 1.0), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
 
 fn darken(colour: Rgba, amount: f32) -> Rgba {
-	[(colour[0] - amount).max(0.0), (colour[1] - amount).max(0.0), (colour[2] - amount).max(0.0), colour[3]]
+	Rgba((colour.0 - amount).max(0.0), (colour.1 - amount).max(0.0), (colour.2 - amount).max(0.0), colour.3)
 }
 
 fn rect_from_corners(a: Vec2, b: Vec2) -> UiRect {

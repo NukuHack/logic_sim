@@ -7,6 +7,7 @@ use logic_sim_macros::ConstFromPrimitive;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, ConstFromPrimitive)]
 #[repr(i32)]
+#[must_use]
 pub enum ChipType {
 	// ---- Basic Chips ----
 	#[default]
@@ -63,6 +64,7 @@ pub enum ChipType {
 
 impl ChipType {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -72,22 +74,27 @@ impl ChipType {
 		Self::from_primitive(v)
 	}
 
+	#[must_use]
 	pub const fn is_bus_origin_type(self) -> bool {
 		matches!(self, Self::Bus1Bit | Self::Bus4Bit | Self::Bus8Bit)
 	}
 
+	#[must_use]
 	pub const fn is_bus_terminus_type(self) -> bool {
 		matches!(self, Self::BusTerminus1Bit | Self::BusTerminus4Bit | Self::BusTerminus8Bit)
 	}
 
+	#[must_use]
 	pub const fn is_bus_type(self) -> bool {
 		self.is_bus_origin_type() || self.is_bus_terminus_type()
 	}
 
+	#[must_use]
 	pub const fn is_merge_type(self) -> bool {
 		matches!(self, Self::Merge1To4Bit | Self::Merge1To8Bit | Self::Merge4To8Bit | Self::Split4To1Bit | Self::Split8To4Bit | Self::Split8To1Bit)
 	}
 
+	#[must_use]
 	pub const fn is_io_type(self) -> bool {
 		matches!(self, Self::In1Bit | Self::In4Bit | Self::In8Bit | Self::Out1Bit | Self::Out4Bit | Self::Out8Bit)
 	}
@@ -95,6 +102,7 @@ impl ChipType {
 	/// Dev-facing builtins (`dev.RAM-8` and the BUS-TERMINUS trio) that release builds keep out
 	/// of every player-facing list -- palette defaults, collection syncing/rows, the bottom bar,
 	/// and search (see `viewer::library::is_listed_in_current_build`).
+	#[must_use]
 	pub const fn is_dev_only(self) -> bool {
 		matches!(self, Self::DevRam8Bit | Self::BusTerminus1Bit | Self::BusTerminus4Bit | Self::BusTerminus8Bit)
 	}
@@ -103,6 +111,7 @@ impl ChipType {
 	/// `ChipTypeHelper.GetCorrespondingBusTerminusType`. `None` for anything
 	/// that isn't a bus origin (terminus types have no further pair of their
 	/// own).
+	#[must_use]
 	pub const fn corresponding_bus_terminus(self) -> Option<Self> {
 		match self {
 			Self::Bus1Bit => Some(Self::BusTerminus1Bit),
@@ -116,6 +125,7 @@ impl ChipType {
 	/// terminus type. `None` for anything that isn't a bus terminus
 	/// (origins pair the other way via
 	/// [`ChipType::corresponding_bus_terminus`]).
+	#[must_use]
 	pub const fn corresponding_bus_origin(self) -> Option<Self> {
 		match self {
 			Self::BusTerminus1Bit => Some(Self::Bus1Bit),
@@ -128,6 +138,7 @@ impl ChipType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
+#[must_use]
 pub enum ValueDisplayMode {
 	#[default]
 	None = 0,
@@ -142,6 +153,7 @@ impl ValueDisplayMode {
 	pub const ALL: [Self; 4] = [Self::None, Self::Decimal, Self::SignedDecimal, Self::Hex];
 
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -153,6 +165,7 @@ impl ValueDisplayMode {
 
 	/// Label shown on the pin-edit popup's "Decimal Display" option button
 	/// for this mode (mirrors `PinEditMenu.PinDecimalDisplayOptions`).
+	#[must_use]
 	pub const fn label(&self) -> &'static str {
 		match self {
 			Self::None => "Off",
@@ -167,6 +180,7 @@ impl ValueDisplayMode {
 /// `DLS.Description.NameDisplayLocation`, saved on disk as `NameLocation`
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
+#[must_use]
 pub enum NameLocation {
 	#[default]
 	Centre = 0,
@@ -176,6 +190,7 @@ pub enum NameLocation {
 
 impl NameLocation {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -190,6 +205,7 @@ impl NameLocation {
 /// `ChipDescription::should_be_cached` (`viewer::save_flow::resolve_should_cache`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
+#[must_use]
 pub enum CacheKind {
 	/// Not cached: either the chip isn't combinational, or
 	/// `should_be_cached` came out false.
@@ -209,6 +225,7 @@ pub enum CacheKind {
 
 impl CacheKind {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -218,10 +235,12 @@ impl CacheKind {
 		Self::from_primitive(v)
 	}
 
+	#[must_use]
 	pub const fn is_none(&self) -> bool {
 		matches!(self, Self::None)
 	}
 
+	#[must_use]
 	pub const fn is_off(&self) -> bool {
 		matches!(self, Self::Off)
 	}
@@ -235,6 +254,7 @@ impl CacheKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[must_use]
 pub struct PinAddress {
 	/// ID for this pin (unique within its owner, but not globally unique)
 	pub pin_id: i32,
@@ -250,6 +270,7 @@ impl PinAddress {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ConstFromPrimitive)]
 #[repr(i32)]
+#[must_use]
 pub enum PinBitCount {
 	#[default]
 	Bit1 = 1,
@@ -269,6 +290,7 @@ pub const PIN_RADIUS: f32 = PIN_HEIGHT_1BIT / 2.0;
 
 impl PinBitCount {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -280,6 +302,7 @@ impl PinBitCount {
 
 	/// Height (in world units) of this pin's connection stub. Mirrors
 	/// `SubChipHelper.PinHeightFromBitCount`.
+	#[must_use]
 	pub const fn pin_height(self) -> f32 {
 		match self {
 			Self::Bit1 => PIN_HEIGHT_1BIT,
@@ -289,6 +312,7 @@ impl PinBitCount {
 	}
 
 	/// World-space radius to draw this pin's connection circle at
+	#[must_use]
 	pub const fn pin_radius(self) -> f32 {
 		match self {
 			Self::Bit1 => PIN_RADIUS,
@@ -302,6 +326,7 @@ impl PinBitCount {
 	/// `radius = size.y / 2.0` and both `round_left`/`round_right = true` to
 	/// get the actual pill shape (its rounded corners become true semicircle
 	/// caps exactly when the radius equals half the height).
+	#[must_use]
 	pub const fn pin_visual_shape_size(self) -> Vec2 {
 		let r = self.pin_radius();
 		let body_width = match self {
@@ -315,6 +340,7 @@ impl PinBitCount {
 	/// Grid-height (in grid units) reserved for one pin along a chip's
 	/// edge. Mirrors the inline switch inside
 	/// `SubChipHelper.CalculateDefaultPinLayout`.
+	#[must_use]
 	pub(crate) const fn pin_grid_height(self) -> i32 {
 		match self {
 			Self::Bit1 => 2,
@@ -328,6 +354,7 @@ impl PinBitCount {
 	/// a single 1-bit input is one circle (no grid, 1x1); 4 bits arrange
 	/// as a 2x2 grid; 8 bits as 2x4 (same 2-wide column count, twice as
 	/// tall). Mirrors the `1 = 1, 4 = 2x2, 8 = 2x4` layout.
+	#[must_use]
 	pub const fn input_bit_grid_dims(self) -> (i32, i32) {
 		match self {
 			Self::Bit1 => (1, 1),
@@ -339,6 +366,7 @@ impl PinBitCount {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, ConstFromPrimitive)]
 #[repr(i32)]
+#[must_use]
 pub enum Color {
 	#[default]
 	Red = 0,
@@ -353,6 +381,7 @@ pub enum Color {
 
 impl Color {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -369,6 +398,7 @@ impl Color {
 }
 
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct PinDescription {
 	pub name: String,
 	pub id: i32,
@@ -411,6 +441,7 @@ impl PinDescription {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[must_use]
 pub struct SubChipDescription {
 	pub name: String,
 	/// Unique within parent chip. ID > 0
@@ -445,6 +476,7 @@ impl SubChipDescription {
 /// display-type builtin (`SevenSegmentDisplay` / `DisplayRgb` /
 /// `DisplayDot` / `DisplayLed`). Mirrors `DLS.Description.DisplayDescription`.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
 pub struct DisplayDescription {
 	/// Id of the subchip (within the owning chip's own `sub_chips`) whose
 	/// content this display shows.
@@ -471,6 +503,7 @@ impl DisplayDescription {
 /// *position* must be resolved along the referenced wire's segment instead of at the pin
 /// itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ConstFromPrimitive)]
+#[must_use]
 #[repr(i32)]
 pub enum WireConnectionType {
 	#[default]
@@ -481,6 +514,7 @@ pub enum WireConnectionType {
 
 impl WireConnectionType {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> i32 {
 		*self as i32
 	}
@@ -492,6 +526,7 @@ impl WireConnectionType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[must_use]
 pub struct WireDescription {
 	pub source_pin_address: PinAddress,
 	pub target_pin_address: PinAddress,
@@ -587,6 +622,7 @@ impl WireDescription {
 /// Full description of a chip: either a built-in primitive (Nand, Clock, ...)
 /// or a Custom chip made up of subchips and wires between them.
 #[derive(Debug, Clone, Default)]
+#[must_use]
 pub struct ChipDescription {
 	pub name: String,
 	pub chip_type: ChipType,
@@ -639,6 +675,7 @@ impl ChipDescription {
 /// Lookup table of all known chip descriptions (builtin + custom), keyed by
 /// case-insensitive name. Mirrors DLS.Game.ChipLibrary, minus editor concerns.
 #[derive(Debug, Default, Clone)]
+#[must_use]
 pub struct ChipLibrary {
 	by_name: std::collections::HashMap<String, std::sync::Arc<ChipDescription>>,
 }
@@ -654,6 +691,7 @@ impl ChipLibrary {
 
 	/// # Panics
 	/// if `try_get` woud return None
+	#[allow(clippy::panic)]
 	pub fn get(&self, name: &str) -> &ChipDescription {
 		self.by_name.get(&name.to_ascii_lowercase()).map_or_else(|| panic!("Chip not found in library: {name}"), std::sync::Arc::as_ref)
 	}
@@ -661,6 +699,8 @@ impl ChipLibrary {
 	/// Cheap-clone counterpart to `get`
 	/// # Panics
 	/// if `try_get` woud return None
+	#[must_use]
+	#[allow(clippy::panic)]
 	pub fn get_arc(&self, name: &str) -> std::sync::Arc<ChipDescription> {
 		self.by_name.get(&name.to_ascii_lowercase()).cloned().unwrap_or_else(|| panic!("Chip not found in library: {name}"))
 	}
@@ -673,6 +713,7 @@ impl ChipLibrary {
 	/// normal copy-on-write behaviour, not a regression.
 	/// # Panics
 	/// if `try_get` woud return None
+	#[allow(clippy::panic)]
 	pub fn get_mut(&mut self, name: &str) -> &mut ChipDescription {
 		let entry = self.by_name.get_mut(&name.to_ascii_lowercase()).unwrap_or_else(|| panic!("Chip not found in library: {name}"));
 		std::sync::Arc::make_mut(entry)

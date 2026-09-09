@@ -24,6 +24,7 @@ fn format_iso8601(unix_secs: i64, millis: u32) -> String {
 /// Formats an ISO-8601-ish timestamp into a human-readable relative string
 /// like "5 minutes ago", "3 hours ago", "2 days ago".
 /// Returns the raw string if parsing fails.
+#[must_use]
 pub fn to_relative_time(timestamp: &str) -> String {
 	let saved_secs = parse_to_unix_seconds(timestamp);
 	if saved_secs == i64::MIN {

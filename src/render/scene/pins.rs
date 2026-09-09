@@ -154,8 +154,8 @@ fn draw_dev_pin_value_label(
 	let grid_size = layout::input_dev_pin_body_size(bit_count);
 	let centre = Vec2::new(pos.x, pos.y - grid_size.y / 2.0 - OFFSET_Y);
 	let quad_w = grid_size.x.max(layout::GRID_SIZE.mul_add(2.0, layout::estimate_text_width(&text, theme::FONT_SIZE_CHIP_NAME)));
-	geo.add_rect(centre, Vec2::new(quad_w, 0.2), [0.0, 0.0, 0.0, 0.17]);
-	geo.labels.push(TextLabel { pos: centre, text, colour: [1.0, 1.0, 1.0, 1.0], font_size: theme::FONT_SIZE_CHIP_NAME, width: grid_size.x });
+	geo.add_rect(centre, Vec2::new(quad_w, 0.2), Rgba(0.0, 0.0, 0.0, 0.17));
+	geo.labels.push(TextLabel { pos: centre, text, colour: Rgba(1.0, 1.0, 1.0, 1.0), font_size: theme::FONT_SIZE_CHIP_NAME, width: grid_size.x });
 }
 
 /// Layer 2 (middle): every pin -- each subchip's input/output pins (`draw_pin_shape` -- a

@@ -281,7 +281,7 @@ fn conversions_invert_the_flip_so_the_visible_pin_keeps_its_side() {
 		sub.internal_data = Some(vec![4, 1]);
 	}
 
-	bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 3).expect("completes");
+	let _p = bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 1, 3).expect("completes");
 
 	assert_eq!(data_of(&chip, 3), vec![1, 0], "flipped origin -> unflipped terminus (left stays left)");
 
@@ -290,7 +290,7 @@ fn conversions_invert_the_flip_so_the_visible_pin_keeps_its_side() {
 	if let Some(sub) = chip.sub_chips.iter_mut().find(|s| s.id == 4) {
 		sub.internal_data = Some(vec![3, 1]);
 	}
-	bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 2, 4).expect("completes");
+	let _p = bus_wiring::resolve_bus_pair_completion(&mut chip, &library, 2, 4).expect("completes");
 	assert_eq!(data_of(&chip, 4), vec![2, 0], "flipped terminus (pin left) -> unflipped origin (pin left)");
 }
 

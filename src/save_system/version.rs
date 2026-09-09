@@ -10,7 +10,7 @@ pub const DLS_VERSION: Version = Version::new(2, 1, 6);
 
 /// The oldest project format this port promises to be able to open.
 pub const DLS_VERSION_EARLIEST_COMPATIBLE: Version = Version::new(2, 0, 0);
-
+#[must_use]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Version {
 	pub major: u32,
@@ -28,6 +28,7 @@ impl Version {
 	/// (`<`, `>`, ...) don't need this -- the derived `Ord` already compares major/minor/patch
 	/// lexicographically, which is correct even in the (very unlikely) case a minor or patch
 	/// component reaches three digits, unlike this packed-integer form.
+	#[must_use]
 	pub const fn to_int(self) -> i64 {
 		self.major as i64 * 100_000 + self.minor as i64 * 1_000 + self.patch as i64
 	}
@@ -48,6 +49,7 @@ impl Version {
 	}
 
 	/// Mirrors `Main.Version.TryParse`.
+	#[must_use]
 	pub fn try_parse(s: &str) -> Option<Self> {
 		Self::parse(s).ok()
 	}

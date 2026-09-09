@@ -13,6 +13,7 @@ use logic_sim_macros::ConstFromPrimitive;
 /// (mirrors `LOGIC_DISCONNECTED` / `DrawSettings.StateDisconnectedCol`).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ConstFromPrimitive)]
 #[repr(u8)]
+#[must_use]
 pub enum LogicState {
 	Low = 0,  // 00
 	High = 1, // 01
@@ -22,6 +23,7 @@ pub enum LogicState {
 
 impl LogicState {
 	/// Convert to the integer representation used on disk.
+	#[must_use]
 	pub const fn to_int(&self) -> u8 {
 		*self as u8
 	}
@@ -37,11 +39,13 @@ impl LogicState {
 	}
 
 	#[inline]
+	#[must_use]
 	pub const fn is_high(self) -> bool {
 		matches!(self, Self::High)
 	}
 
 	#[inline]
+	#[must_use]
 	pub const fn is_connected(self) -> bool {
 		!matches!(self, Self::Disconnected)
 	}
@@ -54,6 +58,7 @@ pub const LOGIC_DISCONNECTED: u8 = LogicState::Disconnected.to_int();
 
 /// Packed state of a pin/bus, tagged by how many wires it carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
 pub enum PinState {
 	/// A single wire -- the width of a plain gate output or 1-bit dev-pin.
 	Bit1(u16),
@@ -90,6 +95,7 @@ impl PinState {
 	/// This is the whole point of `PinState` being an enum rather than a
 	/// bare packed integer -- a value can report its own width.
 	#[inline]
+	#[must_use]
 	#[allow(clippy::len_without_is_empty)]
 	pub const fn len(self) -> u32 {
 		match self {
@@ -177,6 +183,7 @@ impl PinState {
 	}
 
 	#[inline]
+	#[must_use]
 	pub const fn raw(self) -> u16 {
 		match self {
 			Self::Bit1(v) | Self::Bit4(v) | Self::Bit8(v) => v,
@@ -224,11 +231,13 @@ impl PinState {
 	// --- whole-word access -------------------------------------------------
 
 	#[inline]
+	#[must_use]
 	pub const fn bit_states(self) -> u8 {
 		self.raw() as u8
 	}
 
 	#[inline]
+	#[must_use]
 	pub const fn tristate_flags(self) -> u8 {
 		(self.raw() >> 8) as u8
 	}
@@ -299,6 +308,7 @@ impl PinState {
 	/// Whether wire 0 reads as `High` (ignores tri-state -- historically used for
 	/// "is this control line asserted" checks).
 	#[inline]
+	#[must_use]
 	pub const fn first_bit_high(self) -> bool {
 		matches!(self.bit(0), LogicState::High)
 	}

@@ -91,8 +91,8 @@ fn register_chip_name_in_project(v: &mut ViewerState, paths: &SavePaths, remove_
 		if !v.prefs.chip_collections.iter().any(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)) {
 			v.prefs.chip_collections.push(crate::json::ChipCollection::new(DEFAULT_LIBRARY_COLLECTION_NAME, Vec::<String>::new()));
 		}
-		let other =
-			v.prefs.chip_collections.iter_mut().find(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
+		#[allow(clippy::expect_used)]
+		let other = v.prefs.chip_collections.iter_mut().find(|c| c.name.eq_ignore_ascii_case(DEFAULT_LIBRARY_COLLECTION_NAME)).expect("just ensured above");
 		other.chips.push(add_name.to_string());
 	}
 	v.prefs.recompute_all_custom_chip_names(&v.library);
@@ -715,7 +715,7 @@ mod tests {
 
 		let root = crate::save_system::test_util::temp_dir("caching_survives_root_switch");
 		let paths = SavePaths::new(&root);
-		crate::create_project(&paths, "P").expect("project created");
+		let _p = crate::create_project(&paths, "P").expect("project created");
 
 		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
 
