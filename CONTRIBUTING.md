@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This document outlines the conventions
 
 1. Fork the repository and clone it locally.
 2. Install Rust via [rustup](https://rustup.rs).
-3. Run `build.sh -y` once before making changes to confirm everything compiles and all tests pass on a clean tree.
+3. Run [`build.sh`](https://github.com/NukuHack/script/blob/main/shell/build.sh) once before making changes to confirm everything compiles and all tests pass on a clean tree. This script is just a convenience wrapper — you're free to run `cargo fmt`, `cargo clippy`, and `cargo test` yourself instead if you'd rather not use it.
 4. Create a branch with a descriptive name: `feat/short-description` or `fix/bug-name`.
 
 ## Code Style
@@ -15,14 +15,14 @@ Thanks for your interest in contributing. This document outlines the conventions
 
 Formatting is enforced by `cargo fmt` and linting by `cargo clippy`. All style
 parameters — indentation, line width, import ordering, and size heuristics — are
-defined in `rustfmt.toml`; consult it rather than assuming fixed limits. Configure
-your editor to respect that configuration so formatting is applied as you type.
+defined in `rustfmt.toml`; consult it rather than assuming fixed limits.
+Configure your editor to respect that configuration so formatting is applied as you type.
 
 Don't fight the formatter; if a diff looks larger than your change, it's probably
 just `cargo fmt` doing its job.
 
-> A `build.sh -y` script is provided in the repo root to run formatting, linting,
-> and tests together.
+> [`build.sh`](https://github.com/NukuHack/script/blob/main/shell/build.sh) is available to run formatting, linting,
+> and tests together — the same checks CI runs on every PR. It's optional: use it if it's convenient
 
 ### Variables and Types
 
@@ -78,16 +78,16 @@ repeat function and variable names in doc strings.
 Tests that can be expressed against the crate's **public API** live in `tests/` as integration
 tests, grouped by area (`render_foundation_test.rs`, `render_ui_test.rs`, `save_system_test.rs`,
 ...). Only white-box tests that genuinely depend on private or `pub(crate)` internals stay inline
-in `#[cfg(test)]` modules next to the code they cover -- and should say why in a comment.
-Integration tests go in `tests/`. New features should include unit tests; bug fixes
-must include a regression test that fails before the fix and passes after.
+in `#[cfg(test)]` modules next to the code they cover — and should say why in a comment.
+New features should include unit tests; bug fixes must include a regression test that
+fails before the fix and passes after.
 
 Property-based testing is encouraged for parsing and serialization logic; if you add
 such tests, prefer `proptest`.
 
 ## Pull Request Process
 
-1. Run `./build.sh -y` and make sure all checks and tests pass.
+1. Run [`build.sh`](https://github.com/NukuHack/script/blob/main/shell/build.sh) (`--web` first if you build for a browser-based environment) and make sure all checks and tests pass — or run `cargo fmt`, `cargo clippy`, and `cargo test` yourself if you prefer.
 2. Write or update tests for any behavioral changes.
 3. Update documentation if public API surfaces change.
 4. Keep commits focused and atomic; write commit messages in imperative mood.
@@ -109,8 +109,8 @@ description.
 ## Crate Organization
 
 Keep modules focused on a single responsibility. If a file grows past the size the
-project considers reasonable (enforced as a warning by `build.sh`), split it into
-submodules.
+project considers reasonable (flagged as a warning by [`build.sh`](https://github.com/NukuHack/script/blob/main/shell/build.sh),
+if you choose to use it), split it into submodules.
 
 ## Communication
 
