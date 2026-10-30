@@ -367,7 +367,7 @@ mod tests {
 		library.add(dev_builtin(ChipType::DevRam8Bit));
 
 		let mut prefs = ProjectDescription::default();
-		prefs.chip_collections.push(ChipCollection::new("BUS", vec![bus.clone(), terminus.clone()]));
+		prefs.chip_collections.push(ChipCollection::new("BUS", vec![bus.clone(), terminus]));
 		prefs.chip_collections.push(ChipCollection::new("MEMORY", vec![dev_ram.clone()]));
 		prefs.set_starred(&dev_ram, true, false);
 		prefs.set_starred("MY COLLECTION", true, true);
@@ -494,10 +494,9 @@ mod tests {
 
 	#[test]
 	fn recompute_all_custom_chip_names_derives_from_library_not_bookkeeping() {
-		let mut prefs = ProjectDescription::default();
 		// Stale/garbage entries a hand-maintained list could have accumulated --
 		// recompute must replace them outright, not merge with them.
-		prefs.all_custom_chip_names = vec!["Stale".to_string(), "Ghost".to_string()];
+		let mut prefs = ProjectDescription { all_custom_chip_names: vec!["Stale".to_string(), "Ghost".to_string()], ..Default::default() };
 		let mut library = lib_with_chips(&["Beta", "Alpha"]);
 		library.add(ChipDescription::new("AND", ChipType::Nand));
 

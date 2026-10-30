@@ -1,6 +1,15 @@
 MIT License
 
 Copyright (c) 2026 NukuHack
+Copyright (c) 2025 Sebastian Lague
+
+This project is a Rust port of "Digital Logic Sim" by Sebastian Lague
+(https://github.com/SebastianLague/Digital-Logic-Sim), which is distributed
+under the MIT License below. The simulation core, the save-file format and the
+on-disk project layout are derived from that original work, so its copyright
+and permission notice are retained here, as the license requires. The Rust
+port's own additions and modifications are copyright (c) 2026 NukuHack under
+the same terms.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

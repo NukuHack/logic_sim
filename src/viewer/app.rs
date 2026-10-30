@@ -366,7 +366,7 @@ mod status_toast_tests {
 
 	/// Back-dates the appearance clock, simulating an old toast.
 	fn age_toast(app: &mut App, seconds: u64) {
-		app.status_since = Some(std::time::Instant::now() - std::time::Duration::from_secs(seconds));
+		app.status_since = Some(std::time::Instant::now().checked_sub(std::time::Duration::from_secs(seconds)).unwrap());
 	}
 
 	#[test]

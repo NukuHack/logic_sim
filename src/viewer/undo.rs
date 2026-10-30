@@ -40,7 +40,7 @@ impl UndoController {
 	/// How many actions have ever been recorded (minus truncated redo
 	/// tails) -- test introspection for "did this gesture record anything".
 	#[cfg(test)]
-	pub(crate) fn history_len(&self) -> usize {
+	pub(crate) const fn history_len(&self) -> usize {
 		self.history.len()
 	}
 }

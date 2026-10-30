@@ -711,13 +711,21 @@ impl ViewerState {
 	/// (it can't be edited while viewed, so this is purely defensive)
 	/// falls back to the root rather than drawing something stale.
 	pub(crate) fn resolve_scene_target(&self) -> SceneTarget {
-		let Some(top) = self.view_stack.last() else { return SceneTarget::EditRoot };
-		let sim = self.sim.lock();
+		let Some(top) = self.view_stack.last() else {
+			self.sim.lock().set_observed_scope(None);
+			return SceneTarget::EditRoot;
+		};
+		let mut sim = self.sim.lock();
 		let mut scope = sim.root();
 		for id in &top.path {
-			let Some(next) = sim.find_sub_chip(scope, *id) else { return SceneTarget::EditRoot };
+			let Some(next) = sim.find_sub_chip(scope, *id) else {
+				sim.set_observed_scope(None);
+				return SceneTarget::EditRoot;
+			};
 			scope = next;
 		}
+		// Chips on the way down to the viewed one must run for real so its insides stay live.
+		sim.set_observed_scope(Some(scope));
 		drop(sim);
 		SceneTarget::Viewed { name: top.name.clone(), scope }
 	}

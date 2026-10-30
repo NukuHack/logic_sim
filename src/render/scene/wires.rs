@@ -432,7 +432,8 @@ mod tests {
 		// 2 quads = 12 verts), so wire 1's quad sits at indices [12..18]. Within that quad, `add_line`
 		// builds two triangles sharing edge (a+n)-(b-n): source-end corners are vertex 0 and vertex 5.
 		let wire1_verts = &scene.triangles[12..18];
-		let start_mid = Vec2::new((wire1_verts[0].pos.x + wire1_verts[5].pos.x) / 2.0, (wire1_verts[0].pos.y + wire1_verts[5].pos.y) / 2.0);
+		let start_mid =
+			Vec2::new(f32::midpoint(wire1_verts[0].pos.x, wire1_verts[5].pos.x), f32::midpoint(wire1_verts[0].pos.y, wire1_verts[5].pos.y));
 		assert_eq!(start_mid, expected_tap_point);
 	}
 
@@ -481,7 +482,7 @@ mod tests {
 		// verts 1 and 2 straddle `b`. The second quad's `b` is the end of
 		// the last segment -- the attachment point.
 		let last_quad = &scene.triangles[18..24];
-		let end_mid = Vec2::new((last_quad[1].pos.x + last_quad[2].pos.x) / 2.0, (last_quad[1].pos.y + last_quad[2].pos.y) / 2.0);
+		let end_mid = Vec2::new(f32::midpoint(last_quad[1].pos.x, last_quad[2].pos.x), f32::midpoint(last_quad[1].pos.y, last_quad[2].pos.y));
 		assert_eq!(end_mid, expected_tap_point);
 	}
 

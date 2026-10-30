@@ -6,6 +6,8 @@
 
 use crate::description::{CacheKind, ChipDescription, ChipLibrary, ChipType, PinAddress, PinBitCount};
 use crate::gate_op::CachingState;
+
+mod memo_impl;
 use crate::pin_state::PinState;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +27,10 @@ pub struct ChipIdx(pub usize);
 pub struct SimPin {
 	pub id: i32,
 	pub parent_chip: ChipIdx,
+	/// The owning chip's saved instance id (`SimChip::id`), duplicated here so
+	/// `receive_input` -- the hottest function in the simulator -- doesn't have to
+	/// chase `chips[pins[source].parent_chip]` for every wire crossing it handles.
+	pub parent_chip_id: i32,
 	pub is_input: bool,
 	pub state: PinState,
 
@@ -42,10 +48,11 @@ pub struct SimPin {
 }
 
 impl SimPin {
-	const fn new(id: i32, is_input: bool, parent_chip: ChipIdx, bit_count: PinBitCount) -> Self {
+	const fn new(id: i32, is_input: bool, parent_chip: ChipIdx, parent_chip_id: i32, bit_count: PinBitCount) -> Self {
 		Self {
 			id,
 			parent_chip,
+			parent_chip_id,
 			is_input,
 			state: PinState::disconnected_with_width(bit_count),
 			connected_target_pins: Vec::new(),
@@ -83,6 +90,38 @@ pub struct SimChip {
 
 	pub num_connected_inputs: i32,
 	pub num_inputs_ready: i32,
+
+	/// Where this chip's evaluation currently goes (see [`FastPath`]), resolved lazily and
+	/// re-resolved whenever `fast_epoch` no longer matches [`CachingState::epoch`].
+	pub(crate) fast: FastPath,
+	pub(crate) fast_epoch: u64,
+	/// For a chip running on a learned transition table (see `gate_op::memo`): the interned
+	/// id of its current internal state, or [`MEMO_UNINIT`] when its real pins are the
+	/// authority. While this is set, the pins *inside* the chip are stale.
+	pub(crate) memo_state: u32,
+	/// First arena chip index belonging to this chip's subtree (children are allocated
+	/// before their parent, so the subtree is `sub_chip_lo..=own index`).
+	pub(crate) sub_chip_lo: u32,
+	/// Arena pin range of this chip's subtree: `sub_pin_lo..pin_hi`, own pins last.
+	pub(crate) sub_pin_lo: u32,
+	pub(crate) pin_hi: u32,
+}
+
+/// `SimChip::memo_state` value meaning "no learned state: the real pins are authoritative".
+pub(crate) const MEMO_UNINIT: u32 = u32::MAX;
+
+/// A chip's resolved evaluation strategy, cached on the chip so a step doesn't re-derive it
+/// (previously: a `HashMap` lookup keyed by the chip's name *string* on every step).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FastPath {
+	/// Not resolved yet (or stale -- see `SimChip::fast_epoch`).
+	Unresolved,
+	/// Plain recursive simulation.
+	None,
+	/// Combinational chip served from `caching.combinational_chip_cache`'s gate in this slot.
+	Gate(u32),
+	/// Sequential chip served from `caching.memo`'s learned transition table in this slot.
+	Memo(u32),
 }
 
 impl SimChip {
@@ -112,7 +151,13 @@ pub struct Simulator {
 	pub steps_per_clock_transition: u32,
 
 	needs_order_pass: bool,
-	can_dynamic_reorder_this_frame: bool,
+	pub(crate) can_dynamic_reorder_this_frame: bool,
+	/// > 0 while a learned-table miss is being computed by really simulating a chip's insides:
+	/// > nothing underneath may take a cache/memo shortcut then, or the captured state would be
+	/// > incomplete.
+	suppress_caches: u32,
+	/// The chip the viewer is currently looking *inside* (see [`Self::set_observed_scope`]).
+	observed_scope: Option<ChipIdx>,
 
 	pcg_rng_state: u32,
 	/// A standalone `fastrand::Rng` rather than the thread-local generator so a whole built
@@ -139,6 +184,9 @@ pub struct Simulator {
 	/// (applied via `viewer::sim_thread::SimHandle::set_use_caching`) can flip it directly
 	/// through the shared-simulator lock, same as every other prefs-driven field here.
 	pub use_caching: bool,
+	/// Learn transition tables for sequential chips ("memory discovery", see
+	/// [`crate::gate_op`]'s `memo`). Only consulted while `use_caching` is on.
+	pub use_state_memo: bool,
 }
 
 impl Default for Simulator {
@@ -153,6 +201,8 @@ impl Default for Simulator {
 
 			needs_order_pass: false,
 			can_dynamic_reorder_this_frame: false,
+			suppress_caches: 0,
+			observed_scope: None,
 
 			pcg_rng_state: 0,
 			rng: fastrand::Rng::new(), // or fastrand::Rng::with_seed(0) for deterministic
@@ -165,6 +215,7 @@ impl Default for Simulator {
 
 			caching: CachingState::default(),
 			use_caching: true,
+			use_state_memo: true,
 		}
 	}
 }
@@ -322,6 +373,8 @@ impl Simulator {
 			steps_per_clock_transition: 30,
 			needs_order_pass: true,
 			can_dynamic_reorder_this_frame: false,
+			suppress_caches: 0,
+			observed_scope: None,
 			pcg_rng_state: 0,
 			rng: fastrand::Rng::new(),
 			start_time: Instant::now(),
@@ -330,6 +383,7 @@ impl Simulator {
 			driven_inputs: HashMap::new(),
 			caching: CachingState::default(),
 			use_caching: true,
+			use_state_memo: true,
 		}
 	}
 
@@ -563,85 +617,135 @@ impl Simulator {
 	/// Evaluates one direct subchip: builtins dispatch in O(1) as always;
 	/// a combinational custom chip takes the cached-LUT fast path once
 	/// [`Self::caching`] has one for it (mirrors
-	/// `Simulator.ProcessCachedChip`/`RecalculateCachedLUTs`); anything
-	/// else falls back to a full recursive [`Self::step_chip`].
+	/// `Simulator.ProcessCachedChip`/`RecalculateCachedLUTs`); a sequential one with a learned
+	/// transition table takes that; anything else falls back to a full recursive
+	/// [`Self::step_chip`].
 	fn step_sub_chip(&mut self, chip_idx: ChipIdx, audio: &mut crate::audio::SimAudio) {
 		if self.chips[chip_idx.0].is_builtin {
 			self.process_builtin_chip(chip_idx, audio);
 			return;
 		}
 
-		if self.use_caching {
-			let name = Arc::clone(&self.chips[chip_idx.0].name);
-
-			if self.caching.combinational_chip_cache.contains_key(name.as_ref()) {
-				if self.process_cached_chip(chip_idx) {
-					return;
+		if self.use_caching && self.suppress_caches == 0 {
+			let path = self.resolve_fast_path(chip_idx);
+			match path {
+				FastPath::Gate(slot) => {
+					if self.process_cached_chip(chip_idx, slot) {
+						return;
+					}
+					// A tri-state input declined the lookup (never enumerated into the table)
+					// -- use the real simulation.
 				}
-				// A tri-state input declined the lookup (never enumerated
-				// into the table) -- use the real simulation.
-			} else if !self.caching.not_combinational_chip_cache.contains(name.as_ref()) {
-				crate::gate_op::recalculate_chip_cache(self, chip_idx);
-
-				if self.caching.combinational_chip_cache.contains_key(name.as_ref()) && self.process_cached_chip(chip_idx) {
-					return;
+				FastPath::Memo(slot) => {
+					if self.process_memo_chip(chip_idx, slot, audio) {
+						return;
+					}
 				}
+				FastPath::None | FastPath::Unresolved => {}
 			}
+		}
+		// About to really simulate it: if it was living on a learned state, its pins are stale.
+		if self.chips[chip_idx.0].memo_state != MEMO_UNINIT {
+			self.memo_materialize(chip_idx);
 		}
 		self.step_chip(chip_idx, audio);
 	}
 
+	/// The chip's evaluation strategy. The result is stored on the chip and reused until the
+	/// caches change ([`CachingState::epoch`]); in steady state this is one integer compare.
+	#[inline]
+	fn resolve_fast_path(&mut self, chip_idx: ChipIdx) -> FastPath {
+		let epoch = self.caching.epoch();
+		let chip = &self.chips[chip_idx.0];
+		if chip.fast_epoch == epoch && chip.fast != FastPath::Unresolved {
+			return chip.fast;
+		}
+		self.resolve_fast_path_slow(chip_idx)
+	}
+
+	#[cold]
+	fn resolve_fast_path_slow(&mut self, chip_idx: ChipIdx) -> FastPath {
+		let name = Arc::clone(&self.chips[chip_idx.0].name);
+
+		let mut path = self.lookup_fast_path(chip_idx, &name);
+		if path.is_none() {
+			// Never looked at this chip name before: decide combinational-or-not now. (This is
+			// the only place a lazily-built cache is created; it recurses bottom-up through
+			// the chip's subchips, which resolve themselves the same way.)
+			crate::gate_op::recalculate_chip_cache(self, chip_idx);
+			path = self.lookup_fast_path(chip_idx, &name);
+		}
+		let path = path.unwrap_or(FastPath::None);
+
+		let epoch = self.caching.epoch();
+		let chip = &mut self.chips[chip_idx.0];
+		chip.fast = path;
+		chip.fast_epoch = epoch;
+		path
+	}
+
+	/// Resolves `name` against the existing caches without building anything new, except the
+	/// sequential-memo analysis for a chip already known to be non-combinational. `None` means
+	/// "nobody has decided about this chip yet".
+	fn lookup_fast_path(&mut self, chip_idx: ChipIdx, name: &Arc<str>) -> Option<FastPath> {
+		if let Some(slot) = self.caching.combinational_chip_cache.slot_of(name) {
+			return Some(FastPath::Gate(slot));
+		}
+		if self.caching.not_combinational_chip_cache.contains(name) {
+			return Some(self.resolve_memo_path(chip_idx, name));
+		}
+		None
+	}
+
 	/// Mirrors `Simulator.ProcessCachedChip`: sets `chip_idx`'s outputs by indexing into its
-	/// LUT instead of simulating. Returns `false` ("fall back to a real step") if any input
-	/// pin is tri-state (never enumerated into the table), or if there's no LUT for this chip
-	/// yet.
+	/// gate (`slot` in `caching.combinational_chip_cache`) instead of simulating. Returns `false`
+	/// ("fall back to a real step") if any input pin is tri-state (never enumerated into the
+	/// table), or if the gate declines the input.
 	///
-	/// Lives here so it can borrow `self.caching` (the cache row) and `self.pins`/`self.chips`
+	/// Lives here so it can borrow `self.caching` (the gate) and `self.pins`/`self.chips`
 	/// (to write the outputs) as the disjoint fields they are, instead of going through
 	/// `chip()`/`pin()`/`pin_mut()` helpers that each take all of `&self`/`&mut self` and so
-	/// can't be live at once. That let the old version end the cache borrow early by cloning
-	/// the row (and the input/output pin lists) before writing
-	pub(crate) fn process_cached_chip(&mut self, chip_idx: ChipIdx) -> bool {
-		// Performance optimization: Avoid Arc refcount increment/decrement on every cached gate eval
-		// by borrowing name directly from the chip arena.
-		let name = &self.chips[chip_idx.0].name[..];
+	/// can't be live at once.
+	#[inline]
+	pub(crate) fn process_cached_chip(&mut self, chip_idx: ChipIdx, slot: u32) -> bool {
+		let Some(gate) = self.caching.combinational_chip_cache.gate(slot) else {
+			return false;
+		};
+		let chip = &self.chips[chip_idx.0];
 
-		let num_inputs = self.chips[chip_idx.0].input_pins.len();
 		let mut input: u64 = 0;
 		let mut shift = 0u32;
-		for i in 0..num_inputs {
-			let p = self.chips[chip_idx.0].input_pins[i];
+		for &p in &chip.input_pins {
 			let state = self.pins[p.0].state;
-			if state.tristate_flags() != 0 {
+			let len = state.len();
+			// Only the pin's real wires count: `PinState` constructors leave the tristate byte's
+			// bits *above* the width set (all-ones), so testing the whole byte made every
+			// 1-bit/4-bit pin look disconnected and the cache never applied.
+			let live = ((1u16 << len) - 1) as u8;
+			if state.tristate_flags() & live != 0 {
 				return false;
 			}
-			input |= u64::from(state.bit_states()) << shift;
-			shift += state.len();
+			input |= u64::from(state.bit_states() & live) << shift;
+			shift += len;
 		}
 
-		let num_outputs = self.chips[chip_idx.0].output_pins.len();
-		{
-			let Some(gate) = self.caching.combinational_chip_cache.get(name) else {
-				return false;
-			};
-			// Performance optimization: Avoid heap allocation on every cached gate eval for chips with <= 32 output pins.
-			// Fast stack array for typical gates (1-32 outputs), falling back to Vec for rare wider chips.
-			let mut stack_out = [0u32; 32];
-			let mut heap_out: Vec<u32>;
-			let out: &mut [u32] = if num_outputs <= 32 {
-				&mut stack_out[..num_outputs]
-			} else {
-				heap_out = vec![0u32; num_outputs];
-				heap_out.as_mut_slice()
-			};
-			if !gate.eval(input, out) {
-				return false;
-			}
-			for (i, &data) in out.iter().enumerate() {
-				let p = self.chips[chip_idx.0].output_pins[i];
-				let width = self.pins[p.0].state.width();
-				self.pins[p.0].state = PinState::from_raw_with_width(data as u16, width);
-			}
+		let num_outputs = chip.output_pins.len();
+		// Fast stack buffer for typical gates, falling back to a Vec for rare very wide chips.
+		let mut stack_out = [0u32; 16];
+		let mut heap_out: Vec<u32>;
+		let out: &mut [u32] = if num_outputs <= stack_out.len() {
+			&mut stack_out[..num_outputs]
+		} else {
+			heap_out = vec![0u32; num_outputs];
+			heap_out.as_mut_slice()
+		};
+		if !gate.eval(input, out) {
+			return false;
+		}
+		for (&p, &data) in chip.output_pins.iter().zip(out.iter()) {
+			let pin = &mut self.pins[p.0];
+			let width = pin.state.width();
+			pin.state = PinState::from_raw_with_width(data as u16, width);
 		}
 		true
 	}
@@ -662,6 +766,9 @@ impl Simulator {
 			num_remaining -= 1;
 
 			if self.chips[next_sub_chip.0].chip_type == ChipType::Custom {
+				if self.chips[next_sub_chip.0].memo_state != MEMO_UNINIT {
+					self.memo_materialize(next_sub_chip);
+				}
 				self.step_chip_reorder(next_sub_chip, audio);
 			} else {
 				self.process_builtin_chip(next_sub_chip, audio);
@@ -725,65 +832,73 @@ impl Simulator {
 	}
 
 	fn propagate_signal(&mut self, source: PinIdx) {
-		// The innermost hot loop of the whole simulation -- one pass per
-		// propagated pin per tick. Cloning the target list here was one
-		// heap alloc per wire crossing per chip per tick.
-		let num_targets = self.pins[source.0].connected_target_pins.len();
-		for i in 0..num_targets {
-			let target = self.pins[source.0].connected_target_pins[i];
+		// The innermost hot loop of the whole simulation -- one pass per propagated pin per
+		// tick. The target list is moved out for the duration (a pointer swap, no allocation)
+		// so the loop body can mutate other pins freely without re-indexing `pins[source]`
+		// and re-checking its bounds for every target.
+		let targets = std::mem::take(&mut self.pins[source.0].connected_target_pins);
+		for &target in &targets {
 			self.receive_input(target, source);
 		}
+		self.pins[source.0].connected_target_pins = targets;
 	}
 
 	/// Called on sub-chip input pins, or chip dev-pins, when a connected
 	/// source pin propagates its signal to them.
+	#[inline]
 	fn receive_input(&mut self, target: PinIdx, source: PinIdx) {
 		let frame = self.simulation_frame;
-		// The source side is read-only here: snapshot it once up front so
-		// the writes below never re-walk `pins[source]`/`chips[..]` (and
-		// so a pin wired to itself still sees its pre-call state).
-		let source_state = self.pins[source.0].state;
-		let source_id = self.pins[source.0].id;
-		let source_parent_chip_id = self.chips[self.pins[source.0].parent_chip.0].id;
+		// The source side is read-only here: snapshot it once up front so the writes below never
+		// re-walk `pins[source]` (and so a pin wired to itself still sees its pre-call state).
+		let (source_state, source_id, source_parent_chip_id) = {
+			let s = &self.pins[source.0];
+			(s.state, s.id, s.parent_chip_id)
+		};
 
-		if self.pins[target.0].last_updated_frame_index != frame {
-			self.pins[target.0].last_updated_frame_index = frame;
-			self.pins[target.0].num_inputs_received_this_frame = 0;
+		let t = &mut self.pins[target.0];
+		if t.last_updated_frame_index != frame {
+			t.last_updated_frame_index = frame;
+			t.num_inputs_received_this_frame = 0;
 		}
 
-		let set;
-		if self.pins[target.0].num_inputs_received_this_frame > 0 {
-			// Already received input this frame: choose randomly whether to
-			// accept the conflicting input (same choice for all bits).
-			let cur_state = self.pins[target.0].state;
-			let or = source_state.or(cur_state);
-			let and = source_state.and(cur_state);
-			let bits_new = if self.random_bool() { or.bit_states() } else { and.bit_states() };
-
-			let mask = or.tristate_flags(); // any wire disconnected on either side
-			let bits_new = (bits_new & !mask) | (or.bit_states() & mask);
-
-			let state_new = PinState::from_parts(bits_new, and.tristate_flags());
-
-			set = state_new != cur_state;
-			self.pins[target.0].state = state_new;
-		} else {
-			self.pins[target.0].state = source_state;
-			set = true;
-		}
-
-		if set {
-			let t = &mut self.pins[target.0];
+		if t.num_inputs_received_this_frame == 0 {
+			// First (usually only) driver this frame: just take its value.
+			t.state = source_state;
 			t.latest_source_id = source_id;
 			t.latest_source_parent_chip_id = source_parent_chip_id;
+		} else {
+			self.receive_conflicting_input(target, source_state, source_id, source_parent_chip_id);
 		}
 
-		self.pins[target.0].num_inputs_received_this_frame += 1;
-
-		let target_pin = &self.pins[target.0];
-		if target_pin.is_input && target_pin.num_inputs_received_this_frame == target_pin.num_input_connections {
-			let parent = target_pin.parent_chip;
+		let t = &mut self.pins[target.0];
+		t.num_inputs_received_this_frame += 1;
+		if t.is_input && t.num_inputs_received_this_frame == t.num_input_connections {
+			let parent = t.parent_chip;
 			self.chips[parent.0].num_inputs_ready += 1;
+		}
+	}
+
+	/// A second (or later) driver reached `target` this frame: choose randomly whether to
+	/// accept the conflicting input (same choice for all bits). Rare, so kept out of line.
+	#[cold]
+	#[inline(never)]
+	fn receive_conflicting_input(&mut self, target: PinIdx, source_state: PinState, source_id: i32, source_parent_chip_id: i32) {
+		let cur_state = self.pins[target.0].state;
+		let or = source_state.or(cur_state);
+		let and = source_state.and(cur_state);
+		let bits_new = if self.random_bool() { or.bit_states() } else { and.bit_states() };
+
+		let mask = or.tristate_flags(); // any wire disconnected on either side
+		let bits_new = (bits_new & !mask) | (or.bit_states() & mask);
+
+		let state_new = PinState::from_parts(bits_new, and.tristate_flags());
+
+		let set = state_new != cur_state;
+		let t = &mut self.pins[target.0];
+		t.state = state_new;
+		if set {
+			t.latest_source_id = source_id;
+			t.latest_source_parent_chip_id = source_parent_chip_id;
 		}
 	}
 
@@ -1241,6 +1356,9 @@ fn build_recursive(
 	chips: &mut Vec<SimChip>,
 	interner: &mut HashMap<String, Arc<str>>,
 ) -> ChipIdx {
+	let sub_chip_lo = chips.len() as u32;
+	let sub_pin_lo = pins.len() as u32;
+
 	// Recursively create subchips first. A subchip whose type can't be found in `library` is dropped rather than panicking the whole build: any
 	// wires that targeted it simply fail to resolve in `connect` below and are ignored the same way a wire to an already-removed pin is,
 	// so a missing chip degrades to "that instance is gone" instead of taking the app down.
@@ -1273,24 +1391,31 @@ fn build_recursive(
 		sub_chips: sub_chip_indices,
 		num_connected_inputs: 0,
 		num_inputs_ready: 0,
+		fast: FastPath::Unresolved,
+		fast_epoch: u64::MAX,
+		memo_state: MEMO_UNINIT,
+		sub_chip_lo,
+		sub_pin_lo,
+		pin_hi: 0,
 	});
 
 	let mut input_pins = Vec::with_capacity(desc.input_pins.len());
 	for p in &desc.input_pins {
 		let idx = PinIdx(pins.len());
-		pins.push(SimPin::new(p.id, true, chip_idx, p.bit_count));
+		pins.push(SimPin::new(p.id, true, chip_idx, sub_chip_id, p.bit_count));
 		input_pins.push(idx);
 	}
 
 	let mut output_pins = Vec::with_capacity(desc.output_pins.len());
 	for p in &desc.output_pins {
 		let idx = PinIdx(pins.len());
-		pins.push(SimPin::new(p.id, false, chip_idx, p.bit_count));
+		pins.push(SimPin::new(p.id, false, chip_idx, sub_chip_id, p.bit_count));
 		output_pins.push(idx);
 	}
 
 	chips[chip_idx.0].input_pins = input_pins;
 	chips[chip_idx.0].output_pins = output_pins;
+	chips[chip_idx.0].pin_hi = pins.len() as u32;
 
 	// Wire up connections declared on this (custom) chip.
 	for wire in &desc.wires {
@@ -1400,9 +1525,10 @@ mod dangling_subchip_tests {
 
 	use super::*;
 	use crate::description::SubChipDescription;
+	use glam::Vec2;
 
 	fn sub(name: &str, id: i32) -> SubChipDescription {
-		SubChipDescription { name: name.into(), id, internal_data: None, position: Default::default(), label: None, pin_colour_info: Vec::new() }
+		SubChipDescription { name: name.into(), id, internal_data: None, position: Vec2::default(), label: None, pin_colour_info: Vec::new() }
 	}
 
 	#[test]
@@ -1451,6 +1577,7 @@ mod internal_state_carry_tests {
 
 	use super::*;
 	use crate::description::SubChipDescription;
+	use glam::Vec2;
 
 	fn simulator_with_ram() -> Simulator {
 		let mut library = ChipLibrary::new();
@@ -1460,7 +1587,7 @@ mod internal_state_carry_tests {
 			name: "dev.RAM-8".into(),
 			id: 5,
 			internal_data: None,
-			position: Default::default(),
+			position: Vec2::default(),
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
@@ -1471,7 +1598,7 @@ mod internal_state_carry_tests {
 			name: "dev.RAM-8".into(),
 			id: 6,
 			internal_data: None,
-			position: Default::default(),
+			position: Vec2::default(),
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
@@ -1480,7 +1607,7 @@ mod internal_state_carry_tests {
 			name: "INNER".into(),
 			id: 7,
 			internal_data: None,
-			position: Default::default(),
+			position: Vec2::default(),
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
@@ -1523,7 +1650,7 @@ mod internal_state_carry_tests {
 		assert_eq!(ram_word(&second, 6, 3), Some(0xF00D), "the nested RAM's contents carried over too");
 	}
 
-	fn key_chip_state<'a>(sim: &'a Simulator, id: i32) -> &'a [u32] {
+	fn key_chip_state(sim: &Simulator, id: i32) -> &[u32] {
 		for idx in 0..sim.chips.len() {
 			if sim.chips[idx].id == id && sim.chips[idx].chip_type == ChipType::Key {
 				return &sim.chips[idx].internal_state;
@@ -1546,7 +1673,7 @@ mod internal_state_carry_tests {
 			name: "Key".into(),
 			id: 1,
 			internal_data: Some(vec!['A' as u32]),
-			position: Default::default(),
+			position: Vec2::default(),
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
@@ -1578,7 +1705,7 @@ mod internal_state_carry_tests {
 			name: "dev.RAM-8".into(),
 			id: 9,
 			internal_data: None,
-			position: Default::default(),
+			position: Vec2::default(),
 			label: None,
 			pin_colour_info: Vec::new(),
 		});
@@ -1592,7 +1719,7 @@ mod internal_state_carry_tests {
 			name: "NAND".into(),
 			id: 9,
 			internal_data: None,
-			position: Default::default(),
+			position: Vec2::default(),
 			label: None,
 			pin_colour_info: Vec::new(),
 		});

@@ -19,14 +19,16 @@
 mod bitvec;
 mod caching;
 mod eval;
+pub(crate) mod memo;
 mod recognize;
 
 pub use caching::{
-	CachingState, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING, calculate_num_input_bits, is_combinational,
-	recalculate_chip_cache, reset_received_flags_on_all_pins,
+	CachingState, GateCache, MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING, MAX_NUM_INPUT_BITS_WHEN_USER_CACHING, NameSet, calculate_num_input_bits,
+	is_combinational, recalculate_chip_cache, reset_received_flags_on_all_pins,
 };
-pub use eval::{Bits, CachedGate, Lut, Native, NativeList, NativeMulti, NativeSplit};
-pub use recognize::{Candidate, recognize, registry};
+pub use eval::{Bits, CachedGate, FastFn, Lut, Native, NativeList, NativeMulti, NativeSplit};
+pub use memo::{MemoStats, MemoStore};
+pub use recognize::{Candidate, recognize, recognize_native, registry};
 
 /// Largest input width a [`Lut`] table can be built at all: `1u64 << in_bits` (the row count)
 /// would overflow above this. Not a memory budget -- a real table is unbuildable long before
@@ -50,6 +52,6 @@ pub fn build_lut(in_bits: u32, out_bits: u32, fill: impl Fn(u64) -> u64) -> Opti
 	}
 
 	let rows = 1u64 << in_bits;
-	let table: Vec<Vec<u32>> = (0..rows).map(|r| vec![fill(r) as u32]).collect();
-	Some(Lut::new(table))
+	let table: Vec<u32> = (0..rows).map(|r| fill(r) as u32).collect();
+	Some(Lut::from_flat(table, 1))
 }

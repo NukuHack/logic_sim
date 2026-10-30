@@ -99,11 +99,11 @@ fn formula_handles_wide_adder_without_a_table() {
 	let gate = formula_from_candidate("ADDER_N", in_bits, out_bits);
 	let n = (in_bits / 2) as usize;
 	let mut input = vec![false; in_bits as usize];
-	for i in 0..n {
-		input[i] = i % 3 == 0; // arbitrary a
+	for (i, item) in input.iter_mut().enumerate().take(n) {
+		*item = i % 3 == 0; // arbitrary a
 	}
-	for i in 0..n {
-		input[n + i] = i % 5 == 0; // arbitrary c
+	for (i, item) in input.iter_mut().enumerate().take(n).skip(n) {
+		*item = i % 5 == 0; // arbitrary c
 	}
 	let a: u64 = (0..n).fold(0, |acc, i| acc | ((input[i] as u64) << i));
 	let c: u64 = (0..n).fold(0, |acc, i| acc | ((input[n + i] as u64) << i));
@@ -567,8 +567,8 @@ fn native_handles_a_100_bit_adder() {
 	let n = 100usize;
 	let mut input = vec![false; in_bits as usize];
 	// a = all-ones (2^100 - 1), c = 1 -> sum = 2^100, i.e. only the carry-out bit set.
-	for i in 0..n {
-		input[i] = true;
+	for (_i, item) in input.iter_mut().enumerate().take(n) {
+		*item = true;
 	}
 	input[n] = true;
 
@@ -699,4 +699,38 @@ fn recognizes_wide_and_with_many_input_bits() {
 	let mut one_false = vec![true; in_bits as usize];
 	one_false[19] = false;
 	assert_eq!(eval_bools(&*gate, 1, &one_false), vec![false]);
+}
+
+/// Every registry candidate's allocation-free `fast` formula must agree with its arbitrary-width
+/// reference `formula` on every single-word input: exhaustively for small widths, by sampling
+/// for wide ones.
+#[test]
+fn fast_formulas_match_reference_formulas_for_every_candidate() {
+	use logic_sim::gate_op::registry;
+	let mut rng = fastrand::Rng::with_seed(1);
+	let mut checked = 0usize;
+	for c in registry() {
+		for in_bits in 1u32..=40 {
+			for out_bits in 1u32..=33 {
+				if !c.is_applicable(in_bits, out_bits) {
+					continue;
+				}
+				let inputs: Vec<u64> = if in_bits <= 12 {
+					(0..1u64 << in_bits).collect()
+				} else {
+					let m = (1u64 << in_bits) - 1;
+					let mut v: Vec<u64> = (0..2000).map(|_| rng.u64(..) & m).collect();
+					v.extend([0, m, 1, m >> 1]);
+					v
+				};
+				for w in inputs {
+					let slow = (c.formula())(&[w], in_bits, out_bits, c.config()).first().copied().unwrap_or(0);
+					let fast = (c.fast())(w, in_bits, out_bits, c.config());
+					assert_eq!(slow, fast, "{} in={in_bits} out={out_bits} w={w:#x}", c.name());
+					checked += 1;
+				}
+			}
+		}
+	}
+	assert!(checked > 100_000, "only {checked} cases ran");
 }

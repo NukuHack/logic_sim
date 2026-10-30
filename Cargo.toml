@@ -37,7 +37,8 @@ zbus = "5"
 # System clipboard access (`viewer::popups::rom_copy`/`rom_paste`).
 arboard = "3"
 
-logic_sim_macros = { path = "logic_sim_macros" }
+# derive macros for enum <-> primitive conversions that work in `const fn` (replaces the old in-tree `logic_sim_macros`)
+const_enum = { git = "https://github.com/NukuHack/const_enum", rev = "33a75dfd3c4b1c594dbec6bc1e5db6fbebf1d403" }
 
 [lib]
 name = "logic_sim"

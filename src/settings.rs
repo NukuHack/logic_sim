@@ -4,7 +4,7 @@
 //! it's just the persisted data plus its on-disk shape. Whatever sets up the window is expected to
 //! translate `AppSettings` into whatever its windowing library needs.
 
-use logic_sim_macros::ConstFromPrimitive;
+use const_enum::ConstFromPrimitive;
 use serde::{Deserialize, Serialize};
 
 /// Mirrors `UnityEngine.FullScreenMode`. The on-disk integer values are

@@ -742,7 +742,7 @@ mod tests {
 
 	#[test]
 	fn default_internal_data_covers_every_configurable_builtin() {
-		assert_eq!(default_internal_data(Some(ChipType::Key)), Some(vec![b'K' as u32]));
+		assert_eq!(default_internal_data(Some(ChipType::Key)), Some(vec![u32::from(b'K')]));
 		assert_eq!(default_internal_data(Some(ChipType::Pulse)), Some(vec![50, 0, 0]));
 		let rom = default_internal_data(Some(ChipType::Rom256x16)).expect("ROM needs its full contents buffer");
 		assert_eq!(rom.len(), crate::render::editor_ui::ROM_WORD_COUNT);

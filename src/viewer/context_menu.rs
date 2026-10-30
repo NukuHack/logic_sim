@@ -348,7 +348,7 @@ mod tests {
 		v.prefs.set_starred("SELFIE", true, false);
 		apply_context_menu_action(&mut v, &paths, &mut None, "barchip:SELFIE", ContextMenuAction::Open);
 		assert_eq!(v.root_chip_name, "SELFIE", "open works on a greyed chip");
-		assert!(chip_interaction::CanvasInteraction::None == v.canvas_interaction);
+		assert_eq!(chip_interaction::CanvasInteraction::None, v.canvas_interaction);
 
 		let _ = std::fs::remove_dir_all(&root);
 	}

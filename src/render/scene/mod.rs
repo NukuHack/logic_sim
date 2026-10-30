@@ -282,7 +282,7 @@ mod span_tests {
 		let full_alpha = scene.triangles[0].colour.3;
 		assert_eq!(full_alpha, 1.0);
 
-		let mut faded = scene.clone();
+		let mut faded = scene;
 		fade_component(&mut faded, span1, 0.5);
 		assert!((faded.triangles[span1.triangles.start].colour.3 - 0.5).abs() < 1e-6, "the span itself fades");
 		assert_eq!(faded.triangles[span2.triangles.start].colour.3, full_alpha, "other components don't");

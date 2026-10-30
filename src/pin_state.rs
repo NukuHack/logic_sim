@@ -5,7 +5,7 @@
 //! bus" don't need to hand-roll masks/shifts.
 
 use crate::description::PinBitCount;
-use logic_sim_macros::ConstFromPrimitive;
+use const_enum::ConstFromPrimitive;
 
 /// Tri-state logic level for a single bit, used by the renderer to pick a
 /// colour: `High`/`Low` map to the lit/dim variant of a pin's palette

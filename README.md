@@ -15,19 +15,10 @@ i made sure anything that you save in this version is compatible with the origin
 ## Building & running
 
 ```sh
-cargo run                # build and launch the app
+cargo run --release      # build and launch the app
+# or build manually
 cargo build --release    # binary lands at target/release/app
 ```
-
-Or use the all-in-one script:
-
-| Command | Runs |
-| --- | --- |
-| `./build.sh -y` | fmt + clippy + full test suite (+ Miri if available) + release build |
-| `./build.sh -c` | same as `-y`, without Miri |
-| `./build.sh -q` | unit tests only, then release build |
-| `./build.sh -n` | just build |
-| `./build.sh -r` | everything, but will run it too |
 
 ## Controls
 
@@ -85,10 +76,10 @@ RUST_LOG=warn,logic_sim=debug cargo run   # the default, spelled out
 
 ## Contributing
 
-- [CONTRIBUTING.md](CONTRIBUTING.md). In short: run `./build.sh -y` before opening a PR, follow `rustfmt.toml`, and keep modules documented and small.  
-
+- [CONTRIBUTING.md](CONTRIBUTING.md).
 - there are always a lot stuff to do   
 
 ## License
 
-- [LICENSE](LICENSE). Original Digital Logic Sim by Sebastian Lague.
+- [LICENSE](LICENSE) (MIT). This is a port of [Digital Logic Sim](https://github.com/SebastianLague/Digital-Logic-Sim) by Sebastian Lague (MIT, copyright (c) 2025 Sebastian Lague); his copyright and permission notice are kept in `LICENSE` alongside the port's own.
+- Enum conversions use [`const_enum`](https://github.com/NukuHack/const_enum) (MIT OR Apache-2.0).

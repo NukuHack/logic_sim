@@ -771,7 +771,7 @@ mod tests {
 		let w = lay.screen_to_world(Vec2::new(450.0, 200.0));
 		assert_eq!(w, Vec2::new(1.0, 2.0));
 		// The inverse mapping (used by the corner-bracket layout) lands back on screen.
-		assert_eq!(Vec2::new(400.0 + w.x * 50.0, 300.0 - w.y * 50.0), Vec2::new(450.0, 200.0));
+		assert_eq!(Vec2::new(w.x.mul_add(50.0, 400.0), w.y.mul_add(-50.0, 300.0)), Vec2::new(450.0, 200.0));
 	}
 
 	#[test]
@@ -900,7 +900,8 @@ mod tests {
 		let out = build_chip_customizer(&ctx, 1280.0, 800.0, Vec2::new(400.0, 400.0));
 		let lay = out.layout;
 		assert!(lay.valid);
-		let map = |world: Vec2| Vec2::new(lay.chip_centre_px.x + world.x * lay.px_per_unit, lay.chip_centre_px.y - world.y * lay.px_per_unit);
+		let map =
+			|world: Vec2| Vec2::new(world.x.mul_add(lay.px_per_unit, lay.chip_centre_px.x), world.y.mul_add(-lay.px_per_unit, lay.chip_centre_px.y));
 
 		// (painted-content centre, painted size) per entry, hand-derived:
 		// leaves anchor at their position with their base*scale extent;

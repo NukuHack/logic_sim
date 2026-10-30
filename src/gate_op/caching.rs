@@ -5,6 +5,7 @@
 //! walking its subchip graph every single simulation frame.
 
 use super::eval::{CachedGate, Lut};
+use super::memo::MemoStore;
 use crate::pin_state::PinState;
 use crate::sim::{ChipIdx, PinIdx, Simulator};
 use std::collections::{HashMap, HashSet};
@@ -22,17 +23,166 @@ pub const MAX_NUM_INPUT_BITS_WHEN_AUTO_CACHING: u32 = 12;
 /// too, since they have no such width ceiling.
 pub const MAX_NUM_INPUT_BITS_WHEN_USER_CACHING: u32 = 24;
 
+/// Name-keyed store of built [`CachedGate`]s -- the original's
+/// `Dictionary<string, uint[][]> combinationalChipCaches`.
+///
+/// It looks like a map (`get`/`insert`/`remove`/`contains_key` by chip name), but the gates
+/// themselves live in a flat `Vec` addressed by a small integer *slot*, and every mutation bumps
+/// an [`epoch`](Self::epoch). That lets each `SimChip` resolve its name to a slot **once** and
+/// afterwards reach its gate with a plain array index, re-resolving only when the epoch moves --
+/// instead of hashing the chip's name string on every single step of every cached chip.
+#[derive(Debug, Default)]
+pub struct GateCache {
+	index: HashMap<Arc<str>, u32>,
+	gates: Vec<Option<Box<dyn CachedGate>>>,
+	epoch: u64,
+}
+
+impl GateCache {
+	#[must_use]
+	pub fn get(&self, name: &str) -> Option<&dyn CachedGate> {
+		let slot = *self.index.get(name)?;
+		self.gate(slot)
+	}
+
+	#[must_use]
+	pub fn contains_key(&self, name: &str) -> bool {
+		self.index.contains_key(name)
+	}
+
+	/// Stores `gate` for `name`, returning the gate it replaced (if any).
+	pub fn insert(&mut self, name: Arc<str>, gate: Box<dyn CachedGate>) -> Option<Box<dyn CachedGate>> {
+		self.epoch += 1;
+		if let Some(&slot) = self.index.get(&name) {
+			return self.gates[slot as usize].replace(gate);
+		}
+		let slot = self.gates.len() as u32;
+		self.gates.push(Some(gate));
+		self.index.insert(name, slot);
+		None
+	}
+
+	pub fn remove(&mut self, name: &str) -> Option<Box<dyn CachedGate>> {
+		let slot = self.index.remove(name)?;
+		self.epoch += 1;
+		self.gates[slot as usize].take()
+	}
+
+	#[must_use]
+	pub fn len(&self) -> usize {
+		self.index.len()
+	}
+
+	#[must_use]
+	pub fn is_empty(&self) -> bool {
+		self.index.is_empty()
+	}
+
+	/// Drops every cached gate.
+	pub fn clear(&mut self) {
+		self.epoch += 1;
+		self.index.clear();
+		self.gates.clear();
+	}
+
+	/// Names with a cached gate, in arbitrary order.
+	pub fn keys(&self) -> impl Iterator<Item = &Arc<str>> {
+		self.index.keys()
+	}
+
+	/// Slot holding `name`'s gate, valid until the next [`Self::epoch`] change.
+	#[must_use]
+	pub(crate) fn slot_of(&self, name: &str) -> Option<u32> {
+		self.index.get(name).copied()
+	}
+
+	/// The gate in `slot` (see [`Self::slot_of`]).
+	#[must_use]
+	#[inline]
+	pub(crate) fn gate(&self, slot: u32) -> Option<&dyn CachedGate> {
+		self.gates.get(slot as usize)?.as_deref()
+	}
+
+	/// Bumps on every insert/remove/clear.
+	#[must_use]
+	pub const fn epoch(&self) -> u64 {
+		self.epoch
+	}
+}
+
+/// Set of chip names already proven non-combinational. Same idea as [`GateCache`]: a set API
+/// (`contains`/`insert`/`remove` by name) plus an [`epoch`](Self::epoch) that moves on every
+/// change so per-chip resolved slots know when to re-check.
+#[derive(Debug, Default)]
+pub struct NameSet {
+	names: HashSet<Arc<str>>,
+	epoch: u64,
+}
+
+impl NameSet {
+	#[must_use]
+	pub fn contains(&self, name: &str) -> bool {
+		self.names.contains(name)
+	}
+
+	/// Returns `true` if `name` was newly added.
+	pub fn insert(&mut self, name: Arc<str>) -> bool {
+		self.epoch += 1;
+		self.names.insert(name)
+	}
+
+	/// Returns `true` if `name` was present.
+	pub fn remove(&mut self, name: &str) -> bool {
+		let removed = self.names.remove(name);
+		if removed {
+			self.epoch += 1;
+		}
+		removed
+	}
+
+	#[must_use]
+	pub fn len(&self) -> usize {
+		self.names.len()
+	}
+
+	#[must_use]
+	pub fn is_empty(&self) -> bool {
+		self.names.is_empty()
+	}
+
+	pub fn clear(&mut self) {
+		self.epoch += 1;
+		self.names.clear();
+	}
+
+	#[must_use]
+	pub const fn epoch(&self) -> u64 {
+		self.epoch
+	}
+}
+
 /// Extra state `Simulator` needs alongside `pins`/`chips`/etc -- lives as
 /// `Simulator::caching`.
 #[derive(Debug, Default)]
 #[must_use]
 pub struct CachingState {
 	/// Keyed by chip name. Replaces the original's `Dictionary<string, uint[][]> combinationalChipCaches`
-	pub combinational_chip_cache: HashMap<Arc<str>, Box<dyn CachedGate>>,
+	pub combinational_chip_cache: GateCache,
 	/// Chip names already proven non-combinational, so
 	/// `recalculate_chip_cache` doesn't re-derive the same answer every call.
-	/// Same interned-`Arc<str>` sharing as [`combinational_chip_cache`].
-	pub not_combinational_chip_cache: HashSet<Arc<str>>,
+	pub not_combinational_chip_cache: NameSet,
+	/// Learned transition tables for sequential ("memory") chips -- see [`super::memo`].
+	pub memo: MemoStore,
+}
+
+impl CachingState {
+	/// Changes whenever anything a chip's resolved fast-path slot depends on changes (the gate
+	/// cache, the negative cache, or the sequential-memo table set). Monotonic: each part only
+	/// ever grows, so the sum is a faithful version number.
+	#[must_use]
+	pub const fn epoch(&self) -> u64 {
+		self.combinational_chip_cache.epoch() + self.not_combinational_chip_cache.epoch() + self.memo.epoch()
+	}
 }
 
 /// Mirrors `SimChip.CalculateNumberOfInputBits`: total width in bits across
@@ -60,28 +210,31 @@ pub fn is_combinational(sim: &Simulator, chip: ChipIdx) -> bool {
 	is_combinational_memoized(sim, chip, &mut memo)
 }
 
-/// Does the real work behind [`is_combinational`], keyed by chip id so repeated subchips
-/// within one call are only walked once. `memo` is local to a single top-level call rather
-/// than shared across calls: a chip's combinational-ness can only depend on its own subtree,
-/// so a fresh table per call is both correct and enough to eliminate the redundant re-walks
-/// that matter (a chip used many times inside one parent).
+/// Does the real work behind [`is_combinational`], keyed by arena index so repeated visits to
+/// the same chip *instance* are only walked once. `memo` is local to a single top-level call
+/// rather than shared across calls: a chip's combinational-ness can only depend on its own
+/// subtree, so a fresh table per call is both correct and enough to eliminate redundant re-walks.
+///
+/// Keyed by `ChipIdx`, **not** by `SimChip::id`: ids are only unique among one parent's direct
+/// subchips, so a chip's own id routinely equals one of its subchips' ids, and keying the memo
+/// or the cycle-check graph by id made such a chip see a phantom cycle (and so silently lose its
+/// cache).
 #[must_use]
-fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<i32, bool>) -> bool {
+fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<usize, bool>) -> bool {
 	use crate::description::ChipType as E;
 
-	let chip_id = sim.chip(chip).id;
-	if let Some(&result) = memo.get(&chip_id) {
+	if let Some(&result) = memo.get(&chip.0) {
 		return result;
 	}
 
 	let chip_type = sim.chip(chip).chip_type;
 	if chip_type.is_merge_type() || chip_type.is_bus_type() || chip_type.is_io_type() {
-		memo.insert(chip_id, true);
+		memo.insert(chip.0, true);
 		return true;
 	}
 	match chip_type {
 		E::Nand | E::TriStateBuffer => {
-			memo.insert(chip_id, true);
+			memo.insert(chip.0, true);
 			return true;
 		}
 		E::Clock
@@ -95,7 +248,7 @@ fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<
 		| E::Key
 		| E::Buzzer
 		| E::KeyMods => {
-			memo.insert(chip_id, false);
+			memo.insert(chip.0, false);
 			return false;
 		}
 		_ => {}
@@ -104,46 +257,47 @@ fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<
 	for &sub in &sim.chip(chip).sub_chips {
 		for &p in &sim.chip(sub).input_pins {
 			if sim.pin(p).num_input_connections > 1 {
-				memo.insert(chip_id, false);
+				memo.insert(chip.0, false);
 				return false;
 			}
 		}
 	}
 	for &sub in &sim.chip(chip).sub_chips {
 		if !is_combinational_memoized(sim, sub, memo) {
-			memo.insert(chip_id, false);
+			memo.insert(chip.0, false);
 			return false;
 		}
 	}
 
-	// Cycle check via Kahn's algorithm over the subchip dependency graph. Adjacency uses a
-	// `HashSet` rather than a `Vec` so the "already recorded this edge" dedup check below is
-	// O(1) instead of O(edges-so-far) -- chips with many interconnected subchips would
-	// otherwise pay for that scan on every wire.
+	// Cycle check via Kahn's algorithm over the subchip dependency graph (edges between direct
+	// subchips only; wires into this chip's own output pins aren't dependencies). Adjacency uses
+	// a `HashSet` so the "already recorded this edge" dedup is O(1).
 	let sub_chips: Vec<ChipIdx> = sim.chip(chip).sub_chips.clone();
-	let mut graph: HashMap<i32, HashSet<i32>> = HashMap::new();
-	let mut in_degree: HashMap<i32, i32> = HashMap::new();
+	let mut graph: HashMap<usize, HashSet<usize>> = HashMap::new();
+	let mut in_degree: HashMap<usize, i32> = HashMap::new();
 
 	for &sub in &sub_chips {
-		let sub_id = sim.chip(sub).id;
-		graph.entry(sub_id).or_default();
-		in_degree.entry(sub_id).or_insert(0);
+		graph.entry(sub.0).or_default();
+		in_degree.entry(sub.0).or_insert(0);
 
 		for &out_pin in &sim.chip(sub).output_pins {
 			for &target_pin in &sim.pin(out_pin).connected_target_pins {
 				let target_chip = sim.pin(target_pin).parent_chip;
-				let target_id = sim.chip(target_chip).id;
-				if target_id == sub_id {
-					continue; // self-loop within the same chip id shouldn't happen, but skip defensively
+				if target_chip == chip {
+					continue; // into this chip's own output pin: not a subchip dependency
 				}
-				if graph.entry(sub_id).or_default().insert(target_id) {
-					*in_degree.entry(target_id).or_insert(0) += 1;
+				if target_chip == sub {
+					memo.insert(chip.0, false);
+					return false; // a subchip feeding itself directly is a feedback loop
+				}
+				if graph.entry(sub.0).or_default().insert(target_chip.0) {
+					*in_degree.entry(target_chip.0).or_insert(0) += 1;
 				}
 			}
 		}
 	}
 
-	let mut queue: Vec<i32> = in_degree.iter().filter(|&(_, &deg)| deg == 0).map(|(&id, _)| id).collect();
+	let mut queue: Vec<usize> = in_degree.iter().filter(|&(_, &deg)| deg == 0).map(|(&id, _)| id).collect();
 	let mut visited = 0usize;
 	while let Some(id) = queue.pop() {
 		visited += 1;
@@ -160,7 +314,7 @@ fn is_combinational_memoized(sim: &Simulator, chip: ChipIdx, memo: &mut HashMap<
 	}
 
 	let result = visited == in_degree.len();
-	memo.insert(chip_id, result);
+	memo.insert(chip.0, result);
 	result
 }
 
@@ -245,10 +399,13 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 
 	let num_possible_inputs = 1u64 << num_input_bits;
 	log::debug!("[cache] sweeping '{name}': {num_input_bits} input bits, {num_possible_inputs} rows");
-	let mut cache_rows = Vec::with_capacity(num_possible_inputs as usize);
+	let stride = output_pins.len();
 
-	// Flattened once, up front -- see `collect_all_pins_recursive` -- so the reset below is a
-	// tight loop instead of a full, allocation-heavy subchip-tree walk on every single row.
+	// One flat, row-major buffer (`stride` outputs per row) instead of a `Vec<u32>` allocated per
+	// row: the sweep used to do 2^bits tiny allocations on top of the simulation work itself.
+	let mut cache_rows: Vec<u32> = Vec::with_capacity(num_possible_inputs as usize * stride);
+
+	// Every pin the sweep can touch, flattened once -- see `collect_all_pins_recursive`.
 	let mut all_pins = Vec::new();
 	collect_all_pins_recursive(sim, chip, &mut all_pins);
 
@@ -274,16 +431,33 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	// depends only on the wiring graph, not on what bits happen to be flowing through it yet.
 	sim.step_chip_reorder(chip, &mut scratch_audio);
 
+	// The sweep must be a pure function of the wiring: no random dynamic reordering, and each
+	// row must see freshly-reset "inputs received this frame" bookkeeping. Rather than clearing
+	// every pin's counter between rows (a full pass over the subtree per row), each row simply
+	// runs on its own simulation-frame number: `receive_input` resets a pin's counter lazily the
+	// first time it's touched in a new frame, so this is free. The real frame number (and the
+	// pins' frame stamps) are put back afterwards.
+	let saved_frame = sim.simulation_frame;
+	let saved_reorder = sim.can_dynamic_reorder_this_frame;
+	sim.can_dynamic_reorder_this_frame = false;
+
+	// Per-input-pin sweep layout, resolved once: (pin, bit width, pin width tag).
+	let layout: Vec<(PinIdx, u32, crate::description::PinBitCount)> = input_pins
+		.iter()
+		.map(|&p| {
+			let st = sim.pin(p).state;
+			(p, st.len(), st.width())
+		})
+		.collect();
+
 	for input in 0..num_possible_inputs {
-		reset_received_flags_fast(sim, &all_pins);
+		sim.simulation_frame = saved_frame.wrapping_add(1 + input);
 
 		let mut remaining = input;
-		for &p in &input_pins {
-			let state = sim.pin(p).state;
-			let bit_width = state.len();
+		for &(p, bit_width, width) in &layout {
 			let mask: u64 = if bit_width >= 64 { u64::MAX } else { (1u64 << bit_width) - 1 };
 			let bits = (remaining & mask) as u8;
-			sim.pin_mut(p).state = PinState::from_parts_with_width(bits, 0, state.width());
+			sim.pin_mut(p).state = PinState::from_parts_with_width(bits, 0, width);
 			remaining >>= bit_width;
 		}
 		sim.step_chip(chip, &mut scratch_audio);
@@ -297,8 +471,20 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		// polluted values. `process_cached_chip` already mirrors this on the input side (see
 		// its `state.bit_states()` build of `input`), so this keeps row capture consistent
 		// with both how rows get compared and how they get replayed.
-		let outputs: Vec<u32> = output_pins.iter().map(|&p| u32::from(sim.pin(p).state.bit_states())).collect();
-		cache_rows.push(outputs);
+		for &p in &output_pins {
+			cache_rows.push(u32::from(sim.pin(p).state.bit_states()));
+		}
+	}
+
+	// Put back everything the sweep borrowed. Frame stamps go to 0 ("never updated") rather than
+	// to whatever sweep frame last touched them, so a real frame can never collide with a stale
+	// sweep stamp and skip its counter reset.
+	sim.simulation_frame = saved_frame;
+	sim.can_dynamic_reorder_this_frame = saved_reorder;
+	for &p in &all_pins {
+		let pin = sim.pin_mut(p);
+		pin.last_updated_frame_index = 0;
+		pin.num_inputs_received_this_frame = 0;
 	}
 
 	// A plain `Native`'s `eval` only ever writes a single output word (see `CachedGate::eval`
@@ -317,8 +503,8 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 	//     (unrelated per-pin patterns with no shared combined-word shape), so it's worth
 	//     trying even after `NativeSplit` fails.
 	//
-	// Both need `cache_rows` itself, so they're computed before `cache_rows` gets consumed
-	// into the whole-chip `Lut` below (the ultimate fallback if neither matches).
+	// Both need the swept rows, so they're computed before the rows get consumed into the
+	// whole-chip `Lut` below (the ultimate fallback if neither matches).
 	let flattened_native: Option<super::eval::NativeSplit> = 'flatten: {
 		if output_pins.len() <= 1 {
 			break 'flatten None;
@@ -336,24 +522,19 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		if total_out_bits == 0 || total_out_bits > super::MAX_LUT_OUTPUT_BITS {
 			break 'flatten None;
 		}
-		let combined_rows: Vec<Vec<u32>> = cache_rows
-			.iter()
+		let combined: Vec<u32> = cache_rows
+			.chunks_exact(stride)
 			.map(|row| {
-				let mut combined: u64 = 0;
+				let mut word: u64 = 0;
 				for (i, &(offset, _)) in out_layout.iter().enumerate() {
-					combined |= u64::from(row[i]) << offset;
+					word |= u64::from(row[i]) << offset;
 				}
-				vec![combined as u32]
+				word as u32
 			})
 			.collect();
-		let combined_lut = Lut::new(combined_rows);
-		match super::recognize::recognize_formula(num_input_bits, total_out_bits, &combined_lut) {
-			Some((config, formula)) => {
-				let native = super::eval::Native::new(num_input_bits, total_out_bits, config, formula);
-				Some(super::eval::NativeSplit::new(native, out_layout))
-			}
-			None => None,
-		}
+		let combined_lut = Lut::from_flat(combined, 1);
+		super::recognize::recognize_native(num_input_bits, total_out_bits, &combined_lut)
+			.map(|native| super::eval::NativeSplit::new(native, out_layout))
 	};
 
 	let multi_pin_natives: Option<Vec<super::eval::Native>> = if flattened_native.is_some() || output_pins.len() <= 1 {
@@ -362,21 +543,19 @@ pub fn recalculate_chip_cache(sim: &mut Simulator, chip: ChipIdx) {
 		None
 	} else {
 		let mut natives = Vec::with_capacity(output_pins.len());
-		'pins: for (pin_idx, &out_pin) in output_pins.iter().enumerate() {
+		for (pin_idx, &out_pin) in output_pins.iter().enumerate() {
 			let out_bits = sim.pin(out_pin).state.len();
-			let sub_rows: Vec<Vec<u32>> = cache_rows.iter().map(|row| vec![row[pin_idx]]).collect();
-			let sub_lut = Lut::new(sub_rows);
-			if let Some((config, formula)) = super::recognize::recognize_formula(num_input_bits, out_bits, &sub_lut) {
-				natives.push(super::eval::Native::new(num_input_bits, out_bits, config, formula));
-			} else {
-				natives.clear();
-				break 'pins;
+			let sub: Vec<u32> = cache_rows.chunks_exact(stride).map(|row| row[pin_idx]).collect();
+			let sub_lut = Lut::from_flat(sub, 1);
+			match super::recognize::recognize_native(num_input_bits, out_bits, &sub_lut) {
+				Some(native) => natives.push(native),
+				None => break,
 			}
 		}
 		if natives.len() == output_pins.len() { Some(natives) } else { None }
 	};
 
-	let lut = Lut::new(cache_rows);
+	let lut = Lut::from_flat(cache_rows, stride);
 
 	let cached_gate: Box<dyn CachedGate> = match output_pins.len() {
 		1 => {

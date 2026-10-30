@@ -97,7 +97,7 @@ impl Camera {
 		let half_h = self.viewport.y / (2.0 * self.zoom);
 		let ndc_x = (world.x - self.position.x) / half_w;
 		let ndc_y = (world.y - self.position.y) / half_h;
-		let screen_x = (ndc_x + 1.0) * 0.5 * self.viewport.x;
+		let screen_x = f32::midpoint(ndc_x, 1.0) * self.viewport.x;
 		let screen_y = (1.0 - ndc_y) * 0.5 * self.viewport.y;
 		Vec2::new(screen_x, screen_y)
 	}

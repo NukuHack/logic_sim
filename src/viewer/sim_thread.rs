@@ -174,13 +174,17 @@ impl SimHandle {
 	/// pulse countdowns, display buffers) so a rebuild can carry it into
 	/// the new arena -- see [`Simulator::capture_internal_states`].
 	pub(crate) fn capture_internal_states(&self) -> crate::sim::InternalStateMap {
-		self.lock().capture_internal_states()
+		let mut sim = self.lock();
+		sim.sync_memo_to_pins();
+		sim.capture_internal_states()
 	}
 
 	/// Snapshots every pin's live signal state so a rebuild can carry it
 	/// into the new arena -- see [`Simulator::capture_pin_states`].
 	pub(crate) fn capture_pin_states(&self) -> crate::sim::PinStateMap {
-		self.lock().capture_pin_states()
+		let mut sim = self.lock();
+		sim.sync_memo_to_pins();
+		sim.capture_pin_states()
 	}
 
 	// ---- Prefs-derived control plumbing ----
@@ -235,6 +239,8 @@ impl SimHandle {
 		let mut sim = self.lock();
 		sim.caching.combinational_chip_cache.remove(name);
 		sim.caching.not_combinational_chip_cache.remove(name);
+		// Learned sequential tables may embed the changed chip anywhere underneath them.
+		sim.clear_memo();
 	}
 }
 

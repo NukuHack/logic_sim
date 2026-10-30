@@ -41,56 +41,92 @@ pub trait CachedGate: fmt::Debug + fmt::Display + Send + Sync {
 /// `u32` per output pin. Indexed directly by `input`, so eval is a single array read with no
 /// hashing -- this is the fast path and should be preferred whenever the full table fits in
 /// memory (see the auto/user caching budgets in `caching.rs`).
+///
+/// Storage is one flat, contiguous `Box<[u32]>` with a fixed `stride` (= output pins per row)
+/// instead of a heap allocation per row: building a 2^20-row table used to mean a million tiny
+/// allocations (and a pointer chase per lookup); now it's one allocation and one cache-friendly
+/// indexed read.
 #[derive(Debug)]
 #[must_use]
 pub struct Lut {
-	rows: Box<[Box<[u32]>]>,
+	data: Box<[u32]>,
+	/// Number of `u32` fields per row (the chip's output-pin count).
+	stride: usize,
+	/// Number of rows. Stored separately because a zero-`stride` table (a chip with no outputs)
+	/// still has rows.
+	rows: usize,
 }
 
 impl fmt::Display for Lut {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		let rows = self.rows.len();
-		let cols = self.rows.first().map_or(0, |row| row.len());
+		let (rows, cols) = (self.rows, self.stride);
 		let total_elements = rows * cols;
 
-		// Get min/max values (optional but nice)
-		let (min, max) = if rows > 0 && cols > 0 {
-			let all_values = self.rows.iter().flat_map(|row| row.iter());
-			let min = all_values.clone().min().unwrap_or(&0);
-			let max = all_values.max().unwrap_or(&0);
-			(*min, *max)
-		} else {
-			(0, 0)
-		};
+		let (min, max) =
+			if total_elements > 0 { (self.data.iter().min().copied().unwrap_or(0), self.data.iter().max().copied().unwrap_or(0)) } else { (0, 0) };
 
 		write!(f, "LUT [{rows} rows x {cols} cols] - {total_elements} total entries, range: {min}..={max}")
 	}
 }
 
 impl Lut {
+	/// Builds a table from per-row vectors. Rows are copied into the flat layout; a row shorter
+	/// than the widest one is zero-padded (every table the simulator builds is rectangular, so
+	/// this only matters for hand-written tables in tests).
 	pub fn new(rows: Vec<Vec<u32>>) -> Self {
-		Self { rows: rows.into_iter().map(Vec::into_boxed_slice).collect() }
+		let stride = rows.iter().map(Vec::len).max().unwrap_or(0);
+		let n = rows.len();
+		let mut data = Vec::with_capacity(n * stride);
+		for row in rows {
+			let len = row.len();
+			data.extend(row);
+			data.resize(data.len() + (stride - len), 0);
+		}
+		Self { data: data.into_boxed_slice(), stride, rows: n }
+	}
+
+	/// Builds a table directly from a flat, row-major buffer (`stride` fields per row) -- what
+	/// the cache sweep produces, with no intermediate per-row `Vec`s. `data.len()` must be a
+	/// multiple of `stride` (a trailing partial row is dropped).
+	pub fn from_flat(data: Vec<u32>, stride: usize) -> Self {
+		let rows = data.len().checked_div(stride).unwrap_or(0);
+		let mut data = data;
+		data.truncate(rows * stride);
+		Self { data: data.into_boxed_slice(), stride, rows }
 	}
 
 	/// Row count, i.e. `2^in_bits` for a fully-built table.
 	#[must_use]
-	pub fn len(&self) -> usize {
-		self.rows.len()
+	pub const fn len(&self) -> usize {
+		self.rows
 	}
 
 	#[must_use]
-	pub fn is_empty(&self) -> bool {
-		self.rows.is_empty()
+	pub const fn is_empty(&self) -> bool {
+		self.rows == 0
+	}
+
+	/// Fields per row (the chip's output-pin count).
+	#[must_use]
+	pub const fn stride(&self) -> usize {
+		self.stride
 	}
 
 	/// The packed fields for input row `input`, or `None` if out of range.
 	#[must_use]
+	#[inline]
 	pub fn row(&self, input: u64) -> Option<&[u32]> {
-		self.rows.get(input as usize).map(|r| &**r)
+		let i = usize::try_from(input).ok()?;
+		if i >= self.rows {
+			return None;
+		}
+		let base = i * self.stride;
+		self.data.get(base..base + self.stride)
 	}
 }
 
 impl CachedGate for Lut {
+	#[inline]
 	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
 		let Some(row) = self.row(input) else {
 			// Defensive: shouldn't happen if the LUT's row count matches this chip's
@@ -107,6 +143,11 @@ impl CachedGate for Lut {
 type SizedFn = fn(&[Bits], u32, Bits) -> Vec<Bits>;
 type NativeFn = fn(&[Bits], Bits) -> Vec<Bits>;
 type DuoSizedFn = fn(&[Bits], u32, u32, Bits) -> Vec<Bits>;
+/// Single-word, allocation-free twin of a [`DuoSizedFn`] formula: `(input, in_bits, out_bits,
+/// config) -> output word`. Valid whenever the whole input fits one `u64` -- which is every gate
+/// that can reach the cache path (`MAX_NUM_INPUT_BITS_WHEN_USER_CACHING` is 24). The slice
+/// formula allocates a `Vec` per call; this one is a handful of ALU ops.
+pub type FastFn = fn(u64, u32, u32, Bits) -> u64;
 
 /// A gate evaluated from a closed-form function over packed bits rather than a stored table,
 /// e.g. `AND2` as `|w, ..| (w & 0b11) == 0b11`. Cheaper to build than a `Lut` (no table to
@@ -131,6 +172,9 @@ pub struct Native {
 	out_bits: u32,
 	config: Bits,
 	f: DuoSizedFn,
+	/// Allocation-free single-word version of `f`, when the pattern has one (every
+	/// `recognize` registry entry does). `eval` prefers it over `f`.
+	fast: Option<FastFn>,
 }
 
 impl fmt::Display for Native {
@@ -150,7 +194,13 @@ impl fmt::Display for Native {
 
 impl Native {
 	pub fn new(in_bits: u32, out_bits: u32, config: Bits, f: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>) -> Self {
-		Self { in_bits, out_bits, config, f }
+		Self { in_bits, out_bits, config, f, fast: None }
+	}
+
+	/// Like [`Self::new`], plus the matching allocation-free single-word formula (see
+	/// [`FastFn`]). `fast` must compute exactly what `f` does for a one-word input.
+	pub fn with_fast(in_bits: u32, out_bits: u32, config: Bits, f: fn(&[Bits], u32, u32, Bits) -> Vec<Bits>, fast: Option<FastFn>) -> Self {
+		Self { in_bits, out_bits, config, f, fast }
 	}
 
 	/// Runs this `Native`'s formula against a packed `u64` input and hands back the raw
@@ -160,7 +210,11 @@ impl Native {
 	/// (this type's narrower `u64`-in/single-`u32`-out bridge), this doesn't require or care
 	/// about `out_bits <= 32`; it's `NativeSplit::eval` that caps the *combined* width at 32
 	/// (see its doc comment), not this.
+	#[inline]
 	fn eval_combined(&self, input: u64) -> u64 {
+		if let Some(fast) = self.fast {
+			return fast(input, self.in_bits, self.out_bits, self.config);
+		}
 		(self.f)(&[input], self.in_bits, self.out_bits, self.config).first().copied().unwrap_or(0)
 	}
 
@@ -179,12 +233,12 @@ impl Native {
 }
 
 impl CachedGate for Native {
+	#[inline]
 	fn eval(&self, input: u64, out: &mut [u32]) -> bool {
 		if self.in_bits > 64 || self.out_bits > 32 || out.len() != 1 {
 			return false;
 		}
-		let result = (self.f)(&[input], self.in_bits, self.out_bits, self.config);
-		out[0] = result.first().copied().unwrap_or(0) as u32;
+		out[0] = self.eval_combined(input) as u32;
 		true
 	}
 }
@@ -321,14 +375,11 @@ impl CachedGate for NativeMulti {
 			return false;
 		}
 		for (slot, native) in out.iter_mut().zip(self.entries.iter()) {
-			// Each `Native` only ever wants/fills a single-element `out` slice -- see its own
-			// `CachedGate::eval` -- so hand it a length-1 scratch slot rather than a sub-slice
-			// of the caller's buffer.
-			let mut single = [0u32];
-			if !native.eval(input, &mut single) {
+			// Same guards `Native::eval` applies, minus the one-element scratch slice.
+			if native.in_bits > 64 || native.out_bits > 32 {
 				return false;
 			}
-			*slot = single[0];
+			*slot = native.eval_combined(input) as u32;
 		}
 		true
 	}

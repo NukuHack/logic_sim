@@ -2,8 +2,8 @@
 //! build the runtime simulation graph. Mirrors DLS.Description in the
 //! original C# codebase.
 use crate::render::theme::{COLORS, Rgba};
+use const_enum::ConstFromPrimitive;
 use glam::Vec2;
-use logic_sim_macros::ConstFromPrimitive;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, ConstFromPrimitive)]
 #[repr(i32)]

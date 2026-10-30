@@ -561,7 +561,7 @@ mod tests {
 		internal[0] = 0xF; // full red at pixel (0, 0)
 
 		let mut library = ChipLibrary::new();
-		library.add(rgb.clone());
+		library.add(rgb);
 		let mut host = ChipDescription::new("HOST", ChipType::Custom);
 		host.sub_chips.push(SubChipDescription {
 			name: "RGB".into(),
@@ -739,19 +739,6 @@ mod tests {
 	#[test]
 	fn led_fill_shows_all_three_wire_states() {
 		use crate::pin_state::LogicState;
-		let led = ChipDescription::new("LED", ChipType::DisplayLed);
-		let mut library = ChipLibrary::new();
-		library.add(led.clone());
-		let mut host = ChipDescription::new("HOST", ChipType::Custom);
-		host.sub_chips.push(SubChipDescription {
-			name: "LED".into(),
-			id: 3,
-			internal_data: None,
-			position: Vec2::ZERO,
-			label: None,
-			pin_colour_info: vec![],
-		});
-		let displays = [DisplayDescription::new(3, Vec2::ZERO, 4.0)];
 
 		struct Level(LogicState);
 		impl PinStateLookup for Level {
@@ -762,6 +749,20 @@ mod tests {
 				Some(self.0)
 			}
 		}
+
+		let led = ChipDescription::new("LED", ChipType::DisplayLed);
+		let mut library = ChipLibrary::new();
+		library.add(led);
+		let mut host = ChipDescription::new("HOST", ChipType::Custom);
+		host.sub_chips.push(SubChipDescription {
+			name: "LED".into(),
+			id: 3,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: vec![],
+		});
+		let displays = [DisplayDescription::new(3, Vec2::ZERO, 4.0)];
 
 		let lit = {
 			let arr: [f32; 4] = theme::state_colour(LogicState::High, Color::Red).into();

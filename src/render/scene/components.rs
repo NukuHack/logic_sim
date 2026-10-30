@@ -135,7 +135,7 @@ mod tests {
 
 	impl PinStateLookup for FixedDisplayState {
 		fn is_high(&self, owner_id: i32, pin_id: i32) -> Option<bool> {
-			self.logic_state(owner_id, pin_id).map(|f| f.is_high())
+			self.logic_state(owner_id, pin_id).map(LogicState::is_high)
 		}
 
 		fn logic_state(&self, owner_id: i32, pin_id: i32) -> Option<LogicState> {
