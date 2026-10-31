@@ -567,8 +567,8 @@ fn native_handles_a_100_bit_adder() {
 	let n = 100usize;
 	let mut input = vec![false; in_bits as usize];
 	// a = all-ones (2^100 - 1), c = 1 -> sum = 2^100, i.e. only the carry-out bit set.
-	for (_i, item) in input.iter_mut().enumerate().take(n) {
-		*item = true;
+	for i in input.iter_mut().take(n) {
+		*i = true;
 	}
 	input[n] = true;
 

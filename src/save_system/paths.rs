@@ -77,6 +77,25 @@ impl SavePaths {
 		&self.root
 	}
 
+	/// Opens the save-data root in the platform's file browser (`Main.OpenSaveDataFolderInFileBrowser`,
+	/// bound to Ctrl+Shift+Alt+O). Fire-and-forget: the browser is spawned, not waited on.
+	///
+	/// # Errors
+	/// If the folder doesn't exist, or the platform's opener can't be started.
+	pub fn open_in_file_browser(&self) -> io::Result<()> {
+		if !self.root.is_dir() {
+			return Err(io::Error::new(io::ErrorKind::NotFound, format!("Path does not exist: {}", self.root.display())));
+		}
+		let opener = if cfg!(target_os = "windows") {
+			"explorer"
+		} else if cfg!(target_os = "macos") {
+			"open"
+		} else {
+			"xdg-open"
+		};
+		std::process::Command::new(opener).arg(&self.root).spawn().map(|_| ())
+	}
+
 	/// # Errors
 	/// propagates from `create_dir_all`
 	pub fn ensure_directory_exists(path: &Path) -> io::Result<()> {
@@ -123,5 +142,17 @@ impl SavePaths {
 	#[must_use]
 	pub fn project_description_path(&self, project_name: &str) -> PathBuf {
 		self.project_path(project_name).join(PROJECT_FILE_NAME)
+	}
+}
+
+#[cfg(test)]
+mod open_folder_tests {
+	use super::*;
+
+	#[test]
+	fn opening_a_missing_save_folder_reports_not_found_instead_of_spawning_anything() {
+		let paths = SavePaths::new(std::env::temp_dir().join("dls-definitely-not-here-4242"));
+		let err = paths.open_in_file_browser().unwrap_err();
+		assert_eq!(err.kind(), io::ErrorKind::NotFound);
 	}
 }

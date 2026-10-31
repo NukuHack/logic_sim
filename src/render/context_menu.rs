@@ -68,11 +68,21 @@ pub struct ContextMenuState {
 	pub target: String,
 	pub screen_pos: Vec2,
 	pub items: Vec<ContextMenuItem>,
+	/// Title row drawn above the items, e.g. `WIRE: A`, `BUS LINE`, `PIN: OUT` (`ContextMenu`'s
+	/// `headerName`). Never clickable.
+	pub header: Option<String>,
 }
 
 impl ContextMenuState {
 	pub fn new(target: impl Into<String>, screen_pos: Vec2, items: Vec<ContextMenuItem>) -> Self {
-		Self { target: target.into(), screen_pos, items }
+		Self { target: target.into(), screen_pos, items, header: None }
+	}
+
+	/// Adds the title row (see [`Self::header`]).
+	#[must_use]
+	pub fn with_header(mut self, header: impl Into<String>) -> Self {
+		self.header = Some(header.into());
+		self
 	}
 }
 
@@ -104,6 +114,7 @@ const ROW_H: f32 = 30.0;
 const ROW_W: f32 = 150.0;
 const FONT_SIZE: f32 = 15.0;
 const BORDER: f32 = 1.0;
+const HEADER_H: f32 = 26.0;
 
 fn centre(r: &UiRect) -> Vec2 {
 	Vec2::new(r.x + r.w / 2.0, r.y + r.h / 2.0)
@@ -121,7 +132,8 @@ pub fn build_context_menu(state: &ContextMenuState, vw: f32, vh: f32, mouse: Vec
 		return frame;
 	}
 
-	let panel_h = ROW_H * state.items.len() as f32;
+	let header_h = if state.header.is_some() { HEADER_H } else { 0.0 };
+	let panel_h = ROW_H.mul_add(state.items.len() as f32, header_h);
 	let x = state.screen_pos.x.clamp(4.0, (vw - ROW_W - 4.0).max(4.0));
 	let y = state.screen_pos.y.clamp(4.0, (vh - panel_h - 4.0).max(4.0));
 	let panel_rect = UiRect::new(x, y, ROW_W, panel_h);
@@ -138,8 +150,20 @@ pub fn build_context_menu(state: &ContextMenuState, vw: f32, vh: f32, mouse: Vec
 		theme::Rgba(0.05, 0.05, 0.06, 1.0),
 	);
 
+	if let Some(header) = &state.header {
+		let header_rect = UiRect::new(panel_rect.x, panel_rect.y, panel_rect.w, HEADER_H);
+		frame.geometry.add_rect(to_world(centre(&header_rect), vw, vh), Vec2::new(header_rect.w, header_rect.h), theme::Rgba(0.11, 0.11, 0.14, 1.0));
+		frame.geometry.labels.push(TextLabel {
+			pos: to_world(centre(&header_rect), vw, vh),
+			text: header.clone(),
+			colour: theme::Rgba(0.65, 0.7, 0.85, 1.0),
+			font_size: FONT_SIZE - 2.0,
+			width: header_rect.w - 12.0,
+		});
+	}
+
 	for (i, item) in state.items.iter().enumerate() {
-		let row_rect = UiRect::new(panel_rect.x, (i as f32).mul_add(ROW_H, panel_rect.y), panel_rect.w, ROW_H);
+		let row_rect = UiRect::new(panel_rect.x, (i as f32).mul_add(ROW_H, panel_rect.y + header_h), panel_rect.w, ROW_H);
 		let hovered = item.enabled && row_rect.contains(mouse);
 		if hovered {
 			frame.geometry.add_rect(to_world(centre(&row_rect), vw, vh), Vec2::new(row_rect.w, row_rect.h), theme::Rgba(0.32, 0.32, 0.4, 1.0));

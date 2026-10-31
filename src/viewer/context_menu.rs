@@ -2,6 +2,7 @@
 //! back into a concrete thing, building the per-type row lists, and
 //! applying whichever row the player clicked onto live state.
 
+use crate::description::{ChipDescription, PinAddress};
 use crate::render::context_menu::{ContextMenuAction, ContextMenuItem};
 use crate::render::editor_ui::LibrarySelection;
 use crate::viewer::library::{chip_delete_confirm_message, is_custom_chip};
@@ -257,7 +258,7 @@ mod tests {
 		assert!(bus_items.iter().any(|i| matches!(i.id, ContextMenuAction::Flip)));
 
 		// A player-authored chip gets both rows.
-		library.add(crate::ChipDescription::new("MINE", ChipType::Custom));
+		library.add(ChipDescription::new("MINE", ChipType::Custom));
 		let custom_items = context_menu_items_for_component(&library, "MINE");
 		assert!(custom_items.iter().find(|i| matches!(i.id, ContextMenuAction::Open)).expect("Open row").enabled);
 		assert!(custom_items.iter().find(|i| matches!(i.id, ContextMenuAction::View)).expect("View row").enabled);
@@ -325,10 +326,10 @@ mod tests {
 		let paths = SavePaths::new(&root);
 		let mut library = ChipLibrary::new();
 		crate::register_all_builtins(&mut library);
-		library.add(crate::ChipDescription::new("ROOT", ChipType::Custom));
+		library.add(ChipDescription::new("ROOT", ChipType::Custom));
 		// SELFIE contains an instance of ROOT -> placing it into ROOT
 		// would recurse, which is what greys its bar button out.
-		let mut selfie = crate::ChipDescription::new("SELFIE", ChipType::Custom);
+		let mut selfie = ChipDescription::new("SELFIE", ChipType::Custom);
 		selfie_subchip_root(&mut selfie);
 		library.add(selfie);
 		let mut v = ViewerState::new("P", library, "ROOT".to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
@@ -364,7 +365,7 @@ mod tests {
 
 	/// Gives `selfie` a subchip instance of ROOT (making it
 	/// cycle-blocked when ROOT is the open chip).
-	fn selfie_subchip_root(selfie: &mut crate::ChipDescription) {
+	fn selfie_subchip_root(selfie: &mut ChipDescription) {
 		selfie.sub_chips.push(crate::SubChipDescription {
 			name: "ROOT".into(),
 			id: 1,
@@ -373,5 +374,61 @@ mod tests {
 			label: None,
 			pin_colour_info: vec![],
 		});
+	}
+}
+
+/// Name of the pin at `address` within `chip` -- a boundary dev-pin of `chip` itself, or a pin of
+/// one of its placed subchips -- or an empty string when it can't be resolved.
+pub(crate) fn pin_name_at(chip: &ChipDescription, library: &ChipLibrary, address: PinAddress) -> String {
+	let owner = address.pin_owner_id;
+	if let Some(p) = chip.input_pins.iter().chain(chip.output_pins.iter()).find(|p| p.id == owner) {
+		return p.name.clone();
+	}
+	let Some(sub) = chip.sub_chips.iter().find(|s| s.id == owner) else { return String::new() };
+	library
+		.try_get(&sub.name)
+		.and_then(|d| d.input_pins.iter().chain(d.output_pins.iter()).find(|p| p.id == address.pin_id).map(|p| p.name.clone()))
+		.unwrap_or_default()
+}
+
+/// `ContextMenu.CreateWireHeaderString` / the `BUS LINE` override.
+pub(crate) fn wire_header(is_bus: bool, source_pin_name: &str) -> String {
+	if is_bus {
+		"BUS LINE".to_string()
+	} else if source_pin_name.trim().is_empty() {
+		"WIRE".to_string()
+	} else {
+		format!("WIRE: {source_pin_name}")
+	}
+}
+
+/// `ContextMenu.CreatePinHeaderName`.
+pub(crate) fn pin_header(name: &str) -> String {
+	if name.trim().is_empty() { "PIN".to_string() } else { format!("PIN: {name}") }
+}
+
+#[cfg(test)]
+mod header_tests {
+	use super::*;
+	use crate::render::context_menu::{ContextMenuState, build_context_menu};
+	use glam::Vec2;
+
+	#[test]
+	fn headers_match_the_originals_wording() {
+		assert_eq!(wire_header(true, "A"), "BUS LINE");
+		assert_eq!(wire_header(false, "  "), "WIRE");
+		assert_eq!(wire_header(false, "CLK"), "WIRE: CLK");
+		assert_eq!(pin_header(""), "PIN");
+		assert_eq!(pin_header("OUT"), "PIN: OUT");
+	}
+
+	#[test]
+	fn header_adds_a_non_clickable_row_above_the_items() {
+		let items = vec![ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
+		let plain = build_context_menu(&ContextMenuState::new("t", Vec2::new(100.0, 100.0), items.clone()), 800.0, 600.0, Vec2::ZERO);
+		let titled = build_context_menu(&ContextMenuState::new("t", Vec2::new(100.0, 100.0), items).with_header("WIRE: A"), 800.0, 600.0, Vec2::ZERO);
+		assert!(titled.panel_rect.h > plain.panel_rect.h);
+		assert_eq!(titled.buttons.len(), 1);
+		assert!(titled.buttons[0].rect.y >= titled.panel_rect.y + (titled.panel_rect.h - plain.panel_rect.h), "item row sits below the header");
 	}
 }

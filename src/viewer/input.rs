@@ -254,8 +254,13 @@ pub(crate) fn handle_viewer_key(
 				// Ctrl+Z undo / Ctrl+Shift+Z redo (`KeyboardShortcuts.UndoShortcutTriggered`
 				// / `.RedoShortcutTriggered`), replaying the edited chip's recorded
 				// actions -- see `viewer::undo`.
-				"y" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => crate::viewer::undo::try_redo(v),
+				// Ctrl+Shift+Z is the original's redo binding (`RedoShortcutTriggered`); with Shift
+				// held the logical key arrives as an uppercase "Z".
+				"y" | "Z" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => crate::viewer::undo::try_redo(v),
 				"z" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => crate::viewer::undo::try_undo(v),
+				// Ctrl+Q: back to the main menu (`QuitToMainMenuShortcutTriggered`), gated by the
+				// unsaved-changes prompt like Escape-to-menu.
+				"q" if (target.is_none() || target == Some(LayerId::Library)) && modifiers.control_key() => request_exit_to_menu(v, paths),
 				// MultiMode+D duplicates the selection into a carried copy
 				// (`DuplicateShortcutTriggered` -> `DuplicateSelectedElements`;
 				// MultiMode = Alt or Shift, same as box-select add).

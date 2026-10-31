@@ -183,12 +183,12 @@ mod tests {
 	/// path.
 	#[test]
 	fn resolve_pin_position_still_derives_subchip_pin_position() {
+		const NO_LABEL: Option<String> = None;
 		let chip = nand_desc();
 		let mut sub_desc = ChipDescription::new("SUBCHIP", ChipType::Nand);
 		sub_desc.input_pins.push(PinDescription::new("A", 10, PinBitCount::Bit1));
 		sub_desc.input_pins.push(PinDescription::new("B", 11, PinBitCount::Bit1));
 		sub_desc.output_pins.push(PinDescription::new("OUT", 20, PinBitCount::Bit1));
-		const NO_LABEL: Option<String> = None;
 		let sub = PlacedSubChip {
 			id: 1,
 			desc: &sub_desc,

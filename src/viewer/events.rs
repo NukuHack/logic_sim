@@ -65,7 +65,7 @@ impl ApplicationHandler for App {
 				}
 			}
 
-			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(&event),
+			WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(&event, event_loop),
 
 			WindowEvent::ModifiersChanged(mods) => {
 				self.modifiers = mods.state();
@@ -375,7 +375,15 @@ impl App {
 				let target = format!("devpin:{}:{}", if is_input { "in" } else { "out" }, pin_id);
 				let items =
 					vec![ContextMenuItem::new("Edit", ContextMenuAction::Configure), ContextMenuItem::new("Delete", ContextMenuAction::Delete)];
-				v.context_menu = Some(ContextMenuState::new(target, self.mouse_pos, items));
+				let name = root_desc
+					.input_pins
+					.iter()
+					.chain(root_desc.output_pins.iter())
+					.find(|p| p.id == pin_id)
+					.map(|p| p.name.clone())
+					.unwrap_or_default();
+				v.context_menu =
+					Some(ContextMenuState::new(target, self.mouse_pos, items).with_header(crate::viewer::context_menu::pin_header(&name)));
 				return;
 			}
 		}
@@ -399,7 +407,7 @@ impl App {
 				if items.is_empty() {
 					return;
 				}
-				v.context_menu = Some(ContextMenuState::new(format!("component:{id}"), self.mouse_pos, items));
+				v.context_menu = Some(ContextMenuState::new(format!("component:{id}"), self.mouse_pos, items).with_header(chip_name.to_uppercase()));
 				return;
 			}
 		}
@@ -421,7 +429,14 @@ impl App {
 					ContextMenuItem::new("Delete Part", ContextMenuAction::DeletePart),
 					ContextMenuItem::new("Delete", ContextMenuAction::Delete),
 				];
-				v.context_menu = Some(ContextMenuState::new(format!("wire:{wire_idx}"), self.mouse_pos, items));
+				let header = {
+					let root_desc = v.library.get(&root_chip_name);
+					let wire = &root_desc.wires[wire_idx];
+					let is_bus = crate::viewer::bus_wiring::is_bus_wire(root_desc, &v.library, wire);
+					let name = crate::viewer::context_menu::pin_name_at(root_desc, &v.library, wire.source_pin_address);
+					crate::viewer::context_menu::wire_header(is_bus, &name)
+				};
+				v.context_menu = Some(ContextMenuState::new(format!("wire:{wire_idx}"), self.mouse_pos, items).with_header(header));
 			}
 		}
 	}
@@ -533,7 +548,7 @@ impl App {
 		}
 	}
 
-	pub(crate) fn handle_key_event(&mut self, event: &winit::event::KeyEvent) {
+	pub(crate) fn handle_key_event(&mut self, event: &winit::event::KeyEvent, event_loop: &ActiveEventLoop) {
 		let pressed = event.state == ElementState::Pressed;
 		// Feed the simulator's whole keyboard snapshot on both press and release (not just
 		// press, unlike the shortcut handling below) since chips need to know when a key stops
@@ -553,6 +568,43 @@ impl App {
 
 		if !pressed {
 			return;
+		}
+
+		let mods = self.modifiers;
+		let ctrl_only = mods.control_key() && !mods.shift_key() && !mods.alt_key();
+		let letter = match &event.logical_key {
+			Key::Character(s) => s.to_ascii_lowercase(),
+			_ => String::new(),
+		};
+
+		// Ctrl+Shift+Alt+O: reveal the save-data folder (`KeyboardShortcuts.OpenSaveDataFolderShortcutTriggered`,
+		// handled globally in the original, so on every screen).
+		if letter == "o" && mods.control_key() && mods.shift_key() && mods.alt_key() {
+			if let Err(e) = self.paths.open_in_file_browser() {
+				log::error!("Error opening folder: {e}");
+				self.status = Some(format!("Could not open the save folder: {e}"));
+			}
+			return;
+		}
+
+		// Main-menu shortcuts (`MainMenu`): Ctrl+N new project, Ctrl+O open, Ctrl+S settings, Ctrl+Q quit.
+		if matches!(self.screen, Screen::Menu)
+			&& ctrl_only
+			&& self.menu.screen() == crate::ui_menu::MenuScreen::Main
+			&& !self.is_text_popup_open()
+			&& self.menu.popup() != crate::ui_menu::PopupKind::DeleteConfirmation
+		{
+			let action = match letter.as_str() {
+				"n" => Some(crate::render::UiAction::NewProject),
+				"o" => Some(crate::render::UiAction::OpenProjectScreen),
+				"s" => Some(crate::render::UiAction::SettingsScreen),
+				"q" => Some(crate::render::UiAction::Quit),
+				_ => None,
+			};
+			if let Some(a) = action {
+				self.handle_menu_action(&a, event_loop);
+				return;
+			}
 		}
 
 		match &mut self.screen {

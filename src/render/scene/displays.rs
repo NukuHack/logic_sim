@@ -739,6 +739,7 @@ mod tests {
 	#[test]
 	fn led_fill_shows_all_three_wire_states() {
 		use crate::pin_state::LogicState;
+		type LedCase = (LogicState, Vec<[u32; 4]>, Vec<[u32; 4]>);
 
 		struct Level(LogicState);
 		impl PinStateLookup for Level {
@@ -776,7 +777,6 @@ mod tests {
 			let arr: [f32; 4] = theme::STATE_DISCONNECTED_COL.into();
 			[arr[0].to_bits(), arr[1].to_bits(), arr[2].to_bits(), arr[3].to_bits()]
 		}; // also the backing quad
-		type LedCase = (LogicState, Vec<[u32; 4]>, Vec<[u32; 4]>);
 		let cases: [LedCase; 3] = [
 			(LogicState::High, vec![lit], vec![dim]),
 			(LogicState::Low, vec![dim], vec![lit]),
