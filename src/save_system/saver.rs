@@ -85,7 +85,10 @@ impl Saver {
 	}
 
 	/// Mirrors `Saver.DeleteChip`: deletes the chip's save file, optionally
-	/// keeping a backup copy in `<project>/Deleted Chips/`.
+	/// keeping a backup copy in `<project>/Deleted Chips/`. A file that is
+	/// already gone counts as deleted, so a chip that only ever existed in
+	/// memory (or whose file was removed behind the app's back) can still be
+	/// dropped from the library.
 	/// # Errors
 	/// if could not be done
 	pub fn delete_chip(paths: &SavePaths, project_name: &str, chip_name: &str, backup_in_deleted_folder: bool) -> io::Result<()> {
@@ -94,13 +97,20 @@ impl Saver {
 		}
 		let file_path = chip_file_path(paths, project_name, chip_name);
 
-		if backup_in_deleted_folder {
+		let removed = if backup_in_deleted_folder {
+			if !file_path.is_file() {
+				return Ok(());
+			}
 			let deleted_dir = paths.deleted_chips_path(project_name);
 			let deleted_file_path = ensure_unique_file_name(&deleted_dir.join(format!("{chip_name}.json")));
 			SavePaths::ensure_directory_exists(&deleted_dir)?;
 			std::fs::rename(&file_path, &deleted_file_path)
 		} else {
 			std::fs::remove_file(&file_path)
+		};
+		match removed {
+			Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+			other => other,
 		}
 	}
 

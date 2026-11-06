@@ -763,3 +763,67 @@ fn saver_rejects_invalid_project_or_chip_names() {
 
 	std::fs::remove_dir_all(&root).ok();
 }
+
+/// Writes a project whose description lists `chips`, saving only the chips in `on_disk`.
+fn project_listing_chips(root: &std::path::Path, chips: &[&str], on_disk: &[&str]) -> SavePaths {
+	let paths = SavePaths::new(root);
+	let mut project = create_project(&paths, "P").unwrap();
+	for name in chips {
+		project.add_or_update_custom_chip(ChipDescription::new(*name, ChipType::Custom));
+	}
+	for name in on_disk {
+		Saver::save_chip(&paths, "P", &project.chip_library, project.chip_library.get(name)).unwrap();
+	}
+	Saver::save_project_description(&paths, &mut project.description).unwrap();
+	paths
+}
+
+#[test]
+fn project_opens_when_a_listed_chip_file_is_missing() {
+	let root = temp_dir("missing_chip_file");
+	let paths = project_listing_chips(&root, &["Healthy", "Ghost"], &["Healthy"]);
+
+	let project = Loader::load_project(&paths, "P").expect("one missing file must not fail the whole project");
+	assert!(project.chip_library.try_get("Healthy").is_some());
+	assert!(project.chip_library.try_get("Ghost").is_none());
+	assert!(project.chip_library.try_get("nand").is_some(), "builtins still load");
+	assert_eq!(project.load_warnings.len(), 1);
+	assert!(project.load_warnings[0].contains("Ghost"));
+	std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn project_opens_when_a_chip_file_is_corrupt() {
+	let root = temp_dir("corrupt_chip_file");
+	let paths = project_listing_chips(&root, &["Healthy", "Broken"], &["Healthy", "Broken"]);
+	std::fs::write(paths.chips_path("P").join("Broken.json"), "{ not json").unwrap();
+
+	let project = Loader::load_project(&paths, "P").expect("one corrupt file must not fail the whole project");
+	assert!(project.chip_library.try_get("Healthy").is_some());
+	assert!(project.chip_library.try_get("Broken").is_none());
+	assert_eq!(project.load_warnings.len(), 1);
+	std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn project_opens_when_the_chips_folder_is_gone() {
+	let root = temp_dir("missing_chips_dir");
+	let paths = project_listing_chips(&root, &["A", "B"], &["A", "B"]);
+	std::fs::remove_dir_all(paths.chips_path("P")).unwrap();
+
+	let project = Loader::load_project(&paths, "P").expect("a missing chips folder must not fail the project");
+	assert!(project.chip_library.try_get("A").is_none());
+	assert!(project.chip_library.try_get("nand").is_some());
+	assert_eq!(project.load_warnings.len(), 1);
+	std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn deleting_a_chip_whose_file_is_already_gone_succeeds() {
+	let root = temp_dir("delete_missing_file");
+	let paths = project_listing_chips(&root, &["Ghost"], &[]);
+
+	Saver::delete_chip(&paths, "P", "Ghost", true).expect("nothing to delete counts as deleted");
+	Saver::delete_chip(&paths, "P", "Ghost", false).expect("same without a backup");
+	std::fs::remove_dir_all(&root).ok();
+}

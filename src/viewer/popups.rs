@@ -25,15 +25,26 @@ pub(crate) const fn cycle_pref(prefs: &mut crate::json::ProjectDescription, row_
 	}
 }
 
+/// Parses a draft numeric field: garbage counts as 0 (`int.TryParse` semantics), but a run of digits
+/// too long for an `i32` saturates instead -- wrapping to 0 would silently turn "a huge number" into
+/// "off" (a zero clock period stops the clock; a zero rate is clamped up to 1 tick/s).
+fn parse_saturating_i32(text: &str) -> i32 {
+	let trimmed = text.trim();
+	match trimmed.parse::<i64>() {
+		Ok(value) => value.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
+		Err(_) if !trimmed.is_empty() && trimmed.bytes().all(|b| b.is_ascii_digit()) => i32::MAX,
+		Err(_) => 0,
+	}
+}
+
 /// Re-parses both numeric draft fields onto the live prefs, mirroring
 /// `PreferencesMenu.DrawMenu`'s "assign changes immediately so can see
-/// them take effect in background": `int.TryParse` semantics -- anything
-/// unparseable counts as 0 (the target rate is clamped back up to >= 1
-/// where it's consumed, via `ViewerState::target_ticks_per_second`).
+/// them take effect in background"; the target rate is clamped back up to >= 1
+/// where it's consumed, via `ViewerState::target_ticks_per_second`.
 /// Called after every keystroke into either field and by Apply.
 pub(crate) fn apply_prefs_field_text(v: &mut ViewerState) {
-	v.prefs.prefs_sim_steps_per_clock_tick = v.prefs_clock_text.parse::<i32>().unwrap_or(0);
-	v.prefs.prefs_sim_target_steps_per_second = v.prefs_rate_text.parse::<i32>().unwrap_or(0);
+	v.prefs.prefs_sim_steps_per_clock_tick = parse_saturating_i32(&v.prefs_clock_text);
+	v.prefs.prefs_sim_target_steps_per_second = parse_saturating_i32(&v.prefs_rate_text);
 }
 
 /// Applies whatever's typed into `Overlay::Naming`'s text field, per its
@@ -370,6 +381,17 @@ mod tests {
 		reset_rom_editor(&mut v);
 		assert!(v.rom_editor().unwrap().data.iter().all(|&w| w == 0));
 		assert_eq!(v.overlay_text_input, "0");
+	}
+
+	#[test]
+	fn oversized_numeric_fields_saturate_instead_of_wrapping_to_zero() {
+		assert_eq!(parse_saturating_i32("250"), 250);
+		assert_eq!(parse_saturating_i32(" 42 "), 42);
+		assert_eq!(parse_saturating_i32("99999999999999999999999999"), i32::MAX);
+		assert_eq!(parse_saturating_i32("3000000000"), i32::MAX);
+		assert_eq!(parse_saturating_i32("-3000000000"), i32::MIN);
+		assert_eq!(parse_saturating_i32(""), 0);
+		assert_eq!(parse_saturating_i32("12ab"), 0);
 	}
 
 	#[test]

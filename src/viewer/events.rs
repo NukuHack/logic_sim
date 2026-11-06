@@ -679,6 +679,7 @@ impl App {
 				self.menu_stack = build_menu_stack(&self.menu, &self.text_input, self.status.as_ref(), vw, vh, self.mouse_pos);
 			}
 			Screen::Viewer(v) => {
+				crate::viewer::save_flow::recover_dangling_references(v, &mut self.status);
 				let status = self.status.clone();
 				let viewer_stack = build_viewer_stack(v, status.as_deref(), vw, vh, self.mouse_pos);
 				v.stack = viewer_stack;

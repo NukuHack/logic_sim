@@ -3,7 +3,8 @@
 
 use std::{
 	fmt::Debug,
-	sync::{Arc, Mutex},
+	sync::{Arc, Mutex, OnceLock, TryLockError},
+	time::{Duration, Instant},
 };
 
 /// One entry per semitone-ish frequency slot; a buzzer drives one of these
@@ -28,6 +29,14 @@ const WAVE_ITERATIONS: u32 = 20;
 /// ring buffer). 2048 frames @ 48 kHz = ~42.7 ms per wake, ~85 ms of buffer.
 const AUDIO_PERIOD_FRAMES: u32 = 2048;
 
+/// Samples per period of the precomputed band-limited square wave; linear interpolation between
+/// entries keeps the error far below the output clipper's resolution.
+const WAVETABLE_LEN: usize = 4096;
+
+/// Minimum spacing between logged stream errors: an overloaded machine can report an underrun
+/// every period, and logging each one floods the log file and slows the machine further.
+const STREAM_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(1);
+
 /// A0 in Hz -- the base of the frequency table
 /// (`SimAudio.CalculateFrequency`).
 const A0_FREQUENCY_HZ: f64 = 27.5;
@@ -40,7 +49,7 @@ const SEMITONE_RATIO: f64 = 1.059_463_094_359;
 /// `DLS.Simulation.SimAudio`; lives outside the [`crate::sim::Simulator`]
 /// (like the original, which keeps it on `Project.audioState`) so
 /// rebuilding the simulated graph on every edit doesn't audibly reset it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SimAudio {
 	freqs_all: [f32; FREQ_COUNT],
 	target_amplitudes_per_freq_temp: [f64; FREQ_COUNT],
@@ -106,6 +115,13 @@ impl SimAudio {
 		}
 		self.has_input_since_last_init = false;
 		self.target_amplitudes_per_freq_temp.fill(0.0);
+	}
+
+	/// Whether the next [`Self::notify_all_notes_registered`] would change anything; lets the
+	/// simulator skip its per-step clock read while the mix is idle.
+	#[must_use]
+	pub(crate) const fn needs_update(&self) -> bool {
+		self.has_input_since_last_init || self.is_smoothing
 	}
 
 	/// Registers one buzzer output this step: `index` selects the frequency
@@ -179,21 +195,56 @@ impl AudioState {
 	}
 }
 
-/// One mixed waveform sample over an explicit `(frequencies, amplitudes)`
-/// pair -- the computation behind [`AudioState::sample`], split out so the
-/// output callback can snapshot those two arrays under its shortest
-/// possible lock and sum harmonics outside it (see [`spawn_player`]).
-fn mix_sample(freqs_all: &[f32; FREQ_COUNT], amplitudes: &[f64; FREQ_COUNT], time: f64) -> f32 {
-	let mut sum = 0.0f32;
-	for i in 0..FREQ_COUNT {
-		let amplitude = amplitudes[i] as f32;
-		if amplitude < 0.001 {
-			continue;
-		}
-		let phase = time * 2.0 * std::f64::consts::PI * f64::from(freqs_all[i]);
-		sum += square_wave(phase) * amplitude;
+/// One period of the band-limited square wave, sampled once and shared by every note.
+fn wavetable() -> &'static [f32; WAVETABLE_LEN + 1] {
+	static TABLE: OnceLock<[f32; WAVETABLE_LEN + 1]> = OnceLock::new();
+	TABLE.get_or_init(|| std::array::from_fn(|i| square_wave(i as f64 / WAVETABLE_LEN as f64 * std::f64::consts::TAU)))
+}
+
+/// The audible subset of a `(frequencies, amplitudes)` snapshot, gathered once per output
+/// buffer so each sample only visits sounding notes instead of scanning every slot.
+struct ActiveNotes {
+	freqs: [f64; FREQ_COUNT],
+	amplitudes: [f32; FREQ_COUNT],
+	len: usize,
+}
+
+impl ActiveNotes {
+	const fn silent() -> Self {
+		Self { freqs: [0.0; FREQ_COUNT], amplitudes: [0.0; FREQ_COUNT], len: 0 }
 	}
-	sum
+
+	fn gather(freqs_all: &[f32; FREQ_COUNT], amplitudes: &[f64; FREQ_COUNT]) -> Self {
+		let mut active = Self::silent();
+		for (&freq, &amplitude) in freqs_all.iter().zip(amplitudes) {
+			if amplitude >= 0.001 {
+				active.freqs[active.len] = f64::from(freq);
+				active.amplitudes[active.len] = amplitude as f32;
+				active.len += 1;
+			}
+		}
+		active
+	}
+
+	/// Mixed waveform value at absolute `time` seconds.
+	fn sample(&self, time: f64, table: &[f32; WAVETABLE_LEN + 1]) -> f32 {
+		let mut sum = 0.0f32;
+		for i in 0..self.len {
+			// Phase as a fraction of a period: `fract` on the f64 product keeps precision after hours of playback.
+			let position = (time * self.freqs[i]).fract() * WAVETABLE_LEN as f64;
+			let index = (position as usize).min(WAVETABLE_LEN - 1);
+			let frac = (position - index as f64) as f32;
+			let wave = frac.mul_add(table[index + 1] - table[index], table[index]);
+			sum = wave.mul_add(self.amplitudes[i], sum);
+		}
+		sum
+	}
+}
+
+/// One mixed waveform sample over an explicit `(frequencies, amplitudes)` pair -- the
+/// computation behind [`AudioState::sample`].
+fn mix_sample(freqs_all: &[f32; FREQ_COUNT], amplitudes: &[f64; FREQ_COUNT], time: f64) -> f32 {
+	ActiveNotes::gather(freqs_all, amplitudes).sample(time, wavetable())
 }
 
 /// Output-device handle playing whatever [`AudioState`] the app shares in.
@@ -244,26 +295,47 @@ pub fn spawn_player(shared: SharedAudioState) -> Result<AudioPlayer, String> {
 	let samples_elapsed = Arc::new(std::sync::atomic::AtomicU64::new(0));
 	let samples_elapsed_callback = Arc::clone(&samples_elapsed);
 
+	let table = wavetable();
+	let mut notes = ActiveNotes::silent();
+	let mut last_error_log: Option<Instant> = None;
+	let mut suppressed_errors = 0u32;
+
 	let stream = device
 		.build_output_stream(
 			config,
 			move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
 				let mut time = samples_elapsed_callback.load(std::sync::atomic::Ordering::Relaxed) as f64 / sample_rate;
-				// Poison recovery, not just a failed lock: an audio panic on either side must degrade to
-				// silence, never to repeating whatever stale bytes were last left in the buffer.
-				let (freqs, amplitudes) = {
-					let state = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-					(*state.sim_audio.freqs_all(), *state.sim_audio.amplitudes())
+				// Never block the realtime thread: if the simulation holds the state this instant, play the
+				// previous buffer's mix again (inaudible next to the 30/s smoothing) instead of underrunning.
+				// Poison recovery, not just a failed lock: an audio panic must degrade to silence, never to
+				// repeating whatever stale bytes were last left in the buffer.
+				let snapshot = match shared.try_lock() {
+					Ok(state) => Some(ActiveNotes::gather(state.sim_audio.freqs_all(), state.sim_audio.amplitudes())),
+					Err(TryLockError::Poisoned(poisoned)) => {
+						let state = poisoned.into_inner();
+						Some(ActiveNotes::gather(state.sim_audio.freqs_all(), state.sim_audio.amplitudes()))
+					}
+					Err(TryLockError::WouldBlock) => None,
 				};
+				if let Some(snapshot) = snapshot {
+					notes = snapshot;
+				}
 				for frame in data.chunks_mut(channels) {
-					let sample = process_output_sample(GAIN * mix_sample(&freqs, &amplitudes, time));
+					let sample = process_output_sample(GAIN * notes.sample(time, table));
 					frame.fill(sample);
 					time += 1.0 / sample_rate;
 				}
 				let frames_played = (data.len() / channels) as u64;
 				samples_elapsed_callback.fetch_add(frames_played, std::sync::atomic::Ordering::Relaxed);
 			},
-			|err| log::error!("audio stream error: {err}"),
+			move |err| {
+				suppressed_errors += 1;
+				if last_error_log.is_none_or(|at| at.elapsed() >= STREAM_ERROR_LOG_INTERVAL) {
+					log::error!("audio stream error: {err} ({suppressed_errors} since last report)");
+					last_error_log = Some(Instant::now());
+					suppressed_errors = 0;
+				}
+			},
 			None,
 		)
 		.map_err(|e| format!("failed to build audio stream: {e}"))?;
@@ -287,7 +359,7 @@ fn promote_worker_to_realtime() {
 		// The worker was spawned during build_output_stream/play(), but give
 		// the scheduler a moment rather than failing on a naming race.
 		let tid = (0..10).find_map(|_| {
-			std::thread::sleep(std::time::Duration::from_millis(20));
+			std::thread::sleep(Duration::from_millis(20));
 			read_thread_ids().into_iter().find(|(_, comm)| comm == THREAD_NAME).map(|(tid, _)| tid)
 		});
 		let Some(tid) = tid else { return };

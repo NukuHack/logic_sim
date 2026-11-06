@@ -108,6 +108,14 @@ pub(crate) fn prune_hidden_chips_from_palette(prefs: &mut ProjectDescription, li
 	prune_hidden_chips_from_palette_gated(prefs, library, !dev_chips_hidden());
 }
 
+/// Drops palette rows (collection entries and starred chips) naming a chip that isn't in `library`.
+pub(crate) fn prune_missing_chips_from_palette(prefs: &mut ProjectDescription, library: &ChipLibrary) {
+	for collection in &mut prefs.chip_collections {
+		collection.chips.retain(|n| library.try_get(n).is_some());
+	}
+	prefs.starred_list.retain(|item| item.is_collection || library.try_get(&item.name).is_some());
+}
+
 fn prune_hidden_chips_from_palette_gated(prefs: &mut ProjectDescription, library: &ChipLibrary, include_dev: bool) {
 	if include_dev {
 		return;
@@ -178,20 +186,24 @@ pub(crate) fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, s
 	// Resave every parent chip with this chip's instances (and their
 	// wiring) stripped, before the file goes away -- `Project`'s
 	// UpdateAndSaveAffectedChips willDelete pass.
-	let parent_names: Vec<String> =
-		v.library.iter().filter(|d| d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(name))).map(|d| d.name.clone()).collect();
+	let parent_names: Vec<String> = v
+		.library
+		.iter()
+		.filter(|d| !d.name.eq_ignore_ascii_case(name) && d.sub_chips.iter().any(|s| s.name.eq_ignore_ascii_case(name)))
+		.map(|d| d.name.clone())
+		.collect();
+	let mut open_chip_changed = false;
 	for parent_name in parent_names {
-		let Ok(mut pristine) = crate::viewer::save_flow::load_single_chip_from_disk(paths, &v.prefs.project_name, &parent_name) else { continue };
-		pristine.sub_chips.retain(|s| !s.name.eq_ignore_ascii_case(name));
-		pristine.wires.retain(|w| {
-			let owner_gone = |addr: crate::PinAddress| !pristine.sub_chips.iter().any(|s| s.id == addr.pin_owner_id);
-			!owner_gone(w.source_pin_address) && !owner_gone(w.target_pin_address)
-		});
-		if let Err(e) = Saver::save_chip(paths, &v.prefs.project_name, &v.library, &pristine) {
+		// The in-memory copy is stripped too, not just the file: it may carry unsaved edits (the
+		// open chip) or have no file at all, and must not keep dangling instances either way.
+		strip_instances_of(v.library.get_mut(&parent_name), name);
+		open_chip_changed |= parent_name.eq_ignore_ascii_case(&v.root_chip_name);
+
+		let Ok(mut on_disk) = crate::viewer::save_flow::load_single_chip_from_disk(paths, &v.prefs.project_name, &parent_name) else { continue };
+		strip_instances_of(&mut on_disk, name);
+		if let Err(e) = Saver::save_chip(paths, &v.prefs.project_name, &v.library, &on_disk) {
 			log::warn!("failed to resave affected chip '{parent_name}': {e}");
-			continue;
 		}
-		*v.library.get_mut(&parent_name) = pristine;
 	}
 
 	if let Err(e) = Saver::delete_chip(paths, &v.prefs.project_name, name, true) {
@@ -206,6 +218,30 @@ pub(crate) fn delete_chip_from_library(v: &mut ViewerState, paths: &SavePaths, s
 	v.prefs.recompute_all_custom_chip_names(&v.library);
 	v.mark_saved(name);
 	v.library_selection = LibrarySelection::None;
+
+	if name.eq_ignore_ascii_case(&v.root_chip_name) {
+		// The viewer can't keep editing what no longer exists; `recover_dangling_references` moves it onto a blank chip.
+		crate::viewer::save_flow::recover_dangling_references(v, status);
+		return;
+	}
+	// A placement preview may still be carrying the deleted chip.
+	v.pending_place.clear();
+	if v.view_stack.iter().any(|viewed| viewed.name.eq_ignore_ascii_case(name)) {
+		v.exit_view_mode();
+	}
+	if open_chip_changed {
+		// Instances vanished from the open chip: undo history and the running sim still reference them.
+		v.undo.clear();
+		crate::viewer::chip_interaction::cancel_all(v);
+		v.rebuild_sim();
+	}
+}
+
+/// Removes every instance of chip `name` from `desc`, plus any wire attached to one.
+fn strip_instances_of(desc: &mut crate::ChipDescription, name: &str) {
+	let removed_ids: Vec<i32> = desc.sub_chips.iter().filter(|s| s.name.eq_ignore_ascii_case(name)).map(|s| s.id).collect();
+	desc.sub_chips.retain(|s| !s.name.eq_ignore_ascii_case(name));
+	desc.wires.retain(|w| !removed_ids.contains(&w.source_pin_address.pin_owner_id) && !removed_ids.contains(&w.target_pin_address.pin_owner_id));
 }
 
 /// Deletes the collection at `index` -- moves its chips into `OTHER`
@@ -541,6 +577,88 @@ mod tests {
 		assert!(v.prefs.all_custom_chip_names.contains(&"Keep A".to_string()));
 
 		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	fn viewer_with_saved_chips(label: &str, names: &[&str], open: &str) -> (ViewerState, SavePaths, std::path::PathBuf) {
+		let library = lib_with_chips(names);
+		let mut v = ViewerState::new("P", library, open.to_string(), Vec2::new(1280.0, 800.0), &crate::audio::default_shared_state());
+		v.prefs.recompute_all_custom_chip_names(&v.library);
+		let root = std::env::temp_dir().join(format!("logic_sim_{label}_{}", std::process::id()));
+		let paths = SavePaths::new(&root);
+		for name in names {
+			Saver::save_chip(&paths, &v.prefs.project_name, &v.library, v.library.get(name)).expect("chip saved");
+		}
+		(v, paths, root)
+	}
+
+	/// Regression: deleting the chip being edited left `root_chip_name` dangling, and the next frame's
+	/// library lookup panicked.
+	#[test]
+	fn deleting_the_open_chip_moves_the_viewer_onto_a_blank_chip() {
+		let (mut v, paths, root) = viewer_with_saved_chips("delete_open", &["Open", "Other"], "Open");
+		let mut status = None;
+
+		delete_chip_from_library(&mut v, &paths, &mut status, "Open");
+
+		assert!(v.library.try_get("Open").is_none());
+		assert!(v.library.try_get(&v.root_chip_name).is_some(), "the open chip always exists");
+		assert_ne!(v.root_chip_name, "Open");
+		assert!(v.view_stack.is_empty());
+		assert!(v.library.get(&v.root_chip_name).sub_chips.is_empty(), "lands on a blank chip");
+		v.rebuild_sim();
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Regression: a chip that is in the library but has no file (never saved, or removed behind the
+	/// app's back) failed to delete forever, leaving an undeletable entry.
+	#[test]
+	fn deleting_a_chip_with_no_file_still_removes_it_from_the_library() {
+		let (mut v, paths, root) = viewer_with_saved_chips("delete_no_file", &["Keep", "Ghost"], "Keep");
+		std::fs::remove_file(paths.chips_path("P").join("Ghost.json")).expect("file existed");
+		let mut status = None;
+
+		delete_chip_from_library(&mut v, &paths, &mut status, "Ghost");
+
+		assert!(v.library.try_get("Ghost").is_none());
+		assert!(status.is_none(), "no error toast for a chip that was already gone: {status:?}");
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	/// Deleting a chip used inside the open chip strips its instances from the in-memory copy (which
+	/// may hold unsaved edits) and leaves the sim rebuildable.
+	#[test]
+	fn deleting_a_chip_used_by_the_open_chip_strips_its_instances() {
+		let (mut v, paths, root) = viewer_with_saved_chips("delete_used", &["Parent", "Child"], "Parent");
+		v.library.get_mut("Parent").sub_chips.push(SubChipDescription {
+			name: "Child".into(),
+			id: 1,
+			internal_data: None,
+			position: Vec2::ZERO,
+			label: None,
+			pin_colour_info: Vec::new(),
+		});
+		assert_eq!(v.library.get("Parent").sub_chips.len(), 1, "precondition: Parent contains Child");
+
+		delete_chip_from_library(&mut v, &paths, &mut None, "Child");
+
+		assert!(v.library.get("Parent").sub_chips.is_empty());
+		assert_eq!(v.root_chip_name, "Parent", "the open chip itself is untouched");
+		let _ = std::fs::remove_dir_all(&root);
+	}
+
+	#[test]
+	fn missing_chips_are_pruned_from_the_palette() {
+		let library = lib_with_chips(&["Real"]);
+		let mut prefs = ProjectDescription::default();
+		prefs.chip_collections = vec![ChipCollection::new("Folder", vec!["Real".to_string(), "Ghost".to_string()])];
+		prefs.set_starred("Ghost", true, false);
+		prefs.set_starred("Real", true, false);
+
+		prune_missing_chips_from_palette(&mut prefs, &library);
+
+		assert_eq!(prefs.chip_collections[0].chips, vec!["Real".to_string()]);
+		assert!(prefs.is_starred("Real", false));
+		assert!(!prefs.is_starred("Ghost", false));
 	}
 
 	#[test]

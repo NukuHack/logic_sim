@@ -1,3 +1,5 @@
+//! Integration tests for the JSON save format: round-tripping descriptions and simulating the reloaded chips.
+
 use glam::Vec2;
 use logic_sim::{
 	ChipCollection, ChipDescription, ChipLibrary, ChipType, Color, DisplayDescription, ExternalInput, NameLocation, PinAddress, PinBitCount,

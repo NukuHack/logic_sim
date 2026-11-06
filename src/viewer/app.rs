@@ -139,6 +139,7 @@ impl App {
 			Ok(project) => {
 				let project_desc = project.description;
 				let mut library = project.chip_library;
+				let load_warnings = project.load_warnings;
 
 				// Every project opens onto a blank, unsaved chip rather than jumping back into whichever
 				// custom chip happens to be "last" (or biggest) -- mirrors Ctrl+N rather than remembering a chip to reopen.
@@ -166,10 +167,16 @@ impl App {
 				// builds drop those rows from the palette on open -- see
 				// `prune_hidden_chips_from_palette`.
 				crate::viewer::library::prune_hidden_chips_from_palette(&mut v.prefs, &v.library);
+				// Chips whose files failed to load are still listed in the saved palette; drop those rows so they can't be picked.
+				crate::viewer::library::prune_missing_chips_from_palette(&mut v.prefs, &v.library);
 				v.sync_sim_clock_pref();
 
 				self.screen = Screen::Viewer(Box::new(v));
-				self.status = None;
+				self.status = match load_warnings.len() {
+					0 => None,
+					1 => Some(load_warnings[0].clone()),
+					n => Some(format!("{n} chips could not be loaded (see the log); the rest of the project opened normally")),
+				};
 				self.set_window_title();
 			}
 			Err(e) => {

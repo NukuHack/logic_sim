@@ -1,3 +1,5 @@
+//! Integration tests for the builtin chips, driven through the public `Simulator` API against the fixture project.
+
 use glam::Vec2;
 use logic_sim::{ExternalInput, PinAddress, Simulator, load_chip_library_from_dir, pin_state::PinState, register_all_builtins};
 use std::path::Path;

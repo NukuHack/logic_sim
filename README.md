@@ -41,6 +41,10 @@ cargo build --release    # binary lands at target/release/app
 
 **Mouse:** middle-drag to pan, scroll to zoom, click pins to place wires, click a component to select or drag it, drag on empty canvas to box-select, right-click for context menus (and to cancel whatever's in progress). Shift r-click will delete everything under it (dragging is supported).
 
+## Simulation speed
+
+The simulation runs on its own thread, so the editor stays responsive at any target rate. The target ticks per second has no upper cap: if the circuit can't keep up, the worker runs flat out and the preferences readout shows the measured speed. The clock period (steps per clock transition) accepts any `i32`; longer inputs saturate at the maximum instead of wrapping to zero.
+
 ## Where data lives
 
 Save data mirrors the original Unity build's persistent-data location, so both programs share one set of projects:

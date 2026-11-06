@@ -1,21 +1,22 @@
 //! The simulation's own background thread, porting `DLS.Simulation.SimThread`'s role (and
 //! `Project.StartSimulation`/`NotifyExit`): the whole `Simulator` lives behind a mutex shared
-//! with the main thread, and a dedicated worker steps it against the project's target rate --
-//! using the exact pacing math already ported in [`crate::viewer::sim_timing`] (tick-debt
-//! accumulator + rolling throughput window) -- so simulation speed no longer tracks the
-//! render framerate. A pass grabs the arena and audio state in one scope, runs all currently-
-//! due ticks inside it, and gives the locks back -- so a catch-up burst costs two lock cycles
-//! total rather than two per tick, and the worker can't end up parked behind the realtime
-//! audio callback (which holds the same audio mutex for whole output periods) thousands of
-//! times a second. Passes are also time-sliced: if running flat out, the worker hands the
-//! arena back after [`PASS_TIME_BUDGET`] instead of monopolising it, keeping render latency
-//! bounded while leftover ticks stay owed as debt.
+//! with the main thread, and a dedicated worker steps it against the project's target rate,
+//! using the pacing math in [`crate::viewer::sim_timing`] (tick-debt accumulator + rolling
+//! throughput window), so simulation speed doesn't track the render framerate.
+//!
+//! A pass runs all currently-due ticks under one arena lock against a worker-owned copy of the
+//! buzzer mix, which is exchanged with the shared audio state only at the pass edges -- the
+//! realtime audio callback never waits on a whole pass. Passes are time-sliced, and they yield
+//! the moment another thread queues for the arena (see [`SimControls::lock_waiters`]): without
+//! that, an unfair mutex lets a flat-out worker re-take the lock before the renderer ever wakes,
+//! which freezes the UI at very high tick rates.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::audio::SimAudio;
 use crate::pin_state::PinState;
 use crate::sim::Simulator;
 use crate::viewer::sim_timing::{PerfWindow, accumulate_tick_debt, restore_unfinished_ticks, take_due_ticks};
@@ -40,10 +41,17 @@ const MAX_IDLE_SLEEP: Duration = Duration::from_millis(2);
 /// for the next pass so the renderer keeps getting the lock regularly.
 const PASS_TIME_BUDGET: Duration = Duration::from_millis(1);
 
-/// How often a pass checks its elapsed time against [`PASS_TIME_BUDGET`]
-/// -- checking every step would make the clock read a visible fraction of
-/// each step's cost.
-const PASS_TIME_CHECK_INTERVAL: u64 = 64;
+/// Target spacing between clock reads while stepping. The read interval adapts to the measured
+/// step cost, so a heavy circuit can't overshoot the budget by dozens of slow steps and a trivial
+/// one doesn't pay for a clock read per step.
+const CLOCK_CHECK_SPACING: Duration = Duration::from_micros(100);
+
+/// Upper bound on steps between clock reads, for circuits whose steps cost almost nothing.
+const MAX_STEPS_BETWEEN_CLOCK_CHECKS: u64 = 256;
+
+/// How long the worker waits for a queued lock requester to get in before carrying on anyway --
+/// a safety net so a miscounted waiter can never stall the simulation.
+const MAX_WAITER_YIELD: Duration = Duration::from_millis(2);
 
 /// Control plane shared between the main thread and the worker. Plain
 /// atomics with relaxed ordering -- every value stands alone, so the
@@ -62,6 +70,9 @@ struct SimControls {
 	steps_per_clock_transition: AtomicU32,
 	/// Latest measured average ticks/second, stored as `f64::to_bits`.
 	avg_ticks_per_sec_bits: AtomicU64,
+	/// Threads currently blocked in [`SimHandle::lock`]. The worker polls this between steps and
+	/// hands the arena over when it's non-zero.
+	lock_waiters: AtomicU32,
 }
 
 impl SimControls {
@@ -74,6 +85,7 @@ impl SimControls {
 			target_ticks_per_second: AtomicU32::new(1),
 			steps_per_clock_transition: AtomicU32::new(0),
 			avg_ticks_per_sec_bits: AtomicU64::new(0),
+			lock_waiters: AtomicU32::new(0),
 		}
 	}
 }
@@ -112,7 +124,16 @@ impl SimHandle {
 	/// mutation. Recovers from poisoning like every other lock here: an
 	/// audio panic must not take the editor down with it.
 	pub(crate) fn lock(&self) -> MutexGuard<'_, Simulator> {
-		lock_sim(&self.sim)
+		match self.sim.try_lock() {
+			Ok(guard) => return guard,
+			Err(std::sync::TryLockError::Poisoned(poisoned)) => return poisoned.into_inner(),
+			Err(std::sync::TryLockError::WouldBlock) => {}
+		}
+		// Announce the wait so the worker breaks off its pass; the count only matters while blocked.
+		self.controls.lock_waiters.fetch_add(1, Ordering::Relaxed);
+		let guard = lock_sim(&self.sim);
+		self.controls.lock_waiters.fetch_sub(1, Ordering::Relaxed);
+		guard
 	}
 
 	// ---- Keyboard state feeding (the old direct field writes) ----
@@ -261,23 +282,60 @@ fn spawn_worker(sim: Arc<Mutex<Simulator>>, controls: Arc<SimControls>, audio: c
 		.expect("failed to spawn sim thread")
 }
 
-/// Runs up to `max_steps` simulation ticks under a single acquisition of both locks
-/// (`SimThread.Run`'s `RunSimulationStep`, with `stepsPerClockTransition` assigned once per
-/// batch instead of once per tick).
-fn run_steps_batch(sim: &Mutex<Simulator>, audio: &crate::audio::SharedAudioState, steps_per_clock_transition: u32, max_steps: u64) -> u64 {
-	let mut sim = lock_sim(sim);
-	let mut audio_guard = lock_audio(audio);
-	sim.steps_per_clock_transition = steps_per_clock_transition;
+/// Lets a queued lock requester take the arena before the worker re-locks it.
+fn yield_to_lock_waiters(controls: &SimControls) {
 	let started = Instant::now();
-	let mut done = 0u64;
-	while done < max_steps {
-		sim.run_simulation_step(&[], &mut audio_guard.sim_audio);
-		done += 1;
-		if done.is_multiple_of(PASS_TIME_CHECK_INTERVAL) && started.elapsed() >= PASS_TIME_BUDGET {
-			break;
-		}
+	while controls.lock_waiters.load(Ordering::Relaxed) != 0 && started.elapsed() < MAX_WAITER_YIELD {
+		std::thread::sleep(MIN_IDLE_SLEEP);
 	}
-	done
+}
+
+/// Runs the audio-touching part of a pass against `local_audio`: the shared mix is copied in
+/// before and out after, each under a momentary lock, so the audio callback is never kept
+/// waiting for the length of the pass (the copy-in also picks up an external `silence`).
+fn with_local_audio<R>(audio: &crate::audio::SharedAudioState, local_audio: &mut SimAudio, pass: impl FnOnce(&mut SimAudio) -> R) -> R {
+	local_audio.clone_from(&lock_audio(audio).sim_audio);
+	let result = pass(local_audio);
+	lock_audio(audio).sim_audio.clone_from(local_audio);
+	result
+}
+
+/// Runs up to `max_steps` simulation ticks under a single arena lock (`SimThread.Run`'s
+/// `RunSimulationStep`, with `stepsPerClockTransition` assigned once per batch instead of once
+/// per tick). Stops early when the time budget runs out or another thread is queued for the
+/// arena; always runs at least one step.
+fn run_steps_batch(
+	sim: &Mutex<Simulator>,
+	audio: &crate::audio::SharedAudioState,
+	local_audio: &mut SimAudio,
+	controls: &SimControls,
+	max_steps: u64,
+) -> u64 {
+	let steps_per_clock_transition = controls.steps_per_clock_transition.load(Ordering::Relaxed);
+	with_local_audio(audio, local_audio, |local_audio| {
+		let mut sim = lock_sim(sim);
+		sim.steps_per_clock_transition = steps_per_clock_transition;
+		let started = Instant::now();
+		let mut done = 0u64;
+		let mut next_clock_check = 1u64;
+		while done < max_steps {
+			sim.run_simulation_step(&[], local_audio);
+			done += 1;
+			if controls.lock_waiters.load(Ordering::Relaxed) != 0 {
+				break;
+			}
+			if done >= next_clock_check {
+				let elapsed = started.elapsed();
+				if elapsed >= PASS_TIME_BUDGET {
+					break;
+				}
+				let nanos_per_step = (elapsed.as_nanos() / u128::from(done)).max(1);
+				let steps_until_next_check = (CLOCK_CHECK_SPACING.as_nanos() / nanos_per_step) as u64;
+				next_clock_check = done + steps_until_next_check.clamp(1, MAX_STEPS_BETWEEN_CLOCK_CHECKS);
+			}
+		}
+		done
+	})
 }
 
 fn worker_loop(sim: &Arc<Mutex<Simulator>>, controls: &Arc<SimControls>, audio: &crate::audio::SharedAudioState) {
@@ -290,23 +348,18 @@ fn worker_loop(sim: &Arc<Mutex<Simulator>>, controls: &Arc<SimControls>, audio: 
 	}
 
 	let mut pacing = WorkerPacing::default();
+	let mut local_audio = SimAudio::new();
 
 	while !controls.stop.load(Ordering::Relaxed) {
+		yield_to_lock_waiters(controls);
 		let now = Instant::now();
 		let paused = controls.paused.load(Ordering::Relaxed);
 		let step_requested = controls.single_step.swap(false, Ordering::Relaxed);
 
 		if paused && !step_requested {
-			// Mirrors `SimThread`'s paused branch: sleep-equivalent, no
-			// debt accrues. The audio mix still decays
-			// (`UpdateInPausedState`) so a sounding buzzer fades away
-			// rather than hanging. Same lock order as every other
-			// two-lock scope here (arena before audio).
-			{
-				let mut sim_guard = lock_sim(sim);
-				let mut audio_guard = lock_audio(audio);
-				sim_guard.update_in_paused_state(&mut audio_guard.sim_audio);
-			}
+			// Mirrors `SimThread`'s paused branch: sleep-equivalent, no debt accrues. The audio mix
+			// still decays (`UpdateInPausedState`) so a sounding buzzer fades away rather than hanging.
+			with_local_audio(audio, &mut local_audio, |local_audio| lock_sim(sim).update_in_paused_state(local_audio));
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
 			pacing.was_paused = true;
@@ -321,10 +374,9 @@ fn worker_loop(sim: &Arc<Mutex<Simulator>>, controls: &Arc<SimControls>, audio: 
 		}
 
 		if paused {
-			// A requested single step runs exactly one tick regardless of
-			// pacing (`Project.advanceSingleSimStep`) and mustn't disturb
-			// the paused timing hold below.
-			run_steps_batch(sim, audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), 1);
+			// A requested single step runs exactly one tick regardless of pacing
+			// (`Project.advanceSingleSimStep`) and mustn't disturb the paused timing hold below.
+			run_steps_batch(sim, audio, &mut local_audio, controls, 1);
 			pacing.last_tick = Some(now);
 			pacing.debt_ticks = 0.0;
 			pacing.window.record(now, 1);
@@ -334,8 +386,7 @@ fn worker_loop(sim: &Arc<Mutex<Simulator>>, controls: &Arc<SimControls>, audio: 
 		}
 
 		if pacing.was_paused {
-			// Just unpaused: start measuring fresh so stale pre-pause
-			// samples don't paint a burst onto the readout.
+			// Just unpaused: start measuring fresh so stale pre-pause samples don't paint a burst onto the readout.
 			pacing.window.clear();
 			pacing.debt_ticks = 0.0;
 			controls.avg_ticks_per_sec_bits.store(0, Ordering::Relaxed);
@@ -351,23 +402,20 @@ fn worker_loop(sim: &Arc<Mutex<Simulator>>, controls: &Arc<SimControls>, audio: 
 		pacing.debt_ticks = remaining_debt;
 
 		if due == 0 {
-			// Ahead of schedule: nap until the next tick falls due, so a
-			// low target rate costs a handful of wakeups per second rather
-			// than a wakeup storm hammering the shared locks.
+			// Ahead of schedule: nap until the next tick falls due, so a low target rate costs a
+			// handful of wakeups per second rather than a wakeup storm hammering the shared locks.
 			let until_due = Duration::from_secs_f64(pacing.debt_ticks / target_ticks_per_second);
 			std::thread::sleep(until_due.clamp(MIN_IDLE_SLEEP, MAX_IDLE_SLEEP));
 			continue;
 		}
 
-		let ran = run_steps_batch(sim, audio, controls.steps_per_clock_transition.load(Ordering::Relaxed), due);
+		let ran = run_steps_batch(sim, audio, &mut local_audio, controls, due);
 		if ran < due {
 			pacing.debt_ticks = restore_unfinished_ticks(pacing.debt_ticks, due - ran, target_ticks_per_second);
 		}
 		let post = Instant::now();
 		pacing.window.record(post, ran);
 		store_avg(controls, &pacing.window, post);
-		// Hand the core back so a renderer waiting on the arena gets it
-		// promptly (a batch always runs >= 1 step, so `ran` > 0 here).
 		std::thread::yield_now();
 	}
 }
@@ -453,6 +501,39 @@ mod tests {
 		let measured = (frame(&h) - start_frame) as f64 / 2.0;
 		assert!(measured >= f64::from(TARGET) * 0.7, "sustained {measured} ticks/sec against a target of {TARGET} -- pacing regressed");
 		assert!(h.avg_ticks_per_sec() >= f64::from(TARGET) * 0.7, "readout shows {}", h.avg_ticks_per_sec());
+	}
+
+	/// Regression: at an unreachable target rate the worker used to re-take the arena before a
+	/// waiting renderer woke (std's mutex is unfair), freezing the UI. A lock request must get
+	/// through within a few passes however high the target is.
+	#[test]
+	fn main_thread_lock_stays_prompt_while_the_worker_runs_flat_out() {
+		let h = handle(false, u32::MAX);
+		assert!(wait_until(Duration::from_secs(5), || frame(&h) > 0), "worker never stepped");
+
+		let mut worst = Duration::ZERO;
+		for _ in 0..200 {
+			let requested = Instant::now();
+			drop(h.lock());
+			worst = worst.max(requested.elapsed());
+			std::thread::sleep(Duration::from_micros(500));
+		}
+		assert!(worst < Duration::from_millis(50), "a lock request waited {worst:?} behind the flat-out worker");
+	}
+
+	/// Regression: an external `silence` on the shared mix must survive the worker's local copy.
+	#[test]
+	fn silencing_the_shared_mix_is_not_overwritten_by_the_worker() {
+		let audio = crate::audio::default_shared_state();
+		audio.lock().expect("audio lock").sim_audio.register_note(10, 15);
+		audio.lock().expect("audio lock").sim_audio.silence();
+
+		let mut local = SimAudio::new();
+		with_local_audio(&audio, &mut local, |_| {});
+
+		let state = audio.lock().expect("audio lock");
+		assert!(state.sim_audio.step_targets().iter().all(|&t| t == 0.0));
+		assert!(state.sim_audio.amplitudes().iter().all(|&a| a == 0.0));
 	}
 
 	#[test]

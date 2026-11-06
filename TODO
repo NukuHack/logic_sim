@@ -17,7 +17,7 @@ FUTURE PLANS :
 
 going into edit mode should make the entire wire network in edit mode, so every wire that the (clicked) wire is connected to
 
-separate the rendering from logic (rn lagging logic laggs the ui too) :
+separate the rendering from logic (partly DONE: the worker is time-sliced and yields the arena to the renderer on request; the renderer still locks the arena to read pin state, so a single very expensive step can still delay a frame) :
 	Don't block the UI at all.
 	The lock-holding-worker-thread design means any nonzero sweep time is a freeze.
 	Kicking the logic to a separate thread (or dropping/reacquiring the sim lock between chunks) would keep rendering responsive during difficult stuff regardless of how fast the logic itself runs.

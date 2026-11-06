@@ -230,3 +230,28 @@ mod end_to_end {
 		assert!((freqs[72] - 110.0).abs() < 1e-2, "slot 72 is A2");
 	}
 }
+
+/// The wavetable mix must track the exact 20-harmonic square wave it replaced.
+#[test]
+fn mixed_waveform_matches_the_exact_band_limited_square_wave() {
+	let mut state = AudioState::default();
+	state.sim_audio.init_frame();
+	state.sim_audio.register_note(100, 15);
+	state.sim_audio.notify_all_notes_registered(10.0);
+
+	let amplitude = state.sim_audio.amplitudes()[100] as f32;
+	let freq = f64::from(state.sim_audio.freqs_all()[100]);
+	for i in 0..2000 {
+		let time = f64::from(i) * 0.000_173;
+		let phase = time * std::f64::consts::TAU * freq;
+		let exact: f64 = (1..=20).map(|k| f64::from(2 * k - 1)).map(|h| (h * phase).sin() / h).sum::<f64>() * 4.0 / std::f64::consts::PI;
+		let expected = exact as f32 * amplitude;
+		assert!((state.sample(time) - expected).abs() < 0.02 * amplitude.max(1.0), "t={time}: {} vs {expected}", state.sample(time));
+	}
+}
+
+#[test]
+fn silent_state_mixes_to_exactly_zero() {
+	let state = AudioState::default();
+	assert_eq!(state.sample(12.345), 0.0);
+}

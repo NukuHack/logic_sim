@@ -167,6 +167,9 @@ pub struct Simulator {
 
 	start_time: Instant,
 	elapsed_seconds_old: f64,
+	/// Set while the audio mix is idle and the clock isn't being read, so the first step after
+	/// waking doesn't see the whole idle stretch as one huge smoothing delta.
+	audio_clock_idle: bool,
 
 	/// Full keyboard state (set by host): every tracked key/button's held state plus
 	/// when it was last pressed or released. Backs both the `Key` chip (looked up by
@@ -209,6 +212,7 @@ impl Default for Simulator {
 
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
+			audio_clock_idle: true,
 
 			keyboard: KeyboardSnapshot::default(),
 			driven_inputs: HashMap::new(),
@@ -379,6 +383,7 @@ impl Simulator {
 			rng: fastrand::Rng::new(),
 			start_time: Instant::now(),
 			elapsed_seconds_old: 0.0,
+			audio_clock_idle: true,
 			keyboard: KeyboardSnapshot::default(),
 			driven_inputs: HashMap::new(),
 			caching: CachingState::default(),
@@ -581,8 +586,14 @@ impl Simulator {
 	}
 
 	fn notify_audio_state(&mut self, audio: &mut crate::audio::SimAudio) {
+		// A clock read per step is a visible cost at six-figure tick rates, and an idle mix has nothing to smooth.
+		if !audio.needs_update() {
+			self.audio_clock_idle = true;
+			return;
+		}
 		let elapsed_seconds = self.start_time.elapsed().as_secs_f64();
-		let delta_time = if self.simulation_frame <= 1 { 0.0 } else { elapsed_seconds - self.elapsed_seconds_old };
+		let delta_time = if self.simulation_frame <= 1 || self.audio_clock_idle { 0.0 } else { elapsed_seconds - self.elapsed_seconds_old };
+		self.audio_clock_idle = false;
 		self.elapsed_seconds_old = elapsed_seconds;
 		audio.notify_all_notes_registered(delta_time);
 	}

@@ -1,3 +1,5 @@
+//! Integration tests for gate recognition: `recognize()` results checked against brute-force evaluation of the recognised chips.
+
 use logic_sim::gate_op::{CachedGate, Lut, Native, recognize, registry};
 use logic_sim::pin_state::LogicState;
 

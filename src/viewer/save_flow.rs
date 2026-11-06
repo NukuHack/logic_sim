@@ -590,7 +590,13 @@ pub(crate) fn unique_new_chip_name(library: &ChipLibrary) -> String {
 /// existing chip being opened.
 pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mut Option<String>) {
 	discard_unsaved_changes(v, paths);
+	let name = begin_blank_draft(v);
+	*status = Some(format!("New chip '{name}'"));
+}
 
+/// Adds a blank unsaved draft to the library and makes it the open chip. Shared by Ctrl+N and
+/// the recovery paths that must leave a chip that no longer exists.
+fn begin_blank_draft(v: &mut ViewerState) -> String {
 	let name = unique_new_chip_name(&v.library);
 	v.library.add(ChipDescription::new(&name, ChipType::Custom));
 	v.mark_unsaved_draft(&name);
@@ -602,7 +608,27 @@ pub(crate) fn start_new_chip(v: &mut ViewerState, paths: &SavePaths, status: &mu
 	v.restart_sim_fresh();
 	v.camera_fitted = false;
 	reset_canvas_interaction(v);
-	*status = Some(format!("New chip '{name}'"));
+	name
+}
+
+/// Restores the invariant that the open chip and every chip on the view stack exist in the
+/// library; nearly every editor path looks them up by name and panics otherwise. The open chip
+/// can vanish through any deletion path (library panel, search popup, an external edit), so the
+/// check runs every frame rather than at each call site. Returns whether anything was repaired.
+pub(crate) fn recover_dangling_references(v: &mut ViewerState, status: &mut Option<String>) -> bool {
+	if v.library.try_get(&v.root_chip_name).is_none() {
+		let lost = v.root_chip_name.clone();
+		v.unsaved_drafts.remove(&lost.to_ascii_lowercase());
+		begin_blank_draft(v);
+		*status = Some(format!("Chip '{lost}' no longer exists -- switched to a new chip"));
+		return true;
+	}
+	if v.view_stack.iter().any(|viewed| v.library.try_get(&viewed.name).is_none()) {
+		v.exit_view_mode();
+		*status = Some("The chip being viewed no longer exists -- returned to the edited chip".to_string());
+		return true;
+	}
+	false
 }
 
 /// Actually switches the viewer over to `name`'s own definition -- i.e.

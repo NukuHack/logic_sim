@@ -12,11 +12,14 @@ use crate::json::ProjectDescription;
 pub struct Project {
 	pub description: ProjectDescription,
 	pub chip_library: ChipLibrary,
+	/// One human-readable line per custom chip the loader had to skip (missing, unreadable or
+	/// corrupt file), so the UI can tell the player instead of the whole project failing to open.
+	pub load_warnings: Vec<String>,
 }
 
 impl Project {
 	pub const fn new(description: ProjectDescription, chip_library: ChipLibrary) -> Self {
-		Self { description, chip_library }
+		Self { description, chip_library, load_warnings: Vec::new() }
 	}
 
 	/// Adds (or replaces) a custom chip in this project's in-memory library, then rederives

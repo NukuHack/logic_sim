@@ -604,11 +604,11 @@ impl ViewerState {
 		self.prefs.prefs_grid_display_mode == 1
 	}
 
-	/// Mirrors `Project.targetTicksPerSecond`'s `Max(1, ..)` clamp,
-	/// capped at 100 000 so absurdly high values can't starve the
-	/// render loop.
+	/// Mirrors `Project.targetTicksPerSecond`'s `Max(1, ..)` clamp. There is no upper cap: the
+	/// worker is time-sliced and yields to the renderer, so an unreachable target just means
+	/// "run flat out" while the readout reports the measured speed.
 	pub(crate) fn target_ticks_per_second(&self) -> i32 {
-		self.prefs.prefs_sim_target_steps_per_second.clamp(1, 100_000)
+		self.prefs.prefs_sim_target_steps_per_second.max(1)
 	}
 
 	/// Ctrl-hold forces snapping regardless of prefs; "If Grid Shown"

@@ -85,33 +85,48 @@ impl Loader {
 	/// if could not be done
 	pub fn load_project(paths: &SavePaths, project_name: &str) -> io::Result<Project> {
 		let description = Self::load_project_description(paths, project_name)?;
-		let chip_library = Self::load_chip_library(paths, &description)?;
-		Ok(Project::new(description, chip_library))
+		let (chip_library, load_warnings) = Self::load_chip_library(paths, &description);
+		let mut project = Project::new(description, chip_library);
+		project.load_warnings = load_warnings;
+		Ok(project)
 	}
 
-	/// # Errors
-	/// if could not be done
-	fn load_chip_library(paths: &SavePaths, description: &ProjectDescription) -> io::Result<ChipLibrary> {
+	/// Loads every listed custom chip it can. One that is missing, unreadable or corrupt is
+	/// skipped and reported in the returned warnings -- a single bad file must not make the
+	/// whole project (and every healthy chip in it) unopenable.
+	fn load_chip_library(paths: &SavePaths, description: &ProjectDescription) -> (ChipLibrary, Vec<String>) {
 		let chips_dir = paths.chips_path(&description.project_name);
-
-		if !description.all_custom_chip_names.is_empty() && !chips_dir.is_dir() {
-			return Err(io::Error::new(io::ErrorKind::NotFound, format!("Chips directory not found: {}", chips_dir.display())));
-		}
+		let mut warnings = Vec::new();
 
 		let mut library = ChipLibrary::new();
 		let mut custom_names_lower = std::collections::HashSet::new();
 
+		let chips_dir_missing = !description.all_custom_chip_names.is_empty() && !chips_dir.is_dir();
+		if chips_dir_missing {
+			warnings.push(format!("Chips folder not found ({}); none of the project's custom chips were loaded", chips_dir.display()));
+		}
+
 		let mut custom_chips: Vec<ChipDescription> = Vec::with_capacity(description.all_custom_chip_names.len());
-		for chip_name in &description.all_custom_chip_names {
+		for chip_name in description.all_custom_chip_names.iter().filter(|_| !chips_dir_missing) {
 			// Skip invalid chip names to prevent path traversal when loading custom chips.
 			if !crate::save_system::util::valid_file_name(chip_name) {
+				warnings.push(format!("Skipped chip with invalid name '{chip_name}'"));
 				continue;
 			}
 			let chip_path = chips_dir.join(format!("{chip_name}.json"));
-			let text = std::fs::read_to_string(&chip_path)?;
-			let chip_desc = crate::json::parse_chip_description(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-			custom_names_lower.insert(chip_desc.name.to_ascii_lowercase());
-			custom_chips.push(chip_desc);
+			let chip_desc = std::fs::read_to_string(&chip_path)
+				.map_err(|e| format!("could not read {}: {e}", chip_path.display()))
+				.and_then(|text| crate::json::parse_chip_description(&text).map_err(|e| format!("{} is corrupt: {e}", chip_path.display())));
+			match chip_desc {
+				Ok(chip_desc) => {
+					custom_names_lower.insert(chip_desc.name.to_ascii_lowercase());
+					custom_chips.push(chip_desc);
+				}
+				Err(reason) => warnings.push(format!("Chip '{chip_name}' was skipped: {reason}")),
+			}
+		}
+		for warning in &warnings {
+			log::warn!("{warning}");
 		}
 
 		// Bring chips saved by older game versions up to the current format
@@ -130,6 +145,6 @@ impl Loader {
 			}
 		}
 
-		Ok(library)
+		(library, warnings)
 	}
 }
